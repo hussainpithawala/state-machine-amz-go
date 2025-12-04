@@ -59,9 +59,7 @@ func (p *JSONPathProcessor) getValue(data interface{}, path string) (interface{}
 
 	// Remove $ and optional leading .
 	path = strings.TrimPrefix(path, "$")
-	if strings.HasPrefix(path, ".") {
-		path = path[1:]
-	}
+	path = strings.TrimPrefix(path, ".")
 
 	parts := splitPath(path)
 	current := data

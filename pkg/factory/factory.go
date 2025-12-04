@@ -40,7 +40,7 @@ func NewBaseExecutor() *BaseExecutor {
 }
 
 // Execute executes a state machine
-func (e *BaseExecutor) Execute(ctx context.Context, sm StateMachineInterface, execCtx *execution.Execution) (*execution.Execution, error) {
+func (e *BaseExecutor) Execute(_ context.Context, sm StateMachineInterface, execCtx *execution.Execution) (*execution.Execution, error) {
 	// Validate inputs
 	if sm == nil {
 		return nil, fmt.Errorf("state machine cannot be nil")

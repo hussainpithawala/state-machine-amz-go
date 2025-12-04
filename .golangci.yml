@@ -1,0 +1,72 @@
+# .golangci.yml
+run:
+  # Maximum number of issues to print per linter. Set to 0 to disable.
+  max-issues-per-linter: 0
+  # Maximum number of issues with the same text. Set to 0 to disable.
+  max-same-issues: 0
+  # Timeout for analysis.
+  timeout: 5m
+  # Number of workers to run linters in parallel.
+  concurrency: 4
+  # Exclude files or directories from analysis.
+  skip-files:
+    - ".*_test.go"
+    - "pkg/generated/.*"
+
+output:
+  # Output format. Options include: colored-line-number, line-number, json, tab, checkstyle, code-climate, html, junit-xml, teamcity.
+  formats: colored-line-number
+  # Don't print output if there are no issues.
+  uniq-by-text: true
+
+linters-settings:
+  govet:
+    # Enable specific checks for govet.
+    shadow: true
+  errcheck:
+    # Exclude specific functions from error checking.
+    exclude-functions:
+      - "io.Copy"
+  run:
+    # Enable specific staticcheck rules.
+    go: "1.23" # Specify Go version for staticcheck
+  gocritic:
+    # Disable specific gocritic rules.
+    disabled-checks:
+      - "captLocal"
+      - "wrapperFunc"
+
+linters:
+  # List of linters to enable.
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unparam
+    - ineffassign
+#    - gocritic
+#    - gofmt
+#    - goimports
+#    - misspell
+#    - revive
+  # List of linters to disable.
+  disable:
+    - lll
+    - funlen
+
+issues:
+  # Exclude issues by text.
+  exclude-use-default: false
+  exclude:
+    - "Error return value of .*(Close|Write|Flush|Sync)\\b.* is not checked"
+  # Don't show statistics in the output.
+  exclude-rules:
+    - text: "SA1006" # printf-style function with dynamic format string and no further arguments should use print-style function instead
+      linters:
+        - staticcheck
+    - text: "ST1000" # Example of excluding a specific staticcheck rule
+      linters:
+        - staticcheck
+  exclude-files:
+    - ".*_test.go"
+    - "pkg/generated/.*"

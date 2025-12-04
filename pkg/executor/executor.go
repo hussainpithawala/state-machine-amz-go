@@ -170,7 +170,7 @@ func (e *BaseExecutor) GetStatus(executionID string) (*execution.Execution, erro
 }
 
 // Stop stops an execution
-func (e *BaseExecutor) Stop(ctx context.Context, execCtx *execution.Execution) error {
+func (e *BaseExecutor) Stop(_ context.Context, execCtx *execution.Execution) error {
 	if execCtx == nil {
 		return fmt.Errorf("execution context cannot be nil")
 	}
@@ -200,7 +200,7 @@ func (e *BaseExecutor) RegisterGoFunction(name string, fn func(context.Context, 
 }
 
 // ExecuteGoTask executes a Go task function
-func (e *BaseExecutor) ExecuteGoTask(ctx context.Context, taskState states.State, input interface{}) (interface{}, error) {
+func (e *BaseExecutor) ExecuteGoTask(_ context.Context, taskState states.State, input interface{}) (interface{}, error) {
 	// This would be implemented when we add TaskState
 	// For now, return a placeholder
 	return input, nil

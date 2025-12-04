@@ -1,6 +1,7 @@
 package errors
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -34,7 +35,8 @@ func NewStateMachineError(errorType, message string, cause error) *StateMachineE
 
 // IsTimeoutError checks if an error is a timeout error
 func IsTimeoutError(err error) bool {
-	if smErr, ok := err.(*StateMachineError); ok {
+	var smErr *StateMachineError
+	if errors.As(err, &smErr) {
 		return smErr.ErrorType == "States.Timeout"
 	}
 	return false
@@ -42,13 +44,14 @@ func IsTimeoutError(err error) bool {
 
 // IsTaskFailedError checks if an error is a task failure error
 func IsTaskFailedError(err error) bool {
-	if smErr, ok := err.(*StateMachineError); ok {
+	var smErr *StateMachineError
+	if errors.As(err, &smErr) {
 		return smErr.ErrorType == "States.TaskFailed"
 	}
 	return false
 }
 
-// Error mapping for common errors
+// ErrorMappings Error mapping for common errors
 var ErrorMappings = map[string]string{
 	"States.Timeout":                         "A Task State either ran longer than the TimeoutSeconds value, or failed to heartbeat for a time longer than the HeartbeatSeconds value.",
 	"States.TaskFailed":                      "A Task State failed during the execution.",
@@ -63,42 +66,50 @@ var ErrorMappings = map[string]string{
 	"States.ResultWriterFailed":              "A Map State failed because it was unable to write all the result items to the dataset specified in the ResultPath field.",
 }
 
-// Common error constructors
+// NewTimeoutError Common error constructors
 func NewTimeoutError(message string, cause error) *StateMachineError {
 	return NewStateMachineError("States.Timeout", message, cause)
 }
 
+// NewTaskFailedError Common error constructors
 func NewTaskFailedError(message string, cause error) *StateMachineError {
 	return NewStateMachineError("States.TaskFailed", message, cause)
 }
 
+// NewParameterPathFailureError NewParameterPathFailureErrors, which is used when a state's Parameters field cannot be applied to the input the state received.'
 func NewParameterPathFailureError(message string, cause error) *StateMachineError {
 	return NewStateMachineError("States.ParameterPathFailure", message, cause)
 }
 
+// NewResultPathMatchFailureError NewResultPathMatchFailureErrors, which is used when a state's ResultPath field cannot be applied to the input the state received.'
 func NewResultPathMatchFailureError(message string, cause error) *StateMachineError {
 	return NewStateMachineError("States.ResultPathMatchFailure", message, cause)
 }
 
+// NewBranchFailedError NewBranchFailedErrors, which is used when a Parallel State fails to execute a branch of its branches
 func NewBranchFailedError(message string, cause error) *StateMachineError {
 	return NewStateMachineError("States.BranchFailed", message, cause)
 }
 
+// NewNoChoiceMatchedError NewNoChoiceMatchedErrors, which is used when a Choice State fails to find a match for any condition
 func NewNoChoiceMatchedError(message string, cause error) *StateMachineError {
 	return NewStateMachineError("States.NoChoiceMatched", message, cause)
 }
 
+// NewIntrinsicFailureError NewIntrinsicFailureErrors, which is used when a Task State fails due to an error in the task definition
 func NewIntrinsicFailureError(message string, cause error) *StateMachineError {
 	return NewStateMachineError("States.IntrinsicFailure", message, cause)
 }
 
+// NewPermissionsError NewPermissionsErrors, which is used when a Task State fails due to insufficient permissions
 func NewPermissionsError(message string, cause error) *StateMachineError {
 	return NewStateMachineError("States.Permissions", message, cause)
 }
 
-// Error check helpers
+// IsErrorType Error check helpers
 func IsErrorType(err error, errorType string) bool {
-	if smErr, ok := err.(*StateMachineError); ok {
+	var smErr *StateMachineError
+	if errors.As(err, &smErr) {
 		return smErr.ErrorType == errorType
 	}
 	return false
@@ -110,7 +121,8 @@ func WrapError(errorType string, err error) *StateMachineError {
 		return nil
 	}
 
-	if smErr, ok := err.(*StateMachineError); ok {
+	var smErr *StateMachineError
+	if errors.As(err, &smErr) {
 		return smErr
 	}
 
@@ -125,10 +137,11 @@ func GetErrorMessage(errorType string) string {
 	return "An unknown error occurred"
 }
 
-// Helper to check if error is retryable
+// IsRetryableError Helper to check if an error is retryable
 func IsRetryableError(err error, errorEquals []string) bool {
 	errorType := ""
-	if smErr, ok := err.(*StateMachineError); ok {
+	var smErr *StateMachineError
+	if errors.As(err, &smErr) {
 		errorType = smErr.ErrorType
 	}
 

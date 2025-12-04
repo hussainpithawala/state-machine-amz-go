@@ -30,7 +30,7 @@ type State interface {
 	MarshalJSON() ([]byte, error)
 }
 
-// Common types used by all states
+// RetryRule Common types used by all states
 type RetryRule struct {
 	ErrorEquals     []string `json:"ErrorEquals"`
 	IntervalSeconds int      `json:"IntervalSeconds,omitempty"`
@@ -40,6 +40,7 @@ type RetryRule struct {
 	JitterStrategy  string   `json:"JitterStrategy,omitempty"`
 }
 
+// CatchRule Common types used by all states
 type CatchRule struct {
 	ErrorEquals []string `json:"ErrorEquals"`
 	ResultPath  *string  `json:"ResultPath,omitempty"`
