@@ -143,26 +143,14 @@ func (s *PassState) Validate() error {
 }
 
 // MarshalJSON implements custom JSON marshaling
+// MarshalJSON implements custom JSON marshaling
 func (s *PassState) MarshalJSON() ([]byte, error) {
-	type Alias PassState
-	aux := &struct {
-		*Alias
-	}{
-		Alias: (*Alias)(s),
+	// Create a map with the fields we want
+	result := map[string]interface{}{
+		"Type": s.Type,
 	}
 
-	data, err := json.Marshal(aux)
-	if err != nil {
-		return nil, err
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-
-	// Add base fields
-	result["Type"] = s.Type
+	// Add standard fields if present
 	if s.Next != nil {
 		result["Next"] = s.Next
 	}
@@ -182,14 +170,12 @@ func (s *PassState) MarshalJSON() ([]byte, error) {
 		result["Comment"] = s.Comment
 	}
 
-	// Remove Result if nil
-	if s.Result == nil {
-		delete(result, "Result")
+	// Add PassState-specific fields
+	if s.Result != nil {
+		result["Result"] = s.Result
 	}
-
-	// Remove Parameters if nil
-	if s.Parameters == nil {
-		delete(result, "Parameters")
+	if s.Parameters != nil {
+		result["Parameters"] = s.Parameters
 	}
 
 	return json.Marshal(result)

@@ -1,5 +1,3 @@
-// In fail.go:
-
 package states
 
 import (
@@ -79,36 +77,20 @@ func (s *FailState) Validate() error {
 
 // MarshalJSON implements custom JSON marshaling
 func (s *FailState) MarshalJSON() ([]byte, error) {
-	type Alias FailState
-	aux := &struct {
-		*Alias
-		Type string `json:"Type"`
-	}{
-		Alias: (*Alias)(s),
-		Type:  "Fail",
+	// Create a map with only the fields we want
+	result := map[string]interface{}{
+		"Type":  s.Type,
+		"Error": s.Error,
 	}
 
-	// Create a map to control serialization
-	data, err := json.Marshal(aux)
-	if err != nil {
-		return nil, err
+	// Add Cause if present
+	if s.HasCause && s.Cause != "" {
+		result["Cause"] = s.Cause
 	}
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-
-	// Remove Next, End, and path fields for Fail states
-	delete(result, "Next")
-	delete(result, "End")
-	delete(result, "InputPath")
-	delete(result, "ResultPath")
-	delete(result, "OutputPath")
-
-	// Remove Cause if empty
-	if !s.HasCause {
-		delete(result, "Cause")
+	// Add Comment if present
+	if s.Comment != "" {
+		result["Comment"] = s.Comment
 	}
 
 	return json.Marshal(result)

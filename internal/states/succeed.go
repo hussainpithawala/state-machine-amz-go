@@ -1,5 +1,3 @@
-// In succeed.go:
-
 package states
 
 import (
@@ -11,8 +9,6 @@ import (
 // SucceedState represents a Succeed state
 type SucceedState struct {
 	BaseState
-	InputPath  *string `json:"InputPath,omitempty"`
-	OutputPath *string `json:"OutputPath,omitempty"`
 }
 
 // Execute executes the Succeed state
@@ -74,30 +70,25 @@ func (s *SucceedState) Validate() error {
 
 // MarshalJSON implements custom JSON marshaling
 func (s *SucceedState) MarshalJSON() ([]byte, error) {
-	type Alias SucceedState
-	aux := &struct {
-		*Alias
-		Type string `json:"Type"`
-	}{
-		Alias: (*Alias)(s),
-		Type:  "Succeed",
+	// Create a map with only the fields we want
+	result := map[string]interface{}{
+		"Type": s.Type,
 	}
 
-	// Create a map to control serialization
-	data, err := json.Marshal(aux)
-	if err != nil {
-		return nil, err
+	// Add InputPath if present
+	if s.InputPath != nil {
+		result["InputPath"] = s.InputPath
 	}
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
+	// Add OutputPath if present
+	if s.OutputPath != nil {
+		result["OutputPath"] = s.OutputPath
 	}
 
-	// Remove Next and End fields for Succeed states
-	delete(result, "Next")
-	delete(result, "End")
-	delete(result, "ResultPath")
+	// Add Comment if present
+	if s.Comment != "" {
+		result["Comment"] = s.Comment
+	}
 
 	return json.Marshal(result)
 }
