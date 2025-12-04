@@ -40,38 +40,11 @@ type RetryRule struct {
 	JitterStrategy  string   `json:"JitterStrategy,omitempty"`
 }
 
-// CatchRule Common types used by all states
 type CatchRule struct {
 	ErrorEquals []string `json:"ErrorEquals"`
 	ResultPath  *string  `json:"ResultPath,omitempty"`
 	Next        string   `json:"Next"`
 }
-
-type ChoiceRule struct {
-	Variable                   string       `json:"Variable"`
-	StringEquals               *string      `json:"StringEquals,omitempty"`
-	StringLessThan             *string      `json:"StringLessThan,omitempty"`
-	StringGreaterThan          *string      `json:"StringGreaterThan,omitempty"`
-	StringLessThanEquals       *string      `json:"StringLessThanEquals,omitempty"`
-	StringGreaterThanEquals    *string      `json:"StringGreaterThanEquals,omitempty"`
-	NumericEquals              *float64     `json:"NumericEquals,omitempty"`
-	NumericLessThan            *float64     `json:"NumericLessThan,omitempty"`
-	NumericGreaterThan         *float64     `json:"NumericGreaterThan,omitempty"`
-	NumericLessThanEquals      *float64     `json:"NumericLessThanEquals,omitempty"`
-	NumericGreaterThanEquals   *float64     `json:"NumericGreaterThanEquals,omitempty"`
-	BooleanEquals              *bool        `json:"BooleanEquals,omitempty"`
-	TimestampEquals            *string      `json:"TimestampEquals,omitempty"`
-	TimestampLessThan          *string      `json:"TimestampLessThan,omitempty"`
-	TimestampGreaterThan       *string      `json:"TimestampGreaterThan,omitempty"`
-	TimestampLessThanEquals    *string      `json:"TimestampLessThanEquals,omitempty"`
-	TimestampGreaterThanEquals *string      `json:"TimestampGreaterThanEquals,omitempty"`
-	And                        []ChoiceRule `json:"And,omitempty"`
-	Or                         []ChoiceRule `json:"Or,omitempty"`
-	Not                        *ChoiceRule  `json:"Not,omitempty"`
-	Next                       string       `json:"Next"`
-	Comment                    string       `json:"Comment,omitempty"`
-}
-
 type Branch struct {
 	StartAt string           `json:"StartAt"`
 	States  map[string]State `json:"States"`
