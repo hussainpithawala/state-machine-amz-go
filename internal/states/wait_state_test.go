@@ -168,13 +168,14 @@ func TestWaitState_Execute_WithTimestampPath(t *testing.T) {
 	}
 
 	startTime := time.Now()
+
 	output, nextState, err := state.Execute(ctx, input)
 	elapsed := time.Since(startTime)
 
 	require.NoError(t, err)
 	assert.Equal(t, input, output)
 	assert.Equal(t, "NextState", *nextState)
-	assert.True(t, elapsed >= time.Second)
+	assert.True(t, elapsed >= futureTime.Sub(startTime))
 }
 
 func TestWaitState_Execute_ContextCancelled(t *testing.T) {
