@@ -45,11 +45,12 @@ type CatchRule struct {
 	ResultPath  *string  `json:"ResultPath,omitempty"`
 	Next        string   `json:"Next"`
 }
-type Branch struct {
-	StartAt string           `json:"StartAt"`
-	States  map[string]State `json:"States"`
-	Comment string           `json:"Comment,omitempty"`
-}
+
+//type Branch struct {
+//	StartAt string           `json:"StartAt"`
+//	States  map[string]State `json:"States"`
+//	Comment string           `json:"Comment,omitempty"`
+//}
 
 // BaseState contains common fields for all state types
 type BaseState struct {
@@ -96,23 +97,6 @@ func (s *BaseState) MarshalJSON() ([]byte, error) {
 
 func (s *BaseState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {
 	return nil, nil, fmt.Errorf("Execute not implemented for base state")
-}
-
-// Helper functions
-func StringPtr(s string) *string {
-	return &s
-}
-
-func IntPtr(i int) *int {
-	return &i
-}
-
-func Float64Ptr(f float64) *float64 {
-	return &f
-}
-
-func BoolPtr(b bool) *bool {
-	return &b
 }
 
 // PathProcessor handles JSON path operations

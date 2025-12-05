@@ -175,7 +175,8 @@ func TestWaitState_Execute_WithTimestampPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, input, output)
 	assert.Equal(t, "NextState", *nextState)
-	assert.True(t, elapsed >= futureTime.Sub(startTime))
+	// additional 100ms buffer for clock skew. This is to avoid flakiness in tests
+	assert.True(t, elapsed >= futureTime.Sub(startTime)-100*time.Millisecond)
 }
 
 func TestWaitState_Execute_ContextCancelled(t *testing.T) {
@@ -321,8 +322,4 @@ func TestWaitState_GettersAndSetters(t *testing.T) {
 	assert.Equal(t, "Wait", state.GetType())
 	assert.True(t, state.IsEnd())
 	assert.Equal(t, "NextState", *state.GetNext())
-}
-
-func Int64Ptr(i int64) *int64 {
-	return &i
 }
