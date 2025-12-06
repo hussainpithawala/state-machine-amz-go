@@ -1,90 +1,88 @@
-package executor
+package factory
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
-	"time"
 
-	"github.com/hussainpithawala/state-machine-amz-go/internal/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 )
 
-// StateMachineInterface defines the minimal interface needed by executor
-type StateMachineInterface interface {
-	GetStartAt() string
-	GetState(name string) (interface{}, error)
-	IsTimeout(startTime time.Time) bool
+// StateFactory creates state instances from JSON definitions
+type StateFactory struct{}
+
+// NewStateFactory creates a new StateFactory
+func NewStateFactory() *StateFactory {
+	return &StateFactory{}
 }
 
-// Executor defines the interface for executing state machines
-type Executor interface {
-	// Execute executes a state machine with the given context and input
-	Execute(ctx context.Context, sm StateMachineInterface, execCtx *execution.Execution) (*execution.Execution, error)
-
-	// GetStatus returns the status of an execution
-	GetStatus(executionID string) (*execution.Execution, error)
-
-	// Stop stops an execution
-	Stop(ctx context.Context, execCtx *execution.Execution) error
-}
-
-// BaseExecutor provides common executor functionality
-type BaseExecutor struct {
-	executions map[string]*execution.Execution
-}
-
-// NewBaseExecutor creates a new BaseExecutor
-func NewBaseExecutor() *BaseExecutor {
-	return &BaseExecutor{
-		executions: make(map[string]*execution.Execution),
-	}
-}
-
-// Execute executes a state machine
-func (e *BaseExecutor) Execute(_ context.Context, sm StateMachineInterface, execCtx *execution.Execution) (*execution.Execution, error) {
-	// Validate inputs
-	if sm == nil {
-		return nil, fmt.Errorf("state machine cannot be nil")
+// CreateState creates a state instance from name and raw JSON
+func (f *StateFactory) CreateState(name string, rawJSON json.RawMessage) (states.State, error) {
+	// First, unmarshal to get the Type field
+	var typeMap map[string]interface{}
+	if err := json.Unmarshal(rawJSON, &typeMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal state: %w", err)
 	}
 
-	if execCtx == nil {
-		return nil, fmt.Errorf("execution context cannot be nil")
+	stateType, ok := typeMap["Type"].(string)
+	if !ok {
+		return nil, fmt.Errorf("state missing or invalid Type field")
 	}
 
-	// Store execution
-	e.executions[execCtx.ID] = execCtx
+	var state states.State
+	var err error
 
-	// Set initial status
-	execCtx.Status = "RUNNING"
-
-	// For now, return a simple implementation
-	execCtx.Status = "SUCCEEDED"
-	execCtx.EndTime = time.Now()
-	execCtx.Output = execCtx.Input
-
-	return execCtx, nil
-}
-
-// GetStatus returns the status of an execution
-func (e *BaseExecutor) GetStatus(executionID string) (*execution.Execution, error) {
-	execCtx, exists := e.executions[executionID]
-	if !exists {
-		return nil, fmt.Errorf("execution '%s' not found", executionID)
+	switch stateType {
+	case "Pass":
+		state = &states.PassState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Fail":
+		state = &states.FailState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Succeed":
+		state = &states.SucceedState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Wait":
+		state = &states.WaitState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Choice":
+		state = &states.ChoiceState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Parallel":
+		state = &states.ParallelState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Task":
+		state = &states.TaskState{}
+		err = json.Unmarshal(rawJSON, state)
+	default:
+		return nil, fmt.Errorf("unknown state type: %s", stateType)
 	}
 
-	return execCtx, nil
-}
-
-// Stop stops an execution
-func (e *BaseExecutor) Stop(ctx context.Context, execCtx *execution.Execution) error {
-	if execCtx == nil {
-		return fmt.Errorf("execution context cannot be nil")
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %s state: %w", stateType, err)
 	}
 
-	execCtx.Status = "ABORTED"
-	execCtx.EndTime = time.Now()
+	// Set the name
+	switch s := state.(type) {
+	case *states.PassState:
+		s.Name = name
+	case *states.FailState:
+		s.Name = name
+	case *states.SucceedState:
+		s.Name = name
+	case *states.WaitState:
+		s.Name = name
+	case *states.ChoiceState:
+		s.Name = name
+	case *states.ParallelState:
+		s.Name = name
+	case *states.TaskState:
+		s.Name = name
+	}
 
-	// Remove from active executions
-	delete(e.executions, execCtx.ID)
+	// Validate the state
+	if err := state.Validate(); err != nil {
+		return nil, fmt.Errorf("state '%s' validation failed: %w", name, err)
+	}
 
-	return nil
+	return state, nil
 }

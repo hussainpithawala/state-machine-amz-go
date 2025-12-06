@@ -28,6 +28,8 @@ type State interface {
 
 	// MarshalJSON custom JSON marshaling
 	MarshalJSON() ([]byte, error)
+
+	GetNextStates() []string
 }
 
 // RetryRule Common types used by all states
@@ -93,6 +95,17 @@ func (s *BaseState) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(s),
 	}
 	return json.Marshal(aux)
+}
+
+// GetNextStates returns all possible next state names for graph validation
+// For most states, this is just the single Next state
+// For Choice states, this includes all choice destinations and the default
+// For Task states, this includes Next and all Catch destinations
+func (s *BaseState) GetNextStates() []string {
+	if s.Next != nil {
+		return []string{*s.Next}
+	}
+	return []string{}
 }
 
 func (s *BaseState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {

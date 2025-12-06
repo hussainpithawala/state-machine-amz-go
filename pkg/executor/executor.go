@@ -9,19 +9,10 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 )
 
-// State defines the interface for state access
-type State interface {
-	Execute(ctx context.Context, input interface{}) (interface{}, *string, error)
-	GetName() string
-	GetType() string
-	GetNext() *string
-	IsEnd() bool
-}
-
 // StateMachineInterface defines the minimal interface needed by executor
 type StateMachineInterface interface {
 	GetStartAt() string
-	GetState(name string) (State, error)
+	GetState(name string) (states.State, error)
 	IsTimeout(startTime time.Time) bool
 }
 

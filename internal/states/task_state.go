@@ -320,3 +320,20 @@ func (t *TaskState) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(t),
 	})
 }
+
+// GetNextStates returns all possible next states from Task transitions
+func (t *TaskState) GetNextStates() []string {
+	nextStates := make([]string, 0)
+
+	// Add primary Next
+	if t.Next != nil {
+		nextStates = append(nextStates, *t.Next)
+	}
+
+	// Add all catch destinations
+	for _, catchPolicy := range t.Catch {
+		nextStates = append(nextStates, catchPolicy.Next)
+	}
+
+	return nextStates
+}

@@ -191,3 +191,12 @@ func (p *ParallelState) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(p),
 	})
 }
+
+// GetNextStates returns the next state for Parallel
+// Note: Branch states are not included here as they're internal to the Parallel state
+func (p *ParallelState) GetNextStates() []string {
+	if p.Next != nil {
+		return []string{*p.Next}
+	}
+	return p.GetNextStates()
+}

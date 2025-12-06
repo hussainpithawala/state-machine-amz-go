@@ -10,13 +10,14 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/internal/validator"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/errors"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/factory"
 )
 
 // StateMachine represents an Amazon States Language state machine
 type StateMachine struct {
 	Comment        string                  `json:"Comment,omitempty"`
 	StartAt        string                  `json:"StartAt"`
-	States         map[string]states.State `json:"States"`
+	States         map[string]states.State `json:"-"` // Populated after unmarshaling
 	TimeoutSeconds *int                    `json:"TimeoutSeconds,omitempty"`
 	Version        string                  `json:"Version,omitempty"`
 
@@ -25,18 +26,52 @@ type StateMachine struct {
 	createdAt time.Time
 }
 
+// rawStateMachine is a temporary struct for unmarshaling
+type rawStateMachine struct {
+	Comment        string                     `json:"Comment,omitempty"`
+	StartAt        string                     `json:"StartAt"`
+	States         map[string]json.RawMessage `json:"States"`
+	TimeoutSeconds *int                       `json:"TimeoutSeconds,omitempty"`
+	Version        string                     `json:"Version,omitempty"`
+}
+
 // New creates a new state machine from JSON/YAML definition
 func New(definition []byte) (*StateMachine, error) {
-	var sm StateMachine
-
-	// Unmarshal JSON
-	if err := json.Unmarshal(definition, &sm); err != nil {
+	// First unmarshal into rawStateMachine to capture raw state definitions
+	var rawSM rawStateMachine
+	if err := json.Unmarshal(definition, &rawSM); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal state machine definition: %w", err)
+	}
+
+	// Create the StateMachine instance
+	sm := &StateMachine{
+		Comment:        rawSM.Comment,
+		StartAt:        rawSM.StartAt,
+		TimeoutSeconds: rawSM.TimeoutSeconds,
+		Version:        rawSM.Version,
+		States:         make(map[string]states.State),
 	}
 
 	// Set default values
 	if sm.Version == "" {
 		sm.Version = "1.0"
+	}
+
+	// Check that States is not nil or empty
+	if len(rawSM.States) == 0 {
+		return nil, fmt.Errorf("failed to unmarshal state machine definition: States is required and cannot be empty")
+	}
+
+	// Unmarshal each state using factory
+	stateFactory := factory.NewStateFactory()
+	for stateName, rawState := range rawSM.States {
+		// Create the state using factory
+		state, err := stateFactory.CreateState(stateName, rawState)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create state '%s': %w", stateName, err)
+		}
+
+		sm.States[stateName] = state
 	}
 
 	// Initialize validator
@@ -49,7 +84,7 @@ func New(definition []byte) (*StateMachine, error) {
 
 	sm.createdAt = time.Now()
 
-	return &sm, nil
+	return sm, nil
 }
 
 // Validate validates the state machine definition
@@ -68,6 +103,9 @@ func (sm *StateMachine) GetStartAt() string {
 
 // GetState returns a state by name
 func (sm *StateMachine) GetState(name string) (states.State, error) {
+	//if sm == nil {
+	//	return nil, fmt.Errorf("state machine is nil")
+	//}
 	state, exists := sm.States[name]
 	if !exists {
 		return nil, fmt.Errorf("state '%s' not found", name)
@@ -193,9 +231,11 @@ func (sm *StateMachine) IsTimeout(startTime time.Time) bool {
 func (sm *StateMachine) MarshalJSON() ([]byte, error) {
 	type Alias StateMachine
 	aux := &struct {
+		States map[string]states.State `json:"States"`
 		*Alias
 	}{
-		Alias: (*Alias)(sm),
+		States: sm.States,
+		Alias:  (*Alias)(sm),
 	}
 
 	data, err := json.Marshal(aux)

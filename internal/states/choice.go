@@ -550,3 +550,20 @@ func (s *ChoiceState) GetNext() *string {
 func (s *ChoiceState) IsEnd() bool {
 	return false
 }
+
+// GetNextStates returns all possible next state names from Choice transitions
+func (s *ChoiceState) GetNextStates() []string {
+	nextStates := make([]string, 0)
+
+	// Add all choice destinations
+	for _, choice := range s.Choices {
+		nextStates = append(nextStates, choice.Next)
+	}
+
+	// Add default if present
+	if s.Default != nil {
+		nextStates = append(nextStates, *s.Default)
+	}
+
+	return nextStates
+}
