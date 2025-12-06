@@ -383,7 +383,7 @@ The gopkg is available as open source under the terms of the MIT License.
 ## Acknowledgments
 Inspired by Amazon States Language
 
-Built for Ruby developers who need workflow orchestration based on JSON/YAML based state definitions
+Built for Golang developers who need workflow orchestration based on JSON/YAML based state definitions
 
 Designed for both simple and complex business processes
 
