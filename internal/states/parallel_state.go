@@ -23,6 +23,126 @@ type ParallelState struct {
 	ResultSelector map[string]interface{} `json:"ResultSelector,omitempty"`
 }
 
+// UnmarshalJSON implements custom JSON unmarshaling for ParallelState
+func (p *ParallelState) UnmarshalJSON(data []byte) error {
+	type Alias ParallelState
+	aux := &struct {
+		Type     string            `json:"Type"`
+		Branches []json.RawMessage `json:"Branches"`
+		*Alias
+	}{
+		Alias: (*Alias)(p),
+	}
+
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+
+	// Unmarshal branches with proper state handling
+	p.Branches = make([]Branch, len(aux.Branches))
+	for i, rawBranch := range aux.Branches {
+		var branchData struct {
+			StartAt string                     `json:"StartAt"`
+			States  map[string]json.RawMessage `json:"States"`
+			Comment string                     `json:"Comment,omitempty"`
+		}
+
+		if err := json.Unmarshal(rawBranch, &branchData); err != nil {
+			return fmt.Errorf("failed to unmarshal branch %d: %w", i, err)
+		}
+
+		// Convert raw state messages to State interface
+		states := make(map[string]State)
+		// Create a temporary factory for unmarshaling states
+		stateFactory := &stateUnmarshaler{}
+		for stateName, rawState := range branchData.States {
+			state, err := stateFactory.unmarshalState(stateName, rawState)
+			if err != nil {
+				return fmt.Errorf("failed to unmarshal state '%s' in branch %d: %w", stateName, i, err)
+			}
+			states[stateName] = state
+		}
+
+		p.Branches[i] = Branch{
+			StartAt: branchData.StartAt,
+			States:  states,
+			Comment: branchData.Comment,
+		}
+	}
+
+	return nil
+}
+
+// stateUnmarshaler is a helper for unmarshaling states within parallel branches
+type stateUnmarshaler struct{}
+
+// unmarshalState unmarshals a raw JSON message into a State
+func (s *stateUnmarshaler) unmarshalState(name string, rawJSON json.RawMessage) (State, error) {
+	// First, unmarshal to get the Type field
+	var typeMap map[string]interface{}
+	if err := json.Unmarshal(rawJSON, &typeMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal state: %w", err)
+	}
+
+	stateType, ok := typeMap["Type"].(string)
+	if !ok {
+		return nil, fmt.Errorf("state missing or invalid Type field")
+	}
+
+	var state State
+	var err error
+
+	switch stateType {
+	case "Pass":
+		state = &PassState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Fail":
+		state = &FailState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Succeed":
+		state = &SucceedState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Wait":
+		state = &WaitState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Choice":
+		state = &ChoiceState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Parallel":
+		state = &ParallelState{}
+		err = json.Unmarshal(rawJSON, state)
+	case "Task":
+		state = &TaskState{}
+		err = json.Unmarshal(rawJSON, state)
+	default:
+		return nil, fmt.Errorf("unknown state type: %s", stateType)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %s state: %w", stateType, err)
+	}
+
+	// Set the name
+	switch st := state.(type) {
+	case *PassState:
+		st.Name = name
+	case *FailState:
+		st.Name = name
+	case *SucceedState:
+		st.Name = name
+	case *WaitState:
+		st.Name = name
+	case *ChoiceState:
+		st.Name = name
+	case *ParallelState:
+		st.Name = name
+	case *TaskState:
+		st.Name = name
+	}
+
+	return state, nil
+}
+
 // GetName returns the name of the state
 func (p *ParallelState) GetName() string {
 	return p.Name
@@ -198,5 +318,5 @@ func (p *ParallelState) GetNextStates() []string {
 	if p.Next != nil {
 		return []string{*p.Next}
 	}
-	return p.GetNextStates()
+	return []string{}
 }
