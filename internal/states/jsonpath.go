@@ -88,16 +88,27 @@ func (p *JSONPathProcessor) getValue(data interface{}, path string) (interface{}
 		}
 
 		// Handle object field
-		obj, ok := current.(map[string]interface{})
+		// Since the root starts with '$.0' we need to first pick the map[string]interface{} from root
+		rootObj, ok := current.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("cannot access field '%s' on type %T", part, current)
+			return nil, fmt.Errorf("cannot access root-field '%s' on type %T", part, current)
 		}
-
-		val, exists := obj[part]
-		if !exists {
-			return nil, fmt.Errorf("field '%s' not found", part)
+		obj, ok := rootObj["$"]
+		if !ok {
+			// In this case we directly have the key at the root
+			val, exists := rootObj[part]
+			if !exists {
+				return nil, fmt.Errorf("field '%s' not found", part)
+			}
+			current = val
+		} else {
+			// In this case we are following the $.key path
+			val, exists := obj.(map[string]interface{})[part]
+			if !exists {
+				return nil, fmt.Errorf("field '%s' not found", part)
+			}
+			current = val
 		}
-		current = val
 	}
 
 	return current, nil
