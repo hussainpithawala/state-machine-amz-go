@@ -1,10 +1,11 @@
-// cmd/demo/main.go
-package main
+// cmd/demo/test_demo_execution_flow.go
+package execution
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"testing"
 	"time"
 
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
@@ -30,7 +31,7 @@ func (d *DemoExecutionContext) GetTaskHandler(resource string) (func(context.Con
 	return fn, exists
 }
 
-func main() {
+func Test_demo_execution_flow(t *testing.T) {
 	fmt.Println("=== Task Execution Flow Demo ===")
 
 	// Create execution context
