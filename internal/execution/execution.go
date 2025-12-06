@@ -139,6 +139,8 @@ func (e *Execution) ToMap() map[string]interface{} {
 			history[i] = map[string]interface{}{
 				"state":     h.StateName,
 				"timestamp": h.Timestamp.Format(time.RFC3339),
+				//"input":     h.Input,
+				//"output":    h.Output,
 			}
 		}
 		result["history"] = history

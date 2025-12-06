@@ -11,6 +11,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/internal/validator"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/errors"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/factory"
+	"sigs.k8s.io/yaml"
 )
 
 // StateMachine represents an Amazon States Language state machine
@@ -36,11 +37,21 @@ type rawStateMachine struct {
 }
 
 // New creates a new state machine from JSON/YAML definition
-func New(definition []byte) (*StateMachine, error) {
+func New(definition []byte, isJson bool) (*StateMachine, error) {
 	// First unmarshal into rawStateMachine to capture raw state definitions
 	var rawSM rawStateMachine
-	if err := json.Unmarshal(definition, &rawSM); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal state machine definition: %w", err)
+	if isJson {
+		if err := json.Unmarshal(definition, &rawSM); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal state machine definition: %w", err)
+		}
+	} else {
+		if jsonDefn, errJson := yaml.YAMLToJSON(definition); errJson != nil {
+			return nil, fmt.Errorf("failed to YAML-unmarshal state machine definition: %w", errJson)
+		} else {
+			if err2 := json.Unmarshal(jsonDefn, &rawSM); err2 != nil {
+				return nil, fmt.Errorf("failed to unmarshal state machine definition: %w", err2)
+			}
+		}
 	}
 
 	// Create the StateMachine instance

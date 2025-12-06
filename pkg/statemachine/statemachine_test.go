@@ -23,7 +23,7 @@ func TestNew_ValidDefinition(t *testing.T) {
 		}
 	}`)
 
-	sm, err := New(definition)
+	sm, err := New(definition, true)
 
 	require.NoError(t, err)
 	require.NotNil(t, sm)
@@ -35,7 +35,7 @@ func TestNew_ValidDefinition(t *testing.T) {
 func TestNew_InvalidJSON(t *testing.T) {
 	definition := []byte(`{invalid json}`)
 
-	sm, err := New(definition)
+	sm, err := New(definition, true)
 
 	require.Error(t, err)
 	assert.Nil(t, sm)
@@ -52,7 +52,7 @@ func TestNew_MissingStartAt(t *testing.T) {
 		}
 	}`)
 
-	sm, err := New(definition)
+	sm, err := New(definition, true)
 
 	require.Error(t, err)
 	assert.Nil(t, sm)
@@ -63,7 +63,7 @@ func TestNew_MissingStates(t *testing.T) {
 		"StartAt": "FirstState"
 	}`)
 
-	sm, err := New(definition)
+	sm, err := New(definition, true)
 
 	require.Error(t, err)
 	assert.Nil(t, sm)
@@ -80,7 +80,7 @@ func TestNew_DefaultVersion(t *testing.T) {
 		}
 	}`)
 
-	sm, err := New(definition)
+	sm, err := New(definition, true)
 
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", sm.Version)
@@ -98,7 +98,7 @@ func TestNew_CustomVersion(t *testing.T) {
 		}
 	}`)
 
-	sm, err := New(definition)
+	sm, err := New(definition, true)
 
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", sm.Version)
@@ -115,7 +115,7 @@ func TestGetStartAt(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	startAt := sm.GetStartAt()
 
 	assert.Equal(t, "MyStartState", startAt)
@@ -136,7 +136,7 @@ func TestGetState_Exists(t *testing.T) {
 		}
 	}`)
 
-	sm, err := New(definition)
+	sm, err := New(definition, true)
 	require.Nil(t, sm)
 	require.Error(t, err, "state machine is nil")
 }
@@ -152,7 +152,7 @@ func TestGetState_NotFound(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	state, err := sm.GetState("NonExistentState")
 
 	require.Error(t, err)
@@ -171,7 +171,7 @@ func TestExecute_SimplePassthrough(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	ctx := context.Background()
 	input := map[string]interface{}{
 		"key": "value",
@@ -198,7 +198,7 @@ func TestExecute_WithResult(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	ctx := context.Background()
 	input := "ignored"
 
@@ -226,7 +226,7 @@ func TestExecute_MultipleStates(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	ctx := context.Background()
 	input := "initial"
 
@@ -250,7 +250,7 @@ func TestExecute_WithFail(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	ctx := context.Background()
 	input := "test"
 
@@ -273,7 +273,7 @@ func TestExecute_WithTimeout(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 
 	// Create a context with a 1-second timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -305,7 +305,7 @@ func TestExecute_ContextCancelled(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
@@ -345,7 +345,7 @@ func TestExecute_WithChoice(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	ctx := context.Background()
 	input := map[string]interface{}{
 		"value": 5,
@@ -369,7 +369,7 @@ func TestExecute_WithExecutionName(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	ctx := context.Background()
 	input := "test"
 
@@ -397,7 +397,7 @@ func TestGetExecutionSummary(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	summary := sm.GetExecutionSummary()
 
 	assert.NotNil(t, summary)
@@ -423,7 +423,7 @@ func TestIsTimeout(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 
 	// Test within timeout
 	startTime := time.Now()
@@ -447,7 +447,7 @@ func TestIsTimeout_NoTimeout(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 
 	// Should never timeout if TimeoutSeconds is not set
 	pastTime := time.Now().Add(-10 * time.Second)
@@ -468,7 +468,7 @@ func TestMarshalJSON(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	jsonBytes, err := json.Marshal(sm)
 
 	require.NoError(t, err)
@@ -551,7 +551,7 @@ func TestValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sm, err := New(tt.definition)
+			sm, err := New(tt.definition, true)
 
 			if tt.shouldErr {
 				require.Error(t, err)
@@ -585,7 +585,7 @@ func TestExecute_StateHistory(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	ctx := context.Background()
 	input := "initial"
 
@@ -609,7 +609,7 @@ func TestExecute_ExecutionMetadata(t *testing.T) {
 		}
 	}`)
 
-	sm, _ := New(definition)
+	sm, _ := New(definition, true)
 	ctx := context.Background()
 	input := "test"
 

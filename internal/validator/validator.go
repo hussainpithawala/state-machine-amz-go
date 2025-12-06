@@ -187,7 +187,7 @@ func (v *StateMachineValidator) getAllNextStateNames(state states.State) []strin
 	// For Task states, return all catch destinations plus Next
 	if stateType == "Task" {
 		// Return empty - validation happens in the main Validate method
-		return nextStates
+		return state.GetNextStates()
 	}
 
 	// For all other states, return single Next if present
