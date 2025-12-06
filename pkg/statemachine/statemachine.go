@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hussainpithawala/state-machine-amz-go/internal/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/internal/validator"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/errors"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/factory"
 	"sigs.k8s.io/yaml"
 )

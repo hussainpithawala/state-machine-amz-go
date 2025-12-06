@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hussainpithawala/state-machine-amz-go/internal/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
 )

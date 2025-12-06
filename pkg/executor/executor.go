@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hussainpithawala/state-machine-amz-go/internal/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 )
 
 // StateMachineInterface defines the minimal interface needed by executor
