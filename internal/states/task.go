@@ -1,3 +1,5 @@
+// internal/states/task.go
+
 package states
 
 import (
@@ -53,15 +55,57 @@ type TaskHandler interface {
 	CanHandle(resource string) bool
 }
 
-// DefaultTaskHandler is a simple pass-through handler for testing
+// Context keys for task execution
+type contextKey string
+
+const (
+	// ExecutionContextKey is the key for storing execution context in context
+	ExecutionContextKey contextKey = "execution_context"
+)
+
+// ExecutionContext provides access to execution-related functionality
+type ExecutionContext interface {
+	// GetTaskHandler retrieves a task handler for a resource
+	GetTaskHandler(resource string) (func(context.Context, interface{}) (interface{}, error), bool)
+}
+
+// DefaultTaskHandler is an enhanced handler that delegates to execution context
 type DefaultTaskHandler struct{}
 
+// NewDefaultTaskHandler creates a new task handler
+func NewDefaultTaskHandler() *DefaultTaskHandler {
+	return &DefaultTaskHandler{}
+}
+
+// Execute tries to delegate to handler from execution context
 func (h *DefaultTaskHandler) Execute(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
-	// In a real implementation, this would call the actual service
-	// For now, return the input as-is
+	// Try to get execution context
+	if execCtx, ok := ctx.Value(ExecutionContextKey).(ExecutionContext); ok && execCtx != nil {
+		// Get handler from execution context
+		if handler, exists := execCtx.GetTaskHandler(resource); exists {
+			// Apply parameters if provided
+			taskInput := input
+			if parameters != nil {
+				processor := NewJSONPathProcessor()
+				expandedInput, err := processor.expandValue(parameters, map[string]interface{}{
+					"$": input,
+				})
+				if err != nil {
+					return nil, fmt.Errorf("failed to expand parameters: %w", err)
+				}
+				taskInput = expandedInput
+			}
+
+			// Execute the registered handler
+			return handler(ctx, taskInput)
+		}
+	}
+
+	// If no handler found, fall back to original behavior (return input as-is)
 	return input, nil
 }
 
+// ExecuteWithTimeout executes the task with a specific timeout context
 func (h *DefaultTaskHandler) ExecuteWithTimeout(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}, timeoutSeconds *int) (interface{}, error) {
 	// If no timeout specified, execute directly
 	if timeoutSeconds == nil || *timeoutSeconds <= 0 {
@@ -96,6 +140,7 @@ func (h *DefaultTaskHandler) ExecuteWithTimeout(ctx context.Context, resource st
 	}
 }
 
+// CanHandle returns true if this handler can handle the resource
 func (h *DefaultTaskHandler) CanHandle(resource string) bool {
 	return true
 }
@@ -189,7 +234,7 @@ func (t *TaskState) Execute(ctx context.Context, input interface{}) (interface{}
 	// Get or use default task handler
 	handler := t.TaskHandler
 	if handler == nil {
-		handler = &DefaultTaskHandler{}
+		handler = NewDefaultTaskHandler()
 	}
 
 	// Execute task with retry logic
@@ -336,4 +381,11 @@ func (t *TaskState) GetNextStates() []string {
 	}
 
 	return nextStates
+}
+
+// Helper functions for context management
+
+// WithExecutionContext adds an execution context to the context
+func WithExecutionContext(ctx context.Context, execCtx ExecutionContext) context.Context {
+	return context.WithValue(ctx, ExecutionContextKey, execCtx)
 }
