@@ -377,6 +377,13 @@ StateHistory []StateHistory
 | Local Testing      | Requires mock services | Native Go testing    |
 | Custom Logic       | Lambda functions       | Direct Go code       |
 
+
+## Roadmap
+- [ ] Distributed execution support
+- [ ] Persistence layer for executions
+  - [ ] Support for AWS DynamoDB, Redis, Postgres, etc. 
+- [ ] Web dashboard for monitoring
+
 ## License
 The gopkg is available as open source under the terms of the MIT License.
 
