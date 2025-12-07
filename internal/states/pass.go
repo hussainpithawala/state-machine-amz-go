@@ -55,7 +55,7 @@ func (s *PassState) WithResultPath(path string) *PassState {
 }
 
 // Execute executes the Pass state
-func (s *PassState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {
+func (s *PassState) Execute(ctx context.Context, input interface{}) (resultOutput interface{}, nextState *string, err error) {
 	// Use the global path processor
 	processor := GetPathProcessor()
 
