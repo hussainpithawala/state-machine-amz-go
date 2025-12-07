@@ -1,0 +1,335 @@
+Comment: Complete Order Processing Workflow - Tests Pass, Task, Choice, and Error Handling
+StartAt: ValidateOrder
+States:
+  ValidateOrder:
+    Type: Pass
+    Comment: Validate and normalize order input
+    InputPath: $.order
+    ResultPath: $.validatedOrder
+    Parameters:
+      orderId: $.orderId
+      customerId: $.customerId
+      items: $.items
+      status: "VALIDATED"
+      timestamp: $.timestamp
+    Next: CalculateOrderTotal
+
+  CalculateOrderTotal:
+    Type: Pass
+    Comment: Calculate order totals using Pass state
+    Result:
+      subtotal: 150.00
+      taxRate: 0.08
+      tax: 12.00
+      total: 162.00
+    ResultPath: $.pricing
+    Next: CheckOrderAmount
+
+  CheckOrderAmount:
+    Type: Choice
+    Comment: Route based on order total amount
+    Choices:
+      - Variable: $.pricing.total
+        NumericLessThan: 50
+        Next: ProcessSmallOrder
+      - Variable: $.pricing.total
+        NumericGreaterThanEquals: 50
+        NumericLessThan: 200
+        Next: ProcessStandardOrder
+      - Variable: $.pricing.total
+        NumericGreaterThanEquals: 200
+        Next: ProcessPremiumOrder
+    Default: ProcessStandardOrder
+
+  ProcessSmallOrder:
+    Type: Task
+    Comment: Process small orders with basic retry
+    Resource: arn:aws:lambda:us-east-1:123456789012:function:ProcessSmallOrder
+    Parameters:
+      orderId: $.validatedOrder.orderId
+      amount: $.pricing.total
+    ResultPath: $.orderProcessing
+    Retry:
+      - ErrorEquals:
+          - States.TaskFailed
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2.0
+    Catch:
+      - ErrorEquals:
+          - States.TaskFailed
+        ResultPath: $.error
+        Next: HandleOrderError
+      - ErrorEquals:
+          - States.ALL
+        ResultPath: $.genericError
+        Next: LogFailure
+    Next: ProcessPayment
+
+  ProcessStandardOrder:
+    Type: Task
+    Comment: Process standard orders with enhanced retry
+    Resource: arn:aws:lambda:us-east-1:123456789012:function:ProcessStandardOrder
+    Parameters:
+      orderId: $.validatedOrder.orderId
+      customerId: $.validatedOrder.customerId
+      items: $.validatedOrder.items
+      amount: $.pricing.total
+    TimeoutSeconds: 30
+    ResultPath: $.orderProcessing
+    Retry:
+      - ErrorEquals:
+          - States.TaskFailed
+        IntervalSeconds: 1
+        MaxAttempts: 3
+        BackoffRate: 2.0
+      - ErrorEquals:
+          - States.Timeout
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 1.5
+    Catch:
+      - ErrorEquals:
+          - States.Timeout
+        ResultPath: $.timeoutError
+        Next: HandleTimeoutError
+      - ErrorEquals:
+          - States.TaskFailed
+        ResultPath: $.taskError
+        Next: HandleOrderError
+      - ErrorEquals:
+          - States.ALL
+        ResultPath: $.unknownError
+        Next: LogFailure
+    Next: ProcessPayment
+
+  ProcessPremiumOrder:
+    Type: Task
+    Comment: Process premium orders with strict timeout and retry
+    Resource: arn:aws:lambda:us-east-1:123456789012:function:ProcessPremiumOrder
+    Parameters:
+      orderId: $.validatedOrder.orderId
+      customerId: $.validatedOrder.customerId
+      priority: "HIGH"
+      items: $.validatedOrder.items
+      amount: $.pricing.total
+    TimeoutSeconds: 60
+    HeartbeatSeconds: 30
+    ResultPath: $.orderProcessing
+    ResultSelector:
+      processedOrder: $.Payload.processedOrder
+      processingTime: $.Payload.processingTime
+      status: $.Payload.status
+    Retry:
+      - ErrorEquals:
+          - ServiceUnavailable
+        IntervalSeconds: 1
+        MaxAttempts: 4
+        BackoffRate: 2.0
+        MaxDelaySeconds: 30
+      - ErrorEquals:
+          - States.TaskFailed
+        IntervalSeconds: 2
+        MaxAttempts: 3
+        BackoffRate: 1.5
+    Catch:
+#      - ErrorEquals:
+#          - ServiceUnavailable
+#        ResultPath: $.serviceError
+#        Next: RetryWithWait
+      - ErrorEquals:
+          - States.Timeout
+        ResultPath: $.timeoutError
+        Next: HandleTimeoutError
+      - ErrorEquals:
+          - PaymentRequirementsFailed
+        ResultPath: $.premiumRequirementError
+        Next: HandlePremiumError
+      - ErrorEquals:
+          - States.ALL
+        ResultPath: $.criticalError
+        Next: LogFailure
+    Next: ProcessPayment
+
+#  RetryWithWait:
+#    Type: Wait
+#    Comment: Wait before retrying premium order processing
+#    Seconds: 5
+#    Next: ProcessPremiumOrder
+
+  ProcessPayment:
+    Type: Task
+    Comment: Process payment with comprehensive error handling
+    Resource: arn:aws:lambda:us-east-1:123456789012:function:ProcessPayment
+    Parameters:
+      orderId: $.validatedOrder.orderId
+      amount: $.pricing.total
+      customerId: $.validatedOrder.customerId
+    TimeoutSeconds: 45
+    ResultPath: $.payment
+    Retry:
+      - ErrorEquals:
+          - PaymentGatewayTimeout
+          - PaymentServiceUnavailable
+        IntervalSeconds: 2
+        MaxAttempts: 4
+        BackoffRate: 2.0
+        MaxDelaySeconds: 60
+      - ErrorEquals:
+          - InvalidPaymentMethod
+        IntervalSeconds: 1
+        MaxAttempts: 2
+        BackoffRate: 1.0
+    Catch:
+      - ErrorEquals:
+          - InsufficientFunds
+        ResultPath: $.paymentError.insufficientFunds
+        Next: HandleInsufficientFunds
+      - ErrorEquals:
+          - PaymentDeclined
+        ResultPath: $.paymentError.declined
+        Next: HandleDeclinedPayment
+      - ErrorEquals:
+          - InvalidPaymentMethod
+        ResultPath: $.paymentError.invalidMethod
+        Next: HandleInvalidPayment
+      - ErrorEquals:
+          - States.Timeout
+        ResultPath: $.paymentError.timeout
+        Next: HandlePaymentTimeout
+      - ErrorEquals:
+          - States.ALL
+        ResultPath: $.paymentError.unknown
+        Next: HandlePaymentFailure
+    Next: FinalizeOrder
+
+  FinalizeOrder:
+    Type: Pass
+    Comment: Finalize order with success status
+    Result:
+      status: "SUCCESS"
+      message: "Order processed and payment completed"
+    ResultPath: $.finalization
+    OutputPath: $
+    Next: SendSuccessNotification
+
+  SendSuccessNotification:
+    Type: Task
+    Comment: Send success notification
+    Resource: arn:aws:lambda:us-east-1:123456789012:function:SendNotification
+    Parameters:
+      orderId: $.validatedOrder.orderId
+      status: "SUCCESS"
+      message: "Your order has been confirmed"
+    End: true
+
+  # Error Handling States
+  HandleOrderError:
+    Type: Pass
+    Comment: Handle order processing errors
+    Result:
+      status: "ORDER_PROCESSING_FAILED"
+      remediation: "RETRY_LATER"
+    ResultPath: $.errorHandling
+    Next: NotifyAndCancel
+
+  HandleTimeoutError:
+    Type: Pass
+    Comment: Handle timeout errors
+    Result:
+      status: "PROCESSING_TIMEOUT"
+      remediation: "MANUAL_REVIEW_REQUIRED"
+    ResultPath: $.errorHandling
+    Next: NotifyAndCancel
+
+  HandlePremiumError:
+    Type: Pass
+    Comment: Handle premium order specific errors
+    Result:
+      status: "PREMIUM_REQUIREMENT_NOT_MET"
+      remediation: "DOWNGRADE_TO_STANDARD"
+    ResultPath: $.errorHandling
+    Next: NotifyAndCancel
+
+  HandleInsufficientFunds:
+    Type: Pass
+    Comment: Handle insufficient funds error
+    Result:
+      status: "PAYMENT_FAILED"
+      reason: "INSUFFICIENT_FUNDS"
+      remediation: "REQUEST_ALTERNATIVE_PAYMENT"
+    ResultPath: $.errorHandling
+    Next: RefundIfNecessary
+
+  HandleDeclinedPayment:
+    Type: Pass
+    Comment: Handle declined payment
+    Result:
+      status: "PAYMENT_DECLINED"
+      reason: "CARD_DECLINED"
+      remediation: "REQUEST_ALTERNATIVE_PAYMENT"
+    ResultPath: $.errorHandling
+    Next: RefundIfNecessary
+
+  HandleInvalidPayment:
+    Type: Pass
+    Comment: Handle invalid payment method
+    Result:
+      status: "INVALID_PAYMENT_METHOD"
+      reason: "PAYMENT_METHOD_NOT_SUPPORTED"
+      remediation: "UPDATE_PAYMENT_METHOD"
+    ResultPath: $.errorHandling
+    Next: RefundIfNecessary
+
+  HandlePaymentTimeout:
+    Type: Pass
+    Comment: Handle payment processing timeout
+    Result:
+      status: "PAYMENT_TIMEOUT"
+      reason: "GATEWAY_TIMEOUT"
+      remediation: "VERIFY_PAYMENT_STATUS"
+    ResultPath: $.errorHandling
+    Next: RefundIfNecessary
+
+  HandlePaymentFailure:
+    Type: Pass
+    Comment: Handle generic payment failures
+    Result:
+      status: "PAYMENT_FAILED"
+      reason: "UNKNOWN_ERROR"
+      remediation: "CONTACT_SUPPORT"
+    ResultPath: $.errorHandling
+    Next: RefundIfNecessary
+
+  RefundIfNecessary:
+    Type: Task
+    Comment: Process refund if order partially completed
+    Resource: arn:aws:lambda:us-east-1:123456789012:function:ProcessRefund
+    Parameters:
+      orderId: $.validatedOrder.orderId
+      amount: $.pricing.total
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        ResultPath: $.refundError
+        Next: LogFailure
+    Next: NotifyAndCancel
+
+  NotifyAndCancel:
+    Type: Task
+    Comment: Notify customer and cancel order
+    Resource: arn:aws:lambda:us-east-1:123456789012:function:SendErrorNotification
+    Parameters:
+      orderId: $.validatedOrder.orderId
+      customerId: $.validatedOrder.customerId
+      status: $.errorHandling.status
+      reason: $.errorHandling.reason
+    End: true
+
+  LogFailure:
+    Type: Pass
+    Comment: Final failure logging state
+    Result:
+      status: "CRITICAL_FAILURE"
+      message: "Order processing failed with critical error"
+    End: true

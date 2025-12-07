@@ -1,0 +1,355 @@
+Name: PaymentProcessingFlow
+Version: 1.0
+StartAt: InitializePayment
+TimeoutSeconds: 180
+Comment: "Process payments with retry logic and fallback methods"
+States:
+  InitializePayment:
+    Type: Pass
+    Parameters:
+      paymentId.$: "$$.Execution.Id"
+      timestamp.$: "$$.Execution.StartTime"
+      originalRequest.$: "$"
+    ResultPath: "$.paymentContext"
+    Next: ValidatePaymentRequest
+    Comment: "Initialize payment processing context"
+
+  ValidatePaymentRequest:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:ValidatePaymentRequest"
+    Parameters:
+      request.$: "$.paymentContext.originalRequest"
+      rules:
+        - field: "amount"
+          min: 0.01
+          max: 10000
+        - field: "currency"
+          allowed: ["USD", "EUR", "GBP"]
+        - field: "paymentMethod"
+          required: true
+    ResultPath: "$.validation"
+    Next: CheckValidation
+    Retry:
+      - ErrorEquals:
+          - "States.Timeout"
+        IntervalSeconds: 2
+        MaxAttempts: 2
+    Catch:
+      - ErrorEquals:
+          - "States.ALL"
+        Next: ValidationFailed
+    Comment: "Validate payment request parameters"
+
+  CheckValidation:
+    Type: Choice
+    Choices:
+      - Variable: "$.validation.valid"
+        BooleanEquals: true
+        Next: SelectPaymentMethod
+      - Variable: "$.validation.valid"
+        BooleanEquals: false
+        Next: ReturnValidationErrors
+    Comment: "Check validation result"
+
+  SelectPaymentMethod:
+    Type: Choice
+    Choices:
+      - Variable: "$.paymentContext.originalRequest.paymentMethod.type"
+        StringEquals: "credit_card"
+        Next: ProcessCreditCard
+      - Variable: "$.paymentContext.originalRequest.paymentMethod.type"
+        StringEquals: "paypal"
+        Next: ProcessPayPal
+      - Variable: "$.paymentContext.originalRequest.paymentMethod.type"
+        StringEquals: "bank_transfer"
+        Next: ProcessBankTransfer
+      - Variable: "$.paymentContext.originalRequest.paymentMethod.type"
+        StringEquals: "crypto"
+        Next: ProcessCrypto
+    Default: InvalidPaymentMethod
+    Comment: "Route to appropriate payment processor"
+
+  ProcessCreditCard:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:ProcessCreditCard"
+    Parameters:
+      cardNumber.$: "$.paymentContext.originalRequest.paymentMethod.cardNumber"
+      expiry.$: "$.paymentContext.originalRequest.paymentMethod.expiry"
+      cvv.$: "$.paymentContext.originalRequest.paymentMethod.cvv"
+      amount.$: "$.paymentContext.originalRequest.amount"
+      currency.$: "$.paymentContext.originalRequest.currency"
+    ResultPath: "$.paymentResult"
+    Next: CheckCreditCardResult
+    Retry:
+      - ErrorEquals:
+          - "States.TaskFailed"
+        IntervalSeconds: 5
+        MaxAttempts: 3
+        BackoffRate: 2.0
+    Catch:
+      - ErrorEquals:
+          - "States.ALL"
+        Next: CreditCardFailed
+    Comment: "Process credit card payment"
+
+  CheckCreditCardResult:
+    Type: Choice
+    Choices:
+      - Variable: "$.paymentResult.status"
+        StringEquals: "approved"
+        Next: PaymentSucceeded
+      - Variable: "$.paymentResult.status"
+        StringEquals: "declined"
+        Next: CreditCardDeclined
+      - Variable: "$.paymentResult.status"
+        StringEquals: "pending"
+        Next: WaitForCCConfirmation
+    Default: CreditCardError
+    Comment: "Check credit card processing result"
+
+  ProcessPayPal:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:ProcessPayPal"
+    Parameters:
+      token.$: "$.paymentContext.originalRequest.paymentMethod.token"
+      amount.$: "$.paymentContext.originalRequest.amount"
+      currency.$: "$.paymentContext.originalRequest.currency"
+      description: "Payment for order"
+    ResultPath: "$.paymentResult"
+    Next: CheckPayPalResult
+    Retry:
+      - ErrorEquals:
+          - "States.TaskFailed"
+        IntervalSeconds: 10
+        MaxAttempts: 2
+    Catch:
+      - ErrorEquals:
+          - "States.ALL"
+        Next: PayPalFailed
+    Comment: "Process PayPal payment"
+
+  CheckPayPalResult:
+    Type: Choice
+    Choices:
+      - Variable: "$.paymentResult.status"
+        StringEquals: "completed"
+        Next: PaymentSucceeded
+      - Variable: "$.paymentResult.status"
+        StringEquals: "pending"
+        Next: WaitForPayPalConfirmation
+    Default: PayPalError
+    Comment: "Check PayPal processing result"
+
+  ProcessBankTransfer:
+    Type: Parallel
+    Branches:
+      - StartAt: InitiateTransfer
+        States:
+          InitiateTransfer:
+            Type: Task
+            Resource: "arn:aws:lambda:us-east-1:123456789012:function:InitiateBankTransfer"
+            Parameters:
+              accountNumber.$: "$.paymentContext.originalRequest.paymentMethod.accountNumber"
+              routingNumber.$: "$.paymentContext.originalRequest.paymentMethod.routingNumber"
+              amount.$: "$.paymentContext.originalRequest.amount"
+            ResultPath: "$.transferInitiated"
+            End: true
+
+      - StartAt: SendNotification
+        States:
+          SendNotification:
+            Type: Task
+            Resource: "arn:aws:lambda:us-east-1:123456789012:function:SendTransferNotification"
+            Parameters:
+              customerEmail.$: "$.paymentContext.originalRequest.customerEmail"
+              amount.$: "$.paymentContext.originalRequest.amount"
+              reference: "Bank transfer initiated"
+            ResultPath: "$.notificationSent"
+            End: true
+    ResultPath: "$.bankTransfer"
+    Next: BankTransferInitiated
+    Comment: "Initiate bank transfer and send notification in parallel"
+
+  ProcessCrypto:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:ProcessCrypto"
+    Parameters:
+      walletAddress.$: "$.paymentContext.originalRequest.paymentMethod.walletAddress"
+      amount.$: "$.paymentContext.originalRequest.amount"
+      currency.$: "$.paymentContext.originalRequest.currency"
+      network: "ethereum"
+    ResultPath: "$.paymentResult"
+    Next: WaitForCryptoConfirmation
+    Comment: "Process cryptocurrency payment"
+
+  WaitForCCConfirmation:
+    Type: Wait
+    Seconds: 30
+    Comment: "Wait for credit card confirmation"
+    Next: ProcessCreditCard
+
+  WaitForPayPalConfirmation:
+    Type: Wait
+    Seconds: 60
+    Comment: "Wait for PayPal confirmation"
+    Next: CheckPayPalResult
+
+  WaitForCryptoConfirmation:
+    Type: Wait
+    Seconds: 120
+    Comment: "Wait for blockchain confirmation"
+    Next: CheckCryptoResult
+
+  CheckCryptoResult:
+    Type: Choice
+    Choices:
+      - Variable: "$.paymentResult.confirmations"
+        NumericGreaterThanEquals: 3
+        Next: PaymentSucceeded
+      - Variable: "$.paymentResult.confirmations"
+        NumericGreaterThanEquals: 1
+        Next: WaitForMoreConfirmations
+    Default: CryptoFailed
+    Comment: "Check cryptocurrency confirmation status"
+
+  WaitForMoreConfirmations:
+    Type: Wait
+    Seconds: 30
+    Comment: "Wait for more confirmations"
+    Next: CheckCryptoResult
+
+  BankTransferInitiated:
+    Type: Pass
+    Parameters:
+      status: "initiated"
+      message: "Bank transfer initiated successfully"
+      transferId.$: "$.bankTransfer[0].transferInitiated.transferId"
+      notificationSent.$: "$.bankTransfer[1].notificationSent.success"
+    ResultPath: "$.paymentResult"
+    Next: PaymentSucceeded
+    Comment: "Bank transfer initiated"
+
+  PaymentSucceeded:
+    Type: Succeed
+    OutputPath: "$.paymentResult"
+    Comment: "Payment processed successfully"
+
+  CreditCardDeclined:
+    Type: Choice
+    Choices:
+      - Variable: "$.paymentContext.originalRequest.fallbackMethod"
+        IsPresent: true
+        Next: TryFallbackMethod
+    Default: PaymentFailed
+    Comment: "Credit card was declined"
+
+  CreditCardFailed:
+    Type: Pass
+    Parameters:
+      error: "CreditCardProcessingFailed"
+      message: "Credit card processing failed"
+      originalError.$: "$.paymentResult.error"
+    ResultPath: "$.error"
+    Next: TryFallbackMethod
+    Comment: "Credit card processing failed"
+
+  PayPalFailed:
+    Type: Pass
+    Parameters:
+      error: "PayPalProcessingFailed"
+      message: "PayPal processing failed"
+    ResultPath: "$.error"
+    Next: TryFallbackMethod
+    Comment: "PayPal processing failed"
+
+  CryptoFailed:
+    Type: Pass
+    Parameters:
+      error: "CryptoProcessingFailed"
+      message: "Cryptocurrency processing failed"
+    ResultPath: "$.error"
+    Next: TryFallbackMethod
+    Comment: "Cryptocurrency processing failed"
+
+  PayPalError:
+    Type: Pass
+    Parameters:
+      error: "PayPalError"
+      message: "PayPal returned an error"
+    ResultPath: "$.error"
+    Next: TryFallbackMethod
+    Comment: "PayPal returned an error"
+
+  CreditCardError:
+    Type: Pass
+    Parameters:
+      error: "CreditCardError"
+      message: "Credit card processing error"
+    ResultPath: "$.error"
+    Next: TryFallbackMethod
+    Comment: "Credit card processing error"
+
+  TryFallbackMethod:
+    Type: Choice
+    Choices:
+      - Variable: "$.paymentContext.originalRequest.fallbackMethod"
+        IsPresent: true
+        Next: ProcessFallback
+    Default: PaymentFailed
+    Comment: "Try fallback payment method"
+
+  ProcessFallback:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:ProcessPayment"
+    Parameters:
+      method.$: "$.paymentContext.originalRequest.fallbackMethod"
+      amount.$: "$.paymentContext.originalRequest.amount"
+      currency.$: "$.paymentContext.originalRequest.currency"
+      retryCount: 1
+    ResultPath: "$.fallbackResult"
+    Next: CheckFallbackResult
+    Comment: "Process fallback payment method"
+
+  CheckFallbackResult:
+    Type: Choice
+    Choices:
+      - Variable: "$.fallbackResult.status"
+        StringEquals: "approved"
+        Next: PaymentSucceeded
+      - Variable: "$.fallbackResult.status"
+        StringEquals: "completed"
+        Next: PaymentSucceeded
+    Default: PaymentFailed
+    Comment: "Check fallback payment result"
+
+  ReturnValidationErrors:
+    Type: Pass
+    Parameters:
+      error: "ValidationErrors"
+      message: "Payment request validation failed"
+      errors.$: "$.validation.errors"
+    ResultPath: "$.error"
+    Next: ValidationFailed
+    Comment: "Return validation errors"
+
+  InvalidPaymentMethod:
+    Type: Pass
+    Parameters:
+      error: "InvalidPaymentMethod"
+      message: "Invalid payment method specified"
+      method.$: "$.paymentContext.originalRequest.paymentMethod.type"
+    ResultPath: "$.error"
+    Next: PaymentFailed
+    Comment: "Invalid payment method"
+
+  ValidationFailed:
+    Type: Fail
+    Error: "PaymentValidationFailed"
+    Cause.$: "$.error.message"
+    Comment: "Payment validation failed"
+
+  PaymentFailed:
+    Type: Fail
+    Error: "PaymentProcessingFailed"
+    Cause.$: "$.error.message"
+    Comment: "Payment processing failed"

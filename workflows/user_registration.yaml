@@ -1,0 +1,253 @@
+Name: UserRegistrationWorkflow
+Version: 1.0
+StartAt: ValidateRegistration
+TimeoutSeconds: 120
+Comment: "Handle new user registration with email verification and profile setup"
+States:
+  ValidateRegistration:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:ValidateRegistration"
+    Parameters:
+      userData.$: "$"
+      validationRules:
+        - field: "email"
+          type: "email"
+          required: true
+        - field: "password"
+          minLength: 8
+          required: true
+        - field: "username"
+          minLength: 3
+          maxLength: 20
+          required: true
+    ResultPath: "$.validation"
+    Next: CheckValidation
+    Retry:
+      - ErrorEquals:
+          - "States.TaskFailed"
+        IntervalSeconds: 2
+        MaxAttempts: 2
+    Comment: "Validate user registration data"
+
+  CheckValidation:
+    Type: Choice
+    Choices:
+      - Variable: "$.validation.valid"
+        BooleanEquals: true
+        Next: CheckEmailExists
+      - Variable: "$.validation.valid"
+        BooleanEquals: false
+        Next: ReturnValidationErrors
+    Comment: "Check validation results"
+
+  CheckEmailExists:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:CheckEmailExists"
+    Parameters:
+      email.$: "$.email"
+    ResultPath: "$.emailCheck"
+    Next: CheckEmailResult
+    Comment: "Check if email already exists"
+
+  CheckEmailResult:
+    Type: Choice
+    Choices:
+      - Variable: "$.emailCheck.exists"
+        BooleanEquals: false
+        Next: CheckUsernameExists
+      - Variable: "$.emailCheck.exists"
+        BooleanEquals: true
+        Next: EmailAlreadyExists
+    Comment: "Check email existence result"
+
+  CheckUsernameExists:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:CheckUsernameExists"
+    Parameters:
+      username.$: "$.username"
+    ResultPath: "$.usernameCheck"
+    Next: CheckUsernameResult
+    Comment: "Check if username already exists"
+
+  CheckUsernameResult:
+    Type: Choice
+    Choices:
+      - Variable: "$.usernameCheck.exists"
+        BooleanEquals: false
+        Next: CreateUser
+      - Variable: "$.usernameCheck.exists"
+        BooleanEquals: true
+        Next: UsernameAlreadyExists
+    Comment: "Check username existence result"
+
+  CreateUser:
+    Type: Parallel
+    Branches:
+      - StartAt: CreateUserRecord
+        States:
+          CreateUserRecord:
+            Type: Task
+            Resource: "arn:aws:lambda:us-east-1:123456789012:function:CreateUserRecord"
+            Parameters:
+              email.$: "$.email"
+              username.$: "$.username"
+              password.$: "$.password"
+              firstName.$: "$.firstName"
+              lastName.$: "$.lastName"
+            ResultPath: "$.userRecord"
+            End: true
+
+      - StartAt: CreateUserProfile
+        States:
+          CreateUserProfile:
+            Type: Task
+            Resource: "arn:aws:lambda:us-east-1:123456789012:function:CreateUserProfile"
+            Parameters:
+              userId.$: "$$.Execution.Id"
+              email.$: "$.email"
+              username.$: "$.username"
+              preferences:
+                language: "en"
+                timezone: "UTC"
+                notifications: true
+            ResultPath: "$.userProfile"
+            End: true
+
+      - StartAt: GenerateVerificationToken
+        States:
+          GenerateVerificationToken:
+            Type: Task
+            Resource: "arn:aws:lambda:us-east-1:123456789012:function:GenerateVerificationToken"
+            Parameters:
+              email.$: "$.email"
+              userId.$: "$$.Execution.Id"
+              expiresIn: 86400
+            ResultPath: "$.verificationToken"
+            End: true
+    ResultPath: "$.creationResults"
+    Next: SendVerificationEmail
+    Comment: "Create user record, profile, and verification token in parallel"
+
+  SendVerificationEmail:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:SendVerificationEmail"
+    Parameters:
+      to.$: "$.email"
+      token.$: "$.creationResults[2].verificationToken.token"
+      userId.$: "$.creationResults[0].userRecord.userId"
+      username.$: "$.username"
+    ResultPath: "$.emailSent"
+    Next: WelcomeNewUser
+    Retry:
+      - ErrorEquals:
+          - "States.TaskFailed"
+        IntervalSeconds: 5
+        MaxAttempts: 3
+    Catch:
+      - ErrorEquals:
+          - "States.ALL"
+        Next: EmailSendFailed
+    Comment: "Send verification email to new user"
+
+  WelcomeNewUser:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:SendWelcomeEmail"
+    Parameters:
+      to.$: "$.email"
+      username.$: "$.username"
+      firstName.$: "$.firstName"
+    ResultPath: "$.welcomeEmail"
+    Next: SetupInitialPreferences
+    Comment: "Send welcome email"
+
+  SetupInitialPreferences:
+    Type: Pass
+    Parameters:
+      userId.$: "$.creationResults[0].userRecord.userId"
+      profile.$: "$.creationResults[1].userProfile"
+      verified: false
+      verificationToken.$: "$.creationResults[2].verificationToken.token"
+      emails:
+        verificationSent: true
+        welcomeSent: true
+      timestamp.$: "$$.Execution.StartTime"
+    ResultPath: "$.registrationResult"
+    Next: RegistrationComplete
+    Comment: "Setup initial user preferences"
+
+  RegistrationComplete:
+    Type: Succeed
+    OutputPath: "$.registrationResult"
+    Comment: "User registration completed successfully"
+
+  ReturnValidationErrors:
+    Type: Pass
+    Parameters:
+      error: "ValidationErrors"
+      message: "Registration data validation failed"
+      errors.$: "$.validation.errors"
+      timestamp.$: "$$.Execution.StartTime"
+    ResultPath: "$.error"
+    Next: RegistrationFailed
+    Comment: "Return validation errors"
+
+  EmailAlreadyExists:
+    Type: Pass
+    Parameters:
+      error: "EmailAlreadyExists"
+      message: "Email address is already registered"
+      email.$: "$.email"
+      suggestion: "Try using a different email or reset password"
+    ResultPath: "$.error"
+    Next: RegistrationFailed
+    Comment: "Email already exists"
+
+  UsernameAlreadyExists:
+    Type: Pass
+    Parameters:
+      error: "UsernameAlreadyExists"
+      message: "Username is already taken"
+      username.$: "$.username"
+      suggestions:
+        - "$.username-123"
+        - "$.username_2024"
+        - "$.username.official"
+    ResultPath: "$.error"
+    Next: RegistrationFailed
+    Comment: "Username already exists"
+
+  EmailSendFailed:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:HandleEmailFailure"
+    Parameters:
+      userId.$: "$.creationResults[0].userRecord.userId"
+      email.$: "$.email"
+      error: "EmailSendFailed"
+      retryAvailable: true
+    ResultPath: "$.emailError"
+    Next: MarkForRetry
+    Comment: "Handle email sending failure"
+
+  MarkForRetry:
+    Type: Pass
+    Parameters:
+      status: "pending_verification"
+      userId.$: "$.creationResults[0].userRecord.userId"
+      email.$: "$.email"
+      verificationToken.$: "$.creationResults[2].verificationToken.token"
+      retryCount: 1
+      nextRetry.$: "$$.Execution.StartTime + PT1H"
+    ResultPath: "$.registrationResult"
+    Next: RegistrationPending
+    Comment: "Mark registration as pending retry"
+
+  RegistrationPending:
+    Type: Succeed
+    OutputPath: "$.registrationResult"
+    Comment: "Registration pending email verification retry"
+
+  RegistrationFailed:
+    Type: Fail
+    Error: "RegistrationFailed"
+    Cause.$: "$.error.message"
+    Comment: "User registration failed"

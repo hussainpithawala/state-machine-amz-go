@@ -1,0 +1,105 @@
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [ develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=5m --config=.golangci.yml
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: [ 1.23 ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test ./... -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
+          flags: ${{ matrix.go-version }}-${{ matrix.os }}
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
+      - name: Build package
+        run: |
+          go build -v ./...
+          go build -o /dev/null ./examples/*.go 2>/dev/null || true
+
+      - name: Check for breaking changes
+        run: |
+          # Install apidiff
+          go install golang.org/x/exp/cmd/apidiff@latest
+          
+          # Compare with last release (if available)
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Comparing with $LATEST_TAG"
+          
+          # Create temporary directories for comparison
+          mkdir -p /tmp/old /tmp/new
+          git archive $LATEST_TAG | tar -x -C /tmp/old/ || true
+          cp -r . /tmp/new/
+          
+          # Run apidiff if old version exists
+          if [ -f "/tmp/old/go.mod" ]; then
+            apidiff /tmp/old /tmp/new || echo "Note: API differences detected"
+          fi
+
+      - name: Verify go.mod
+        run: |
+          echo "Module: $(go list -m)"
+          go mod tidy
+          git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum not tidy" && exit 1)

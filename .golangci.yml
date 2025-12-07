@@ -1,0 +1,57 @@
+# .golangci.yml
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+    - gofmt
+#    - goimports
+    - revive
+    - gocritic
+    - bodyclose
+    - goconst
+    - gocyclo
+    - misspell
+    - prealloc
+    - whitespace
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+      - name: package-comments
+        severity: warning
+  gocyclo:
+    min-complexity: 15
+  goimports:
+    local-prefixes: github.com/hussainpithawala/state-machine-amz-go
+  gocritic:
+    enabled-tags:
+      - performance
+      - style
+      - diagnostic
+    disabled-checks:
+      - hugeParam
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - goconst
+        - dupl
+    - path: examples/
+      linters:
+        - gocyclo
+        - goconst
+  max-same-issues: 50
+  max-issues-per-linter: 50
