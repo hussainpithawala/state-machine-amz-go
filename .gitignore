@@ -31,3 +31,4 @@ build
 # Editor/IDE
 # .idea/
 # .vscode/
+/api-docs/

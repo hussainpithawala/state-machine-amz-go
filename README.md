@@ -1,4 +1,10 @@
 # state-machine-amz-go
+<!-- Badges -->
+[![GoDoc](https://pkg.go.dev/badge/github.com/hussainpithawala/state-machine-amz-go.svg)](https://pkg.go.dev/github.com/hussainpithawala/state-machine-amz-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/hussainpithawala/state-machine-amz-go)](https://goreportcard.com/report/github.com/hussainpithawala/state-machine-amz-go)
+[![GitHub Release](https://img.shields.io/github/v/release/hussainpithawala/state-machine-amz-go)](https://github.com/hussainpithawala/state-machine-amz-go/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/hussainpithawala/state-machine-amz-go/actions/workflows/release.yml/badge.svg)](https://github.com/hussainpithawala/state-machine-amz-go/actions/workflows/release.yml)
 
 A powerful, flexible state machine implementation for Golang that's compatible with Amazon States Language.
 The same YAML/JSON language, which is used for defining state machines in AWS Step Functions.  

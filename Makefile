@@ -1,107 +1,72 @@
-.PHONY: test test-unit test-integration bench coverage vet lint clean build
+# Makefile
+.PHONY: help test build lint clean release validate
 
-# Go parameters
-GOCMD=go
-GOBUILD=$(GOCMD) build
-GOTEST=$(GOCMD) test
-GOVET=$(GOCMD) vet
-GOMOD=$(GOCMD) mod
+BINARY_NAME=state-machine-amz-go
+VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "v0.0.0-dev")
+GO_VERSION=$(shell go version | awk '{print $$3}')
+LDFLAGS=-ldflags="-X 'main.Version=$(VERSION)' -X 'main.GoVersion=$(GO_VERSION)'"
 
-# Test parameters
-TEST_FLAGS=-v -race -cover
-COVERAGE_FILE=coverage.out
+help: ## Display this help message
+	@echo "Available commands:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-# Directories
-INTERNAL_DIR=internal
-PKG_DIR=pkg
-TEST_DIRS=$(INTERNAL_DIR)/... $(PKG_DIR)/...
+build: ## Build the package
+	@echo "Building version $(VERSION)..."
+	go build $(LDFLAGS) ./...
 
-# Default target
-all: test build
+test: ## Run tests
+	go test ./... -v -race -coverprofile=coverage.out
 
-# Run all tests
-test: test-unit
+test-coverage: test ## Run tests and show coverage
+	go tool cover -html=coverage.out
 
-# Run unit tests
-test-unit:
-	@echo "Running unit tests..."
-	$(GOTEST) $(TEST_FLAGS) ./$(INTERNAL_DIR)/states/... ./$(PKG_DIR)/...
+lint: ## Run linter
+	golangci-lint run
 
-# Run integration tests
-test-integration:
-	@echo "Running integration tests..."
-	$(GOTEST) $(TEST_FLAGS) ./examples/...
+clean: ## Clean build artifacts
+	rm -rf coverage.out dist/ $(BINARY_NAME)
 
-# Run benchmarks
-bench:
-	@echo "Running benchmarks..."
-	$(GOTEST) -bench=. -benchmem ./$(INTERNAL_DIR)/states/... ./$(PKG_DIR)/...
+examples: ## Build examples
+	@for example in examples/*/*.go; do \
+		echo "Building $$example..."; \
+		go build -o /dev/null $$example; \
+	done
 
-# Generate coverage report
-coverage:
-	@echo "Generating coverage report..."
-	$(GOTEST) -coverprofile=$(COVERAGE_FILE) ./$(INTERNAL_DIR)/... ./$(PKG_DIR)/...
-	$(GOCMD) tool cover -html=$(COVERAGE_FILE) -o coverage.html
-	@echo "Coverage report generated: coverage.html"
+check-mod: ## Check module dependencies
+	go mod tidy
+	git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum not tidy" && exit 1)
 
-# Run vet
-vet:
-	@echo "Running go vet..."
-	$(GOVET) ./$(INTERNAL_DIR)/... ./$(PKG_DIR)/...
+validate: lint test check-mod ## Run all validation checks
+	@echo "✅ All validation checks passed"
 
-# Tidy dependencies
-tidy:
-	@echo "Tidying dependencies..."
-	$(GOMOD) tidy
+pre-release: validate ## Prepare for release
+	@echo "✅ Ready for release $(VERSION)"
 
-# Build the project
-build:
-	@echo "Building..."
-	$(GOBUILD) ./...
+release: pre-release ## Create a new release (interactive)
+	@read -p "Enter version tag (e.g., v1.2.3): " version; \
+	git tag -a $$version -m "Release $$version"; \
+	git push origin $$version
 
-# Clean
-clean:
-	@echo "Cleaning..."
-	rm -f $(COVERAGE_FILE) coverage.html
-	rm -rf bin/
-	rm -rf dist/
+release-ci: ## Create release for CI (non-interactive)
+	@echo "Creating release for CI..."
+	@echo "Use 'git tag -a vX.Y.Z -m \"Release vX.Y.Z\" && git push origin vX.Y.Z'"
 
-# Install dependencies
-deps:
-	@echo "Installing test dependencies..."
-	$(GOCMD) get github.com/stretchr/testify@v1.8.4
-	$(GOMOD) tidy
+godoc: ## Start Go documentation server
+	@echo "Starting godoc server at http://localhost:6060"
+	@echo "Package documentation: http://localhost:6060/pkg/$(shell go list -m)/"
+	godoc -http=:6060
 
-# Run specific test
-test-pass-state:
-	$(GOTEST) $(TEST_FLAGS) ./$(INTERNAL_DIR)/states -run TestPassState
+bench: ## Run benchmarks
+	go test -bench=. -benchmem ./...
 
-test-validator:
-	$(GOTEST) $(TEST_FLAGS) ./$(INTERNAL_DIR)/validator
+update-deps: ## Update dependencies
+	go get -u ./...
+	go mod tidy
 
-test-executor:
-	$(GOTEST) $(TEST_FLAGS) ./$(PKG_DIR)/executor
+version: ## Show version information
+	@echo "Version: $(VERSION)"
+	@echo "Go version: $(GO_VERSION)"
+	@echo "Module: $(shell go list -m)"
+	@echo "Package: $(shell go list -m)@$(VERSION)"
 
-# Format code
-fmt:
-	$(GOCMD) fmt ./$(INTERNAL_DIR)/... ./$(PKG_DIR)/...
-
-# Run all checks (pre-commit)
-check: fmt vet test
-
-help:
-	@echo "Available targets:"
-	@echo "  all        - Run tests and build"
-	@echo "  test       - Run all tests"
-	@echo "  test-unit  - Run unit tests"
-	@echo "  bench      - Run benchmarks"
-	@echo "  coverage   - Generate coverage report"
-	@echo "  vet        - Run go vet"
-	@echo "  tidy       - Tidy go.mod"
-	@echo "  build      - Build the project"
-	@echo "  clean      - Clean build artifacts"
-	@echo "  deps       - Install dependencies"
-	@echo "  fmt        - Format code"
-	@echo "  check      - Run all checks (fmt, vet, test)"
-	@echo "  test-pass-state - Run only PassState tests"
-	@echo "  help       - Show this help message"
+.DEFAULT_GOAL := help
