@@ -288,7 +288,7 @@ func (t *TaskState) Execute(ctx context.Context, input interface{}) (result inte
 
 	// Execute task with retry logic
 	result, taskErr, retryExhausted := t.executeWithRetry(ctx, handler, taskInput)
-	if taskErr != nil && !retryExhausted {
+	if taskErr != nil && retryExhausted {
 		return nil, nil, taskErr
 	}
 
@@ -469,7 +469,9 @@ func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInp
 
 // processSuccessfulResult processes successful task results
 func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor,
-	processedInput interface{}, result interface{}) (output interface{}, nextState *string, err error) {
+	processedInput interface{}, result interface{}) (op2 interface{}, op3 *string, op4 error) {
+	var output interface{} = result
+	var err error
 	// Apply result selector if provided
 	if t.ResultSelector != nil {
 		output, err = processor.expandValue(t.ResultSelector, map[string]interface{}{
