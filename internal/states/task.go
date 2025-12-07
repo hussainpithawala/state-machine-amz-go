@@ -141,7 +141,7 @@ func (h *DefaultTaskHandler) ExecuteWithTimeout(ctx context.Context, resource st
 }
 
 // CanHandle returns true if this handler can handle the resource
-func (h *DefaultTaskHandler) CanHandle(resource string) bool {
+func (h *DefaultTaskHandler) CanHandle(string) bool {
 	return true
 }
 
@@ -212,7 +212,7 @@ func (t *TaskState) Validate() error {
 }
 
 // Execute executes the Task state
-func (t *TaskState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {
+func (t *TaskState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	// Process input and parameters
 	processor, taskInput, processedInput, err := t.prepareInput(input)
 	if err != nil {
@@ -233,17 +233,17 @@ func (t *TaskState) Execute(ctx context.Context, input interface{}) (interface{}
 }
 
 // prepareInput processes input path and parameters
-func (t *TaskState) prepareInput(input interface{}) (*JSONPathProcessor, interface{}, interface{}, error) {
+func (t *TaskState) prepareInput(input interface{}) (jsonPathProcessor *JSONPathProcessor, taskInput interface{}, processedInput interface{}, err error) {
 	processor := NewJSONPathProcessor()
 
 	// Apply input path
-	processedInput, err := processor.ApplyInputPath(input, t.InputPath)
+	processedInput, err = processor.ApplyInputPath(input, t.InputPath)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to apply input path: %w", err)
 	}
 
 	// Prepare parameters if provided
-	taskInput := processedInput
+	taskInput = processedInput
 	if t.Parameters != nil {
 		taskInput, err = processor.expandValue(t.Parameters, map[string]interface{}{
 			"$": processedInput,
