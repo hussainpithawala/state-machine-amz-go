@@ -30,7 +30,7 @@ type StateHistory struct {
 }
 
 // NewContext creates a new execution context
-func NewContext(name string, startAt string, input interface{}) *Execution {
+func NewContext(name, startAt string, input interface{}) *Execution {
 	return &Execution{
 		ID:           generateExecutionID(),
 		Name:         name,

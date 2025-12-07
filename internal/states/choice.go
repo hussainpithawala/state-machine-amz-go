@@ -54,7 +54,8 @@ func (s *ChoiceState) Execute(ctx context.Context, input interface{}) (interface
 	}
 
 	// Evaluate each choice
-	for _, choice := range s.Choices {
+	for index := range s.Choices {
+		choice := &s.Choices[index]
 		matched, err := s.evaluateChoice(choice, processedInput)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to evaluate choice: %w", err)
@@ -97,7 +98,7 @@ func (s *ChoiceState) Execute(ctx context.Context, input interface{}) (interface
 }
 
 // evaluateChoice evaluates a single choice rule
-func (s *ChoiceState) evaluateChoice(rule ChoiceRule, input interface{}) (bool, error) {
+func (s *ChoiceState) evaluateChoice(rule *ChoiceRule, input interface{}) (bool, error) {
 	// Determine the context for this rule
 	var context interface{} = input
 	if rule.Variable != "" {
@@ -118,7 +119,7 @@ func (s *ChoiceState) evaluateChoice(rule ChoiceRule, input interface{}) (bool, 
 	}
 
 	if rule.Not != nil {
-		matched, err := s.evaluateChoice(*rule.Not, context)
+		matched, err := s.evaluateChoice(rule.Not, context)
 		if err != nil {
 			return false, err
 		}
@@ -132,7 +133,8 @@ func (s *ChoiceState) evaluateChoice(rule ChoiceRule, input interface{}) (bool, 
 
 // evaluateAnd evaluates AND conditions
 func (s *ChoiceState) evaluateAnd(rules []ChoiceRule, context interface{}) (bool, error) {
-	for _, rule := range rules {
+	for index := range rules {
+		rule := &rules[index]
 		matched, err := s.evaluateChoice(rule, context)
 		if err != nil {
 			return false, err
@@ -146,7 +148,8 @@ func (s *ChoiceState) evaluateAnd(rules []ChoiceRule, context interface{}) (bool
 
 // evaluateOr evaluates OR conditions
 func (s *ChoiceState) evaluateOr(rules []ChoiceRule, context interface{}) (bool, error) {
-	for _, rule := range rules {
+	for index := range rules {
+		rule := &rules[index]
 		matched, err := s.evaluateChoice(rule, context)
 		if err != nil {
 			return false, err
@@ -159,7 +162,7 @@ func (s *ChoiceState) evaluateOr(rules []ChoiceRule, context interface{}) (bool,
 }
 
 // evaluateComparison evaluates comparison operators
-func (s *ChoiceState) evaluateComparison(rule ChoiceRule, variableValue interface{}) (bool, error) {
+func (s *ChoiceState) evaluateComparison(rule *ChoiceRule, variableValue interface{}) (bool, error) {
 	// Check each comparison operator
 	if rule.StringEquals != nil {
 		return s.compareString(variableValue, *rule.StringEquals, func(a, b string) bool { return a == b })
@@ -267,11 +270,12 @@ func (s *ChoiceState) compareBoolean(variableValue interface{}, expected bool) (
 		// Try to convert from string
 		if strValue, ok := variableValue.(string); ok {
 			lowerStr := strings.ToLower(strValue)
-			if lowerStr == "true" {
+			switch {
+			case lowerStr == "true":
 				boolValue = true
-			} else if lowerStr == "false" {
+			case lowerStr == "false":
 				boolValue = false
-			} else {
+			default:
 				return false, fmt.Errorf("cannot convert string '%s' to boolean", strValue)
 			}
 		} else {
@@ -395,17 +399,16 @@ func (s *ChoiceState) Validate() error {
 	}
 
 	// Validate each choice
-	for i, choice := range s.Choices {
-		if err := s.validateChoice(choice, i, true); err != nil {
-			return err
+	for index := range s.Choices {
+		if err := s.validateChoice(&s.Choices[index], index, true); err != nil {
+			return fmt.Errorf("choice %d: %w", index, err)
 		}
 	}
-
 	return nil
 }
 
 // validateChoice validates a single choice rule
-func (s *ChoiceState) validateChoice(choice ChoiceRule, index int, next_required bool) error {
+func (s *ChoiceState) validateChoice(choice *ChoiceRule, index int, next_required bool) error {
 	// Must have a variable (except for compound-only rules at top level)
 	// Actually, AWS allows compound operators without a top-level Variable
 	// So Variable might be empty for rules with only And/Or/Not
@@ -492,20 +495,20 @@ func (s *ChoiceState) validateChoice(choice ChoiceRule, index int, next_required
 	}
 
 	// Validate compound operators recursively
-	for i, subChoice := range choice.And {
-		if err := s.validateChoice(subChoice, i, false); err != nil {
-			return fmt.Errorf("choice %d.And[%d]: %w", index, i, err)
+	for index := range choice.And {
+		if err := s.validateChoice(&choice.And[index], index, false); err != nil {
+			return fmt.Errorf("choice %d.And[%d]: %w", index, index, err)
 		}
 	}
 
-	for i, subChoice := range choice.Or {
-		if err := s.validateChoice(subChoice, i, false); err != nil {
-			return fmt.Errorf("choice %d.Or[%d]: %w", index, i, err)
+	for index := range choice.Or {
+		if err := s.validateChoice(&choice.Or[index], index, false); err != nil {
+			return fmt.Errorf("choice %d.Or[%d]: %w", index, index, err)
 		}
 	}
 
 	if choice.Not != nil {
-		if err := s.validateChoice(*choice.Not, 0, false); err != nil {
+		if err := s.validateChoice(choice.Not, 0, false); err != nil {
 			return fmt.Errorf("choice %d.Not: %w", index, err)
 		}
 	}
@@ -556,8 +559,8 @@ func (s *ChoiceState) GetNextStates() []string {
 	nextStates := make([]string, 0)
 
 	// Add all choice destinations
-	for _, choice := range s.Choices {
-		nextStates = append(nextStates, choice.Next)
+	for index := range s.Choices {
+		nextStates = append(nextStates, s.Choices[index].Next)
 	}
 
 	// Add default if present

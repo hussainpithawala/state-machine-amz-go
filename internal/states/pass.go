@@ -67,16 +67,15 @@ func (s *PassState) Execute(ctx context.Context, input interface{}) (interface{}
 
 	// Determine result
 	var result interface{}
-	if s.Result != nil {
+	switch {
+	case s.Result != nil:
 		result = s.Result
-	} else if s.Parameters != nil {
-		// Apply parameter substitution
+	case s.Parameters != nil:
 		result, err = s.applyParameters(processedInput)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to apply parameters: %w", err)
 		}
-	} else {
-		// Pass through input
+	default:
 		result = processedInput
 	}
 

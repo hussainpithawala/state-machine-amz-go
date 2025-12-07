@@ -114,9 +114,6 @@ func (sm *StateMachine) GetStartAt() string {
 
 // GetState returns a state by name
 func (sm *StateMachine) GetState(name string) (states.State, error) {
-	//if sm == nil {
-	//	return nil, fmt.Errorf("state machine is nil")
-	//}
 	state, exists := sm.States[name]
 	if !exists {
 		return nil, fmt.Errorf("state '%s' not found", name)
