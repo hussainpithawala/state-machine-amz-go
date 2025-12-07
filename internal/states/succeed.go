@@ -12,7 +12,7 @@ type SucceedState struct {
 }
 
 // Execute executes the Succeed state
-func (s *SucceedState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {
+func (s *SucceedState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	// Process input
 	processor := GetPathProcessor()
 	processedInput, err := processor.ApplyInputPath(input, s.InputPath)

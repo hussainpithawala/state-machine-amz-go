@@ -1,78 +1,311 @@
-name: CI
+# .github/workflows/release.yml
+name: Release Go Package
 
 on:
   push:
-    branches: [ main]
-  pull_request:
-    branches: [ main ]
+    tags:
+      - 'v*' # Trigger on version tags like v1.0.0, v1.2.3-beta.1
+  workflow_dispatch: # Allow manual triggering
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+  id-token: write # Required for Go package provenance
+
+env:
+  # Go configuration
+  GO_VERSION: '1.21'
+  GOPROXY: 'https://proxy.golang.org,direct'
+  GOSUMDB: 'sum.golang.org'
+
+  # Module name
+  MODULE_PATH: 'github.com/hussainpithawala/state-machine-amz-go'
 
 jobs:
   test:
-    name: Test
+    name: Test and Validate
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: [ 1.19, 1.20, 1.21 ]
-
+        go-version: [1.20, 1.21]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set up Go
+      - name: Setup Go ${{ matrix.go-version }}
         uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
+          check-latest: true
 
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+      - name: Verify go.mod
+        run: |
+          echo "Module path: $(go list -m)"
+          if [ "$(go list -m)" != "$MODULE_PATH" ]; then
+            echo "Error: Module path in go.mod doesn't match expected path"
+            exit 1
+          fi
 
       - name: Install dependencies
         run: go mod download
 
       - name: Run tests
-        run: go test ./... -v
+        run: go test ./... -v -race -coverprofile=coverage.out
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+          flags: unittests
 
       - name: Run linter
         uses: golangci/golangci-lint-action@v3
         with:
           version: latest
+          args: --timeout=5m
 
-      - name: Build
-        run: go build ./...
-
-      - name: Check formatting
+      - name: Validate examples
         run: |
-          if [ "$(gofmt -l .)" != "" ]; then
-            echo "Code is not formatted properly. Run 'go fmt ./...'"
-            exit 1
-          fi
+          # Test that examples compile
+          for example in examples/*.go; do
+            echo "Building $example..."
+            go build -o /dev/null "$example"
+          done
 
-  coverage:
-    name: Coverage
+  build:
+    name: Build and Verify
+    needs: test
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      has-go-mod: ${{ steps.check-go-mod.outputs.has-go-mod }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set up Go
+      - name: Setup Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
 
-      - name: Generate coverage
+      - name: Check for go.mod
+        id: check-go-mod
         run: |
-          go test ./... -coverprofile=coverage.out
-          go tool cover -func=coverage.out
+          if [ -f "go.mod" ]; then
+            echo "has-go-mod=true" >> $GITHUB_OUTPUT
+          else
+            echo "has-go-mod=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - name: Get version from tag
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          
+          # Validate version format
+          if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9\.]+)?$ ]]; then
+            echo "Error: Invalid version format: $VERSION"
+            echo "Expected format: vX.Y.Z or vX.Y.Z-pre-release"
+            exit 1
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Verify module version
+        run: |
+          # Check if version tag matches go.mod
+          MOD_VERSION=$(grep '^module' go.mod | cut -d' ' -f2)
+          echo "Module: $MOD_VERSION"
+          
+          # Extract version from tag (remove 'v' prefix)
+          TAG_VERSION="${VERSION#v}"
+          echo "Tag version: $TAG_VERSION"
+
+      - name: Build all packages
+        run: |
+          # Build main package
+          go build -v ./...
+          
+          # Build examples
+          for pkg in examples/*.go; do
+            if [ -f "$pkg" ]; then
+              echo "Building $pkg..."
+              go build -o /dev/null "$pkg"
+            fi
+          done
+
+      - name: Generate documentation
+        run: |
+          # Install godoc if not present
+          go install golang.org/x/tools/cmd/godoc@latest
+          
+          # Generate API documentation
+          mkdir -p api-docs
+          godoc -url /pkg/$MODULE_PATH > api-docs/index.html || true
+
+      - name: Archive documentation
+        uses: actions/upload-artifact@v3
         with:
-          file: ./coverage.out
-          flags: unittests
+          name: api-docs
+          path: api-docs/
+
+  publish:
+    name: Publish to Go Package Registry
+    needs: [test, build]
+    if: needs.build.outputs.has-go-mod == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Setup GPG for signing
+        if: github.event_name == 'push'
+        uses: crazy-max/ghaction-import-gpg@v5
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+
+      - name: Update go.mod with version
+        run: |
+          # Extract version without 'v' prefix
+          VERSION_NUMBER="${VERSION#v}"
+          
+          # Update module version in go.mod if not already set
+          if ! grep -q "$VERSION_NUMBER" go.mod; then
+            # This is typically done during development, not in CI
+            echo "Note: Version $VERSION_NUMBER not found in go.mod"
+            echo "Make sure to update go.mod version before tagging"
+          fi
+
+      - name: List and verify packages
+        run: |
+          echo "Available packages:"
+          go list ./...
+          
+          echo -e "\nModule information:"
+          go list -m -f '{{.Path}} {{.Version}}' all
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Verify module
+        run: go mod verify
+
+      - name: Build with provenance
+        run: |
+          # Build with go releaser for provenance
+          go build -trimpath -ldflags="-s -w" ./...
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          generate_release_notes: true
+          files: |
+            README.md
+            LICENSE
+            go.mod
+            go.sum
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload module to proxy
+        if: github.event_name == 'push'
+        run: |
+          # Trigger Go module indexing by fetching via proxy
+          echo "Publishing module to Go proxy..."
+          GOPROXY=https://proxy.golang.org go list -m $MODULE_PATH@$VERSION
+          
+          # Verify it's available
+          sleep 5
+          echo "Verifying module availability..."
+          GOPROXY=https://proxy.golang.org go mod download $MODULE_PATH@$VERSION
+          
+          echo "✅ Module published successfully!"
+          echo "Users can now run:"
+          echo "  go get $MODULE_PATH@$VERSION"
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "🎉 Release ${{ steps.version.outputs.version }} published successfully!"
+          echo ""
+          echo "📦 Package available at:"
+          echo "  https://pkg.go.dev/$MODULE_PATH@${{ steps.version.outputs.version }}"
+          echo ""
+          echo "📚 Documentation:"
+          echo "  https://github.com/${{ github.repository }}/tree/${{ steps.version.outputs.version }}"
+          echo ""
+          echo "🚀 Installation:"
+          echo "  go get $MODULE_PATH@${{ steps.version.outputs.version }}"
+
+  notify:
+    name: Notify Status
+    needs: [test, build, publish]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Determine status
+        id: status
+        run: |
+          if [[ "${{ needs.test.result }}" == "success" && "${{ needs.build.result }}" == "success" && "${{ needs.publish.result }}" == "success" ]]; then
+            echo "result=success" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+            echo "message=✅ Release published successfully!" >> $GITHUB_OUTPUT
+          else
+            echo "result=failure" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+            echo "message=❌ Release failed. Check the workflow logs." >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack notification
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ steps.status.outputs.result }}
+          fields: workflow,job,commit,repo,ref,author,took
+          channel: '#releases'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

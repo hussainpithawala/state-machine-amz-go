@@ -15,14 +15,14 @@ type FailState struct {
 }
 
 // Execute executes the Fail state
-func (s *FailState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {
+func (s *FailState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	// Fail states always return an error
 	errMsg := fmt.Sprintf("State machine failed at state '%s' with error: %s", s.Name, s.Error)
 	if s.HasCause {
 		errMsg += fmt.Sprintf(" (cause: %s)", s.Cause)
 	}
 
-	return nil, nil, fmt.Errorf(errMsg)
+	return nil, nil, fmt.Errorf("%s", errMsg)
 }
 
 // GetNext always returns nil for Fail states

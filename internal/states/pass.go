@@ -11,7 +11,7 @@ type PassState struct {
 	BaseState
 	Result     interface{}            `json:"Result,omitempty"`
 	Parameters map[string]interface{} `json:"Parameters,omitempty"`
-	//ResultPath *string                `json:"ResultPath,omitempty"`
+	// ResultPath *string                `json:"ResultPath,omitempty"`
 }
 
 // NewPassState creates a new PassState

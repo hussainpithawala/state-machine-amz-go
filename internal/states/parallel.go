@@ -196,7 +196,7 @@ func (p *ParallelState) Validate() error {
 }
 
 // Execute executes the Parallel state
-func (p *ParallelState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {
+func (p *ParallelState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	// Apply input path
 	processor := NewJSONPathProcessor()
 	processedInput, err := processor.ApplyInputPath(input, p.InputPath)

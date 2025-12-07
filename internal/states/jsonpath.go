@@ -297,7 +297,7 @@ func (p *JSONPathProcessor) ExpandParameters(params map[string]interface{}, inpu
 	return result, nil
 }
 
-func (p *JSONPathProcessor) expandValue(value interface{}, input interface{}) (interface{}, error) {
+func (p *JSONPathProcessor) expandValue(value, input interface{}) (interface{}, error) {
 	switch v := value.(type) {
 	case string:
 		if strings.HasPrefix(v, "$") {
@@ -359,7 +359,7 @@ func (p *JSONPathProcessor) Set(data interface{}, path string, value interface{}
 	return p.setValue(data, path, value)
 }
 
-func (p *JSONPathProcessor) ExpandValue(value interface{}, input interface{}) (interface{}, error) {
+func (p *JSONPathProcessor) ExpandValue(value, input interface{}) (interface{}, error) {
 	return p.expandValue(value, input)
 }
 

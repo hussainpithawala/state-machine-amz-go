@@ -48,12 +48,6 @@ type CatchRule struct {
 	Next        string   `json:"Next"`
 }
 
-//type Branch struct {
-//	StartAt string           `json:"StartAt"`
-//	States  map[string]State `json:"States"`
-//	Comment string           `json:"Comment,omitempty"`
-//}
-
 // BaseState contains common fields for all state types
 type BaseState struct {
 	Name       string  `json:"-"`
@@ -108,7 +102,7 @@ func (s *BaseState) GetNextStates() []string {
 	return []string{}
 }
 
-func (s *BaseState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {
+func (s *BaseState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	return nil, nil, fmt.Errorf("Execute not implemented for base state")
 }
 

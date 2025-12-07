@@ -46,7 +46,7 @@ type ChoiceRule struct {
 }
 
 // Execute executes the Choice state
-func (s *ChoiceState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {
+func (s *ChoiceState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	// Process input path
 	processor := GetPathProcessor()
 	processedInput, err := processor.ApplyInputPath(input, s.InputPath)
