@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -408,110 +409,142 @@ func (s *ChoiceState) Validate() error {
 }
 
 // validateChoice validates a single choice rule
-func (s *ChoiceState) validateChoice(choice *ChoiceRule, index int, next_required bool) error {
-	// Must have a variable (except for compound-only rules at top level)
-	// Actually, AWS allows compound operators without a top-level Variable
-	// So Variable might be empty for rules with only And/Or/Not
+func (s *ChoiceState) validateChoice(choice *ChoiceRule, index int, nextRequired bool) error {
+	// Count operators
+	comparisonCount := countComparisonOperators(choice)
+	compoundCount := countCompoundOperators(choice)
 
-	// Count comparison operators
-	comparisonCount := 0
-	if choice.StringEquals != nil {
-		comparisonCount++
-	}
-	if choice.StringLessThan != nil {
-		comparisonCount++
-	}
-	if choice.StringGreaterThan != nil {
-		comparisonCount++
-	}
-	if choice.StringLessThanEquals != nil {
-		comparisonCount++
-	}
-	if choice.StringGreaterThanEquals != nil {
-		comparisonCount++
-	}
-	if choice.NumericEquals != nil {
-		comparisonCount++
-	}
-	if choice.NumericLessThan != nil {
-		comparisonCount++
-	}
-	if choice.NumericGreaterThan != nil {
-		comparisonCount++
-	}
-	if choice.NumericLessThanEquals != nil {
-		comparisonCount++
-	}
-	if choice.NumericGreaterThanEquals != nil {
-		comparisonCount++
-	}
-	if choice.BooleanEquals != nil {
-		comparisonCount++
-	}
-	if choice.TimestampEquals != nil {
-		comparisonCount++
-	}
-	if choice.TimestampLessThan != nil {
-		comparisonCount++
-	}
-	if choice.TimestampGreaterThan != nil {
-		comparisonCount++
-	}
-	if choice.TimestampLessThanEquals != nil {
-		comparisonCount++
-	}
-	if choice.TimestampGreaterThanEquals != nil {
-		comparisonCount++
+	// Validate operator requirements
+	if err := validateOperatorRequirements(choice, index, comparisonCount, compoundCount); err != nil {
+		return err
 	}
 
-	// Count compound operators
-	compoundCount := 0
+	// Validate Next field if required
+	if nextRequired && choice.Next == "" {
+		return fmt.Errorf("choice %d: Next is required", index)
+	}
+
+	// Validate nested compound operators recursively
+	return validateNestedChoices(choice, index)
+}
+
+// Helper function to count comparison operators
+func countComparisonOperators(choice *ChoiceRule) int {
+	type operatorCheck struct {
+		field interface{}
+	}
+
+	operators := []operatorCheck{
+		{choice.StringEquals},
+		{choice.StringLessThan},
+		{choice.StringGreaterThan},
+		{choice.StringLessThanEquals},
+		{choice.StringGreaterThanEquals},
+		{choice.NumericEquals},
+		{choice.NumericLessThan},
+		{choice.NumericGreaterThan},
+		{choice.NumericLessThanEquals},
+		{choice.NumericGreaterThanEquals},
+		{choice.BooleanEquals},
+		{choice.TimestampEquals},
+		{choice.TimestampLessThan},
+		{choice.TimestampGreaterThan},
+		{choice.TimestampLessThanEquals},
+		{choice.TimestampGreaterThanEquals},
+	}
+
+	count := 0
+	for _, op := range operators {
+		if !isNil(op.field) {
+			count++
+		}
+	}
+	return count
+}
+
+// Helper function to count compound operators
+func countCompoundOperators(choice *ChoiceRule) int {
+	count := 0
 	if len(choice.And) > 0 {
-		compoundCount++
+		count++
 	}
 	if len(choice.Or) > 0 {
-		compoundCount++
+		count++
 	}
 	if choice.Not != nil {
-		compoundCount++
+		count++
+	}
+	return count
+}
+
+// Helper to check if a value is nil (handles interface and pointer types)
+func isNil(value interface{}) bool {
+	if value == nil {
+		return true
 	}
 
+	val := reflect.ValueOf(value)
+	switch val.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map:
+		return val.IsNil()
+	default:
+		return false
+	}
+}
+
+// Helper to validate operator requirements
+func validateOperatorRequirements(choice *ChoiceRule, index, comparisonCount, compoundCount int) error {
 	// For rules with comparison operators, Variable is required
 	if comparisonCount > 0 && choice.Variable == "" {
 		return fmt.Errorf("choice %d: Variable is required for comparison operators", index)
 	}
-
-	// For rules with only compound operators, Variable is optional
-	// (it provides context for the compound operators)
 
 	// Must have at least one operator
 	if comparisonCount == 0 && compoundCount == 0 {
 		return fmt.Errorf("choice %d: must have at least one comparison operator or compound operator", index)
 	}
 
-	// Must have Next
-	if next_required && choice.Next == "" {
-		return fmt.Errorf("choice %d: Next is required", index)
-	}
+	return nil
+}
 
-	// Validate compound operators recursively
-	for index := range choice.And {
-		if err := s.validateChoice(&choice.And[index], index, false); err != nil {
-			return fmt.Errorf("choice %d.And[%d]: %w", index, index, err)
+// Helper to validate nested choices recursively
+func validateNestedChoices(choice *ChoiceRule, parentIndex int) error {
+	// Validate And operators
+	for i, nestedChoice := range choice.And {
+		if err := validateNestedChoice(&nestedChoice, i, parentIndex, "And"); err != nil {
+			return err
 		}
 	}
 
-	for index := range choice.Or {
-		if err := s.validateChoice(&choice.Or[index], index, false); err != nil {
-			return fmt.Errorf("choice %d.Or[%d]: %w", index, index, err)
+	// Validate Or operators
+	for i, nestedChoice := range choice.Or {
+		if err := validateNestedChoice(&nestedChoice, i, parentIndex, "Or"); err != nil {
+			return err
 		}
 	}
 
+	// Validate Not operator
 	if choice.Not != nil {
-		if err := s.validateChoice(choice.Not, 0, false); err != nil {
-			return fmt.Errorf("choice %d.Not: %w", index, err)
+		if err := validateNestedChoice(choice.Not, 0, parentIndex, "Not"); err != nil {
+			return err
 		}
 	}
+
+	return nil
+}
+
+// Helper to validate a single nested choice
+func validateNestedChoice(choice *ChoiceRule, index, parentIndex int, operatorType string) error {
+	// Count operators for nested choice
+	comparisonCount := countComparisonOperators(choice)
+	compoundCount := countCompoundOperators(choice)
+
+	// Validate operator requirements for nested choice
+	if err := validateOperatorRequirements(choice, index, comparisonCount, compoundCount); err != nil {
+		return fmt.Errorf("choice %d.%s[%d]: %w", parentIndex, operatorType, index, err)
+	}
+
+	// No Next field required for nested choices
 
 	return nil
 }
