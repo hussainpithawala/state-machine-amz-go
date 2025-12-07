@@ -213,112 +213,207 @@ func (t *TaskState) Validate() error {
 
 // Execute executes the Task state
 func (t *TaskState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {
-	// Apply input path
-	processor := NewJSONPathProcessor()
-	processedInput, err := processor.ApplyInputPath(input, t.InputPath)
+	// Process input and parameters
+	processor, taskInput, processedInput, err := t.prepareInput(input)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to apply input path: %w", err)
+		return nil, nil, err
 	}
 
-	// Prepare parameters
-	var taskInput interface{} = processedInput
+	// Get task handler
+	handler := t.getTaskHandler()
+
+	// Execute task with retry logic
+	result, taskErr, retryExhausted := t.executeWithRetry(ctx, handler, taskInput)
+	if taskErr != nil && !retryExhausted {
+		return nil, nil, taskErr
+	}
+
+	// Handle task result
+	return t.handleTaskResult(ctx, processor, processedInput, result, taskErr)
+}
+
+// prepareInput processes input path and parameters
+func (t *TaskState) prepareInput(input interface{}) (*JSONPathProcessor, interface{}, interface{}, error) {
+	processor := NewJSONPathProcessor()
+
+	// Apply input path
+	processedInput, err := processor.ApplyInputPath(input, t.InputPath)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to apply input path: %w", err)
+	}
+
+	// Prepare parameters if provided
+	taskInput := processedInput
 	if t.Parameters != nil {
 		taskInput, err = processor.expandValue(t.Parameters, map[string]interface{}{
 			"$": processedInput,
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to expand parameters: %w", err)
+			return nil, nil, nil, fmt.Errorf("failed to expand parameters: %w", err)
 		}
 	}
 
-	// Get or use default task handler
-	handler := t.TaskHandler
-	if handler == nil {
-		handler = NewDefaultTaskHandler()
+	return processor, taskInput, processedInput, nil
+}
+
+// getTaskHandler returns the appropriate task handler
+func (t *TaskState) getTaskHandler() TaskHandler {
+	if t.TaskHandler != nil {
+		return t.TaskHandler
 	}
+	return NewDefaultTaskHandler()
+}
 
-	// Execute task with retry logic
-	var taskErr error
-	var result interface{}
-	maxAttempts := 1
-
-	// Find max attempts from retry policies
-	for _, retry := range t.Retry {
-		if retry.MaxAttempts != nil && *retry.MaxAttempts > 0 {
-			maxAttempts = *retry.MaxAttempts // + 1 // +1 for initial attempt
-			break
-		}
-	}
-
-	attempt := 0
+// executeWithRetry handles task execution with retry logic
+func (t *TaskState) executeWithRetry(ctx context.Context, handler TaskHandler, taskInput interface{}) (interface{}, error, bool) {
+	maxAttempts := t.calculateMaxAttempts()
 	backoffDuration := time.Duration(1) * time.Second
 
-	for attempt <= maxAttempts {
-		attempt++
+	for attempt := 0; attempt <= maxAttempts; attempt++ {
+		// Execute task
+		result, taskErr := handler.ExecuteWithTimeout(ctx, t.Resource, taskInput, t.Parameters, t.TimeoutSeconds)
 
-		// Execute the task with timeout - this now properly respects timeout context
-		result, taskErr = handler.ExecuteWithTimeout(ctx, t.Resource, taskInput, t.Parameters, t.TimeoutSeconds)
-
-		// If successful, break the loop
+		// If successful, return result
 		if taskErr == nil {
-			break
+			return result, nil, true
 		}
 
-		// Check if error matches any retry policy
-		shouldRetry := false
-		for _, retry := range t.Retry {
-			if t.errorMatches(taskErr, retry.ErrorEquals) {
-				shouldRetry = true
-				if retry.BackoffRate != nil && *retry.BackoffRate > 1.0 {
-					backoffDuration = time.Duration(float64(backoffDuration) * *retry.BackoffRate)
-				}
-				if retry.MaxDelaySeconds != nil {
-					maxDuration := time.Duration(*retry.MaxDelaySeconds) * time.Second
-					if backoffDuration > maxDuration {
-						backoffDuration = maxDuration
-					}
-				}
-				break
-			}
+		// Check if we should retry
+		shouldRetry := t.shouldRetry(taskErr, attempt, maxAttempts)
+		if !shouldRetry {
+			return nil, taskErr, false
 		}
 
-		if !shouldRetry || attempt > maxAttempts {
-			break
-		}
+		// Update backoff duration
+		backoffDuration = t.calculateBackoffDuration(taskErr, backoffDuration)
 
-		// Wait before retrying - respect context cancellation
-		select {
-		case <-time.After(backoffDuration):
-			// Continue to next attempt
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+		// Wait before retrying
+		if err := t.waitForRetry(ctx, backoffDuration); err != nil {
+			return nil, err, false
 		}
 	}
 
-	// If task failed, check catch policies
+	return nil, fmt.Errorf("max retry attempts exceeded"), false
+}
+
+// calculateMaxAttempts determines the maximum number of retry attempts
+func (t *TaskState) calculateMaxAttempts() int {
+	maxAttempts := 1
+	for _, retry := range t.Retry {
+		if retry.MaxAttempts != nil && *retry.MaxAttempts > 0 {
+			maxAttempts = *retry.MaxAttempts
+			break
+		}
+	}
+	return maxAttempts
+}
+
+// shouldRetry determines if a task should be retried
+func (t *TaskState) shouldRetry(taskErr error, attempt, maxAttempts int) bool {
+	if attempt >= maxAttempts {
+		return false
+	}
+
+	// Check if error matches any retry policy
+	for _, retry := range t.Retry {
+		if t.errorMatches(taskErr, retry.ErrorEquals) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// calculateBackoffDuration calculates the backoff duration for retries
+func (t *TaskState) calculateBackoffDuration(taskErr error, currentDuration time.Duration) time.Duration {
+	duration := currentDuration
+
+	for _, retry := range t.Retry {
+		if t.errorMatches(taskErr, retry.ErrorEquals) {
+			// Apply backoff rate
+			if retry.BackoffRate != nil && *retry.BackoffRate > 1.0 {
+				duration = time.Duration(float64(duration) * *retry.BackoffRate)
+			}
+
+			// Apply max delay limit
+			if retry.MaxDelaySeconds != nil {
+				maxDuration := time.Duration(*retry.MaxDelaySeconds) * time.Second
+				if duration > maxDuration {
+					duration = maxDuration
+				}
+			}
+			break
+		}
+	}
+
+	return duration
+}
+
+// waitForRetry waits for the backoff duration or context cancellation
+func (t *TaskState) waitForRetry(ctx context.Context, backoffDuration time.Duration) error {
+	select {
+	case <-time.After(backoffDuration):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// handleTaskResult processes the task result and handles errors
+func (t *TaskState) handleTaskResult(ctx context.Context, processor *JSONPathProcessor,
+	processedInput interface{}, result interface{}, taskErr error) (interface{}, *string, error) {
+
+	// Handle task failure
 	if taskErr != nil {
-		for _, catchPolicy := range t.Catch {
-			if t.errorMatches(taskErr, catchPolicy.ErrorEquals) {
-				// Apply result path for caught error
-				errorResult := map[string]interface{}{
-					"Error": taskErr.Error(),
-					"Cause": taskErr.Error(),
-				}
-
-				output, err := processor.ApplyResultPath(processedInput, errorResult, catchPolicy.ResultPath)
-				if err != nil {
-					return nil, nil, fmt.Errorf("failed to apply result path in catch: %w", err)
-				}
-
-				return output, StringPtr(catchPolicy.Next), nil
-			}
-		}
-
-		return nil, nil, taskErr
+		return t.handleTaskFailure(ctx, processor, processedInput, taskErr)
 	}
+
+	// Process successful task result
+	return t.processSuccessfulResult(processor, processedInput, result)
+}
+
+// handleTaskFailure processes task failures and catch policies
+func (t *TaskState) handleTaskFailure(ctx context.Context, processor *JSONPathProcessor,
+	processedInput interface{}, taskErr error) (interface{}, *string, error) {
+
+	// Check catch policies
+	for _, catchPolicy := range t.Catch {
+		if t.errorMatches(taskErr, catchPolicy.ErrorEquals) {
+			return t.handleCaughtError(processor, processedInput, taskErr, catchPolicy)
+		}
+	}
+
+	// No catch policy matched, return error
+	return nil, nil, taskErr
+}
+
+// handleCaughtError processes errors caught by catch policies
+func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInput interface{},
+	taskErr error, catchPolicy CatchPolicy) (interface{}, *string, error) {
+
+	// Create error result
+	errorResult := map[string]interface{}{
+		"Error": taskErr.Error(),
+		"Cause": taskErr.Error(),
+	}
+
+	// Apply result path
+	output, err := processor.ApplyResultPath(processedInput, errorResult, catchPolicy.ResultPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to apply result path in catch: %w", err)
+	}
+
+	return output, StringPtr(catchPolicy.Next), nil
+}
+
+// processSuccessfulResult processes successful task results
+func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor,
+	processedInput interface{}, result interface{}) (interface{}, *string, error) {
+
+	var output interface{} = result
+	var err error
 
 	// Apply result selector if provided
-	var output interface{} = result
 	if t.ResultSelector != nil {
 		output, err = processor.expandValue(t.ResultSelector, map[string]interface{}{
 			"$": result,
