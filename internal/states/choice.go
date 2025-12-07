@@ -510,15 +510,15 @@ func validateOperatorRequirements(choice *ChoiceRule, index, comparisonCount, co
 // Helper to validate nested choices recursively
 func validateNestedChoices(choice *ChoiceRule, parentIndex int) error {
 	// Validate And operators
-	for i, nestedChoice := range choice.And {
-		if err := validateNestedChoice(&nestedChoice, i, parentIndex, "And"); err != nil {
+	for index := range choice.And {
+		if err := validateNestedChoice(&choice.And[index], index, parentIndex, "And"); err != nil {
 			return err
 		}
 	}
 
 	// Validate Or operators
-	for i, nestedChoice := range choice.Or {
-		if err := validateNestedChoice(&nestedChoice, i, parentIndex, "Or"); err != nil {
+	for index := range choice.Or {
+		if err := validateNestedChoice(&choice.Or[index], index, parentIndex, "Or"); err != nil {
 			return err
 		}
 	}

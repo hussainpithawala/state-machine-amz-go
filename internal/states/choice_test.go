@@ -663,7 +663,7 @@ func TestChoiceState_Execute_BooleanComparisons(t *testing.T) {
 
 func TestChoiceState_Execute_TimestampComparisons(t *testing.T) {
 	ctx := context.Background()
-	//now := time.Now()
+	// now := time.Now()
 
 	tests := []struct {
 		name         string
