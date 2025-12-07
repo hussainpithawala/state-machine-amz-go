@@ -28,7 +28,7 @@ func (v *StateMachineValidator) Validate(startAt string, statesMap map[string]st
 	}
 
 	if len(statesMap) == 0 {
-		return fmt.Errorf("States cannot be empty")
+		return fmt.Errorf("states cannot be empty")
 	}
 
 	// Validate StartAt exists

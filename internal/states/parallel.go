@@ -218,28 +218,28 @@ func (p *ParallelState) IsEnd() bool {
 // Validate validates the Parallel state configuration
 func (p *ParallelState) Validate() error {
 	if len(p.Branches) == 0 {
-		return fmt.Errorf("Parallel state '%s' must have at least one branch", p.Name)
+		return fmt.Errorf("parallel state '%s' must have at least one branch", p.Name)
 	}
 
 	// Validate each branch
 	for i, branch := range p.Branches {
 		if branch.StartAt == "" {
-			return fmt.Errorf("Parallel state '%s' branch %d: StartAt is required", p.Name, i)
+			return fmt.Errorf("parallel state '%s' branch %d: StartAt is required", p.Name, i)
 		}
 
 		if len(branch.States) == 0 {
-			return fmt.Errorf("Parallel state '%s' branch %d: States must not be empty", p.Name, i)
+			return fmt.Errorf("parallel state '%s' branch %d: States must not be empty", p.Name, i)
 		}
 
 		// Validate that StartAt state exists
 		if _, exists := branch.States[branch.StartAt]; !exists {
-			return fmt.Errorf("Parallel state '%s' branch %d: StartAt state '%s' not found", p.Name, i, branch.StartAt)
+			return fmt.Errorf("parallel state '%s' branch %d: StartAt state '%s' not found", p.Name, i, branch.StartAt)
 		}
 
 		// Validate that all states in branch have proper End or Next configuration
 		for stateName, state := range branch.States {
 			if !state.IsEnd() && state.GetNext() == nil {
-				return fmt.Errorf("Parallel state '%s' branch %d: state '%s' must have either Next or End", p.Name, i, stateName)
+				return fmt.Errorf("parallel state '%s' branch %d: state '%s' must have either Next or End", p.Name, i, stateName)
 			}
 		}
 	}

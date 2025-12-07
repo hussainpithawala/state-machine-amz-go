@@ -55,16 +55,16 @@ func (w *WaitState) Validate() error {
 	}
 
 	if waitMethodsCount == 0 {
-		return fmt.Errorf("Wait state '%s' must specify one of: Seconds, SecondsPath, Timestamp, or TimestampPath", w.Name)
+		return fmt.Errorf("wait state '%s' must specify one of: Seconds, SecondsPath, Timestamp, or TimestampPath", w.Name)
 	}
 
 	if waitMethodsCount > 1 {
-		return fmt.Errorf("Wait state '%s' must specify only one of: Seconds, SecondsPath, Timestamp, or TimestampPath", w.Name)
+		return fmt.Errorf("wait state '%s' must specify only one of: Seconds, SecondsPath, Timestamp, or TimestampPath", w.Name)
 	}
 
 	// Validate Seconds value if present
 	if w.Seconds != nil && *w.Seconds < 0 {
-		return fmt.Errorf("Wait state '%s' Seconds must be non-negative", w.Name)
+		return fmt.Errorf("wait state '%s' Seconds must be non-negative", w.Name)
 	}
 
 	return nil
@@ -125,7 +125,7 @@ func (w *WaitState) calculateWaitDuration(processor *JSONPathProcessor, processe
 		{
 			w.Timestamp != nil,
 			func() (time.Duration, error) {
-				return w.calculateTimestampWait(*w.Timestamp, nil)
+				return w.calculateTimestampWait(*w.Timestamp)
 			},
 		},
 		{
@@ -167,7 +167,7 @@ func (w *WaitState) calculateSecondsPathWait(processor *JSONPathProcessor, proce
 }
 
 // calculateTimestampWait calculates wait duration until a timestamp
-func (w *WaitState) calculateTimestampWait(timestamp string, processedInput interface{}) (time.Duration, error) {
+func (w *WaitState) calculateTimestampWait(timestamp string) (time.Duration, error) {
 	targetTime, err := time.Parse(time.RFC3339, timestamp)
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse timestamp '%s': %w", timestamp, err)
@@ -188,7 +188,7 @@ func (w *WaitState) calculateTimestampPathWait(processor *JSONPathProcessor, pro
 		return 0, fmt.Errorf("TimestampPath value is not a string")
 	}
 
-	return w.calculateTimestampWait(timestampStr, processedInput)
+	return w.calculateTimestampWait(timestampStr)
 }
 
 // calculateTimeUntil calculates duration until a target time
