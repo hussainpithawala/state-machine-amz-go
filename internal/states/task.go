@@ -168,43 +168,43 @@ func (t *TaskState) IsEnd() bool {
 // Validate validates the Task state configuration
 func (t *TaskState) Validate() error {
 	if t.Resource == "" {
-		return fmt.Errorf("Task state '%s' Resource is required", t.Name)
+		return fmt.Errorf("task state '%s' Resource is required", t.Name)
 	}
 
 	if t.TimeoutSeconds != nil && *t.TimeoutSeconds <= 0 {
-		return fmt.Errorf("Task state '%s' TimeoutSeconds must be positive", t.Name)
+		return fmt.Errorf("task state '%s' TimeoutSeconds must be positive", t.Name)
 	}
 
 	if t.HeartbeatSeconds != nil && *t.HeartbeatSeconds <= 0 {
-		return fmt.Errorf("Task state '%s' HeartbeatSeconds must be positive", t.Name)
+		return fmt.Errorf("task state '%s' HeartbeatSeconds must be positive", t.Name)
 	}
 
 	if t.HeartbeatSeconds != nil && t.TimeoutSeconds != nil {
 		if *t.HeartbeatSeconds >= *t.TimeoutSeconds {
-			return fmt.Errorf("Task state '%s' HeartbeatSeconds must be less than TimeoutSeconds", t.Name)
+			return fmt.Errorf("task state '%s' HeartbeatSeconds must be less than TimeoutSeconds", t.Name)
 		}
 	}
 
 	// Validate retry policies
 	for i, retry := range t.Retry {
 		if len(retry.ErrorEquals) == 0 {
-			return fmt.Errorf("Task state '%s' Retry policy %d: ErrorEquals is required", t.Name, i)
+			return fmt.Errorf("task state '%s' Retry policy %d: ErrorEquals is required", t.Name, i)
 		}
 		if retry.MaxAttempts != nil && *retry.MaxAttempts < 0 {
-			return fmt.Errorf("Task state '%s' Retry policy %d: MaxAttempts must be non-negative", t.Name, i)
+			return fmt.Errorf("task state '%s' Retry policy %d: MaxAttempts must be non-negative", t.Name, i)
 		}
 		if retry.BackoffRate != nil && *retry.BackoffRate < 1.0 {
-			return fmt.Errorf("Task state '%s' Retry policy %d: BackoffRate must be >= 1.0", t.Name, i)
+			return fmt.Errorf("task state '%s' Retry policy %d: BackoffRate must be >= 1.0", t.Name, i)
 		}
 	}
 
 	// Validate catch policies
 	for i, catchPolicy := range t.Catch {
 		if len(catchPolicy.ErrorEquals) == 0 {
-			return fmt.Errorf("Task state '%s' Catch policy %d: ErrorEquals is required", t.Name, i)
+			return fmt.Errorf("task state '%s' Catch policy %d: ErrorEquals is required", t.Name, i)
 		}
 		if catchPolicy.Next == "" {
-			return fmt.Errorf("Task state '%s' Catch policy %d: Next is required", t.Name, i)
+			return fmt.Errorf("task state '%s' Catch policy %d: Next is required", t.Name, i)
 		}
 	}
 
@@ -361,7 +361,7 @@ func (t *TaskState) waitForRetry(ctx context.Context, backoffDuration time.Durat
 
 // handleTaskResult processes the task result and handles errors
 func (t *TaskState) handleTaskResult(ctx context.Context, processor *JSONPathProcessor,
-	processedInput interface{}, result interface{}, taskErr error) (interface{}, *string, error) {
+	processedInput interface{}, result interface{}, taskErr error) (output interface{}, nextState *string, err error) {
 
 	// Handle task failure
 	if taskErr != nil {
@@ -373,8 +373,8 @@ func (t *TaskState) handleTaskResult(ctx context.Context, processor *JSONPathPro
 }
 
 // handleTaskFailure processes task failures and catch policies
-func (t *TaskState) handleTaskFailure(ctx context.Context, processor *JSONPathProcessor,
-	processedInput interface{}, taskErr error) (interface{}, *string, error) {
+func (t *TaskState) handleTaskFailure(_ context.Context, processor *JSONPathProcessor,
+	processedInput interface{}, taskErr error) (output interface{}, nextState *string, err error) {
 
 	// Check catch policies
 	for _, catchPolicy := range t.Catch {
@@ -389,7 +389,7 @@ func (t *TaskState) handleTaskFailure(ctx context.Context, processor *JSONPathPr
 
 // handleCaughtError processes errors caught by catch policies
 func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInput interface{},
-	taskErr error, catchPolicy CatchPolicy) (interface{}, *string, error) {
+	taskErr error, catchPolicy CatchPolicy) (output interface{}, nextState *string, err error) {
 
 	// Create error result
 	errorResult := map[string]interface{}{
@@ -398,7 +398,7 @@ func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInp
 	}
 
 	// Apply result path
-	output, err := processor.ApplyResultPath(processedInput, errorResult, catchPolicy.ResultPath)
+	output, err = processor.ApplyResultPath(processedInput, errorResult, catchPolicy.ResultPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to apply result path in catch: %w", err)
 	}
@@ -408,10 +408,7 @@ func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInp
 
 // processSuccessfulResult processes successful task results
 func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor,
-	processedInput interface{}, result interface{}) (interface{}, *string, error) {
-
-	var output interface{} = result
-	var err error
+	processedInput interface{}, result interface{}) (output interface{}, nextState *string, err error) {
 
 	// Apply result selector if provided
 	if t.ResultSelector != nil {
