@@ -120,10 +120,10 @@ We would like to thank all security researchers who responsibly disclose vulnera
 
 ## Contact
 
-For security-related issues, please contact: security@example.com
+For security-related issues, please contact: hussainpithawala
 
 **Note**: Replace the email address above with the appropriate contact for your project.
 
 ---
 
-*Last updated: January 2024*
+*Last updated: December 2025*
