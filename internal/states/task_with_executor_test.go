@@ -426,7 +426,7 @@ func TestTaskCatchLogic(t *testing.T) {
 }
 
 // Demo function showing real-world usage
-func ExampleTaskExecutor() {
+func TestExampleTaskExecutor(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Create execution context and register handlers

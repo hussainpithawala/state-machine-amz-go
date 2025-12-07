@@ -404,8 +404,6 @@ func TestGetExecutionSummary(t *testing.T) {
 	assert.Equal(t, "FirstState", summary["startAt"])
 	assert.Equal(t, 2, summary["statesCount"])
 	assert.Equal(t, "1.0", summary["version"])
-	//assert.Equal(t, "Test state machine", summary["comment"])
-	//assert.Equal(t, 300, summary["timeoutSeconds"])
 
 	stateTypes := summary["stateTypes"].(map[string]int)
 	assert.Equal(t, 2, stateTypes["Pass"])
