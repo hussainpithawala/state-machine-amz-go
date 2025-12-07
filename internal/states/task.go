@@ -233,7 +233,7 @@ func (t *TaskState) Execute(ctx context.Context, input interface{}) (result inte
 }
 
 // prepareInput processes input path and parameters
-func (t *TaskState) prepareInput(input interface{}) (jsonPathProcessor *JSONPathProcessor, taskInput interface{}, processedInput interface{}, err error) {
+func (t *TaskState) prepareInput(input interface{}) (jsonPathProcessor *JSONPathProcessor, taskInput, processedInput interface{}, err error) {
 	processor := NewJSONPathProcessor()
 
 	// Apply input path
