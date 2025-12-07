@@ -165,50 +165,114 @@ func (t *TaskState) IsEnd() bool {
 	return t.End
 }
 
-// Validate validates the Task state configuration
-func (t *TaskState) Validate() error {
-	if t.Resource == "" {
-		return fmt.Errorf("task state '%s' Resource is required", t.Name)
-	}
+// ValidationRule defines a validation rule interface
+type ValidationRule interface {
+	Validate(task *TaskState) error
+}
 
-	if t.TimeoutSeconds != nil && *t.TimeoutSeconds <= 0 {
-		return fmt.Errorf("task state '%s' TimeoutSeconds must be positive", t.Name)
-	}
+// TaskStateValidator validates TaskState using rules
+type TaskStateValidator struct {
+	rules []ValidationRule
+}
 
-	if t.HeartbeatSeconds != nil && *t.HeartbeatSeconds <= 0 {
-		return fmt.Errorf("task state '%s' HeartbeatSeconds must be positive", t.Name)
+// NewTaskStateValidator creates a new validator with default rules
+func NewTaskStateValidator() *TaskStateValidator {
+	return &TaskStateValidator{
+		rules: []ValidationRule{
+			&resourceRequiredRule{},
+			&timeoutPositiveRule{},
+			&heartbeatPositiveRule{},
+			&heartbeatLessThanTimeoutRule{},
+			&retryPolicyRule{},
+			&catchPolicyRule{},
+		},
 	}
+}
 
-	if t.HeartbeatSeconds != nil && t.TimeoutSeconds != nil {
-		if *t.HeartbeatSeconds >= *t.TimeoutSeconds {
-			return fmt.Errorf("task state '%s' HeartbeatSeconds must be less than TimeoutSeconds", t.Name)
+// Validate validates the task state using all rules
+func (v *TaskStateValidator) Validate(task *TaskState) error {
+	for _, rule := range v.rules {
+		if err := rule.Validate(task); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
-	// Validate retry policies
-	for i, retry := range t.Retry {
+// Rule implementations
+type resourceRequiredRule struct{}
+
+func (r *resourceRequiredRule) Validate(task *TaskState) error {
+	if task.Resource == "" {
+		return fmt.Errorf("task state '%s' Resource is required", task.Name)
+	}
+	return nil
+}
+
+type timeoutPositiveRule struct{}
+
+func (r *timeoutPositiveRule) Validate(task *TaskState) error {
+	if task.TimeoutSeconds != nil && *task.TimeoutSeconds <= 0 {
+		return fmt.Errorf("task state '%s' TimeoutSeconds must be positive", task.Name)
+	}
+	return nil
+}
+
+type heartbeatPositiveRule struct{}
+
+func (r *heartbeatPositiveRule) Validate(task *TaskState) error {
+	if task.HeartbeatSeconds != nil && *task.HeartbeatSeconds <= 0 {
+		return fmt.Errorf("task state '%s' HeartbeatSeconds must be positive", task.Name)
+	}
+	return nil
+}
+
+type heartbeatLessThanTimeoutRule struct{}
+
+func (r *heartbeatLessThanTimeoutRule) Validate(task *TaskState) error {
+	if task.HeartbeatSeconds != nil && task.TimeoutSeconds != nil {
+		if *task.HeartbeatSeconds >= *task.TimeoutSeconds {
+			return fmt.Errorf("task state '%s' HeartbeatSeconds must be less than TimeoutSeconds", task.Name)
+		}
+	}
+	return nil
+}
+
+type retryPolicyRule struct{}
+
+func (r *retryPolicyRule) Validate(task *TaskState) error {
+	for i, retry := range task.Retry {
 		if len(retry.ErrorEquals) == 0 {
-			return fmt.Errorf("task state '%s' Retry policy %d: ErrorEquals is required", t.Name, i)
+			return fmt.Errorf("task state '%s' Retry policy %d: ErrorEquals is required", task.Name, i)
 		}
 		if retry.MaxAttempts != nil && *retry.MaxAttempts < 0 {
-			return fmt.Errorf("task state '%s' Retry policy %d: MaxAttempts must be non-negative", t.Name, i)
+			return fmt.Errorf("task state '%s' Retry policy %d: MaxAttempts must be non-negative", task.Name, i)
 		}
 		if retry.BackoffRate != nil && *retry.BackoffRate < 1.0 {
-			return fmt.Errorf("task state '%s' Retry policy %d: BackoffRate must be >= 1.0", t.Name, i)
+			return fmt.Errorf("task state '%s' Retry policy %d: BackoffRate must be >= 1.0", task.Name, i)
 		}
 	}
+	return nil
+}
 
-	// Validate catch policies
-	for i, catchPolicy := range t.Catch {
+type catchPolicyRule struct{}
+
+func (r *catchPolicyRule) Validate(task *TaskState) error {
+	for i, catchPolicy := range task.Catch {
 		if len(catchPolicy.ErrorEquals) == 0 {
-			return fmt.Errorf("task state '%s' Catch policy %d: ErrorEquals is required", t.Name, i)
+			return fmt.Errorf("task state '%s' Catch policy %d: ErrorEquals is required", task.Name, i)
 		}
 		if catchPolicy.Next == "" {
-			return fmt.Errorf("task state '%s' Catch policy %d: Next is required", t.Name, i)
+			return fmt.Errorf("task state '%s' Catch policy %d: Next is required", task.Name, i)
 		}
 	}
-
 	return nil
+}
+
+// Validate Update the Validate method to use the validator
+func (t *TaskState) Validate() error {
+	validator := NewTaskStateValidator()
+	return validator.Validate(t)
 }
 
 // Execute executes the Task state
