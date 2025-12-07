@@ -362,7 +362,6 @@ func (t *TaskState) waitForRetry(ctx context.Context, backoffDuration time.Durat
 // handleTaskResult processes the task result and handles errors
 func (t *TaskState) handleTaskResult(ctx context.Context, processor *JSONPathProcessor,
 	processedInput interface{}, result interface{}, taskErr error) (output interface{}, nextState *string, err error) {
-
 	// Handle task failure
 	if taskErr != nil {
 		return t.handleTaskFailure(ctx, processor, processedInput, taskErr)
@@ -375,7 +374,6 @@ func (t *TaskState) handleTaskResult(ctx context.Context, processor *JSONPathPro
 // handleTaskFailure processes task failures and catch policies
 func (t *TaskState) handleTaskFailure(_ context.Context, processor *JSONPathProcessor,
 	processedInput interface{}, taskErr error) (output interface{}, nextState *string, err error) {
-
 	// Check catch policies
 	for _, catchPolicy := range t.Catch {
 		if t.errorMatches(taskErr, catchPolicy.ErrorEquals) {
@@ -390,7 +388,6 @@ func (t *TaskState) handleTaskFailure(_ context.Context, processor *JSONPathProc
 // handleCaughtError processes errors caught by catch policies
 func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInput interface{},
 	taskErr error, catchPolicy CatchPolicy) (output interface{}, nextState *string, err error) {
-
 	// Create error result
 	errorResult := map[string]interface{}{
 		"Error": taskErr.Error(),
@@ -409,7 +406,6 @@ func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInp
 // processSuccessfulResult processes successful task results
 func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor,
 	processedInput interface{}, result interface{}) (output interface{}, nextState *string, err error) {
-
 	// Apply result selector if provided
 	if t.ResultSelector != nil {
 		output, err = processor.expandValue(t.ResultSelector, map[string]interface{}{
