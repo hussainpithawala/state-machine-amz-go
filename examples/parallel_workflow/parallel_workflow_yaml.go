@@ -602,13 +602,3 @@ func createSampleOrder() map[string]interface{} {
 		},
 	}
 }
-
-// Helper to write YAML to file for testing
-func writeYAMLToFile() {
-	//yamlContent := parallelWorkflowYAML
-	filename := "parallel_workflow.yaml"
-
-	// You would write to file here
-	fmt.Printf("YAML definition written to: %s\n", filename)
-	fmt.Println("You can use this file with your state machine loader.")
-}
