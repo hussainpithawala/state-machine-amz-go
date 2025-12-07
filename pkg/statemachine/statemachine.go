@@ -137,9 +137,13 @@ func (sm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 
 	execCtx := execution.NewContext(execName, sm.StartAt, input)
 
+	return sm.RunExecution(ctx, execCtx)
+}
+
+func (sm *StateMachine) RunExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
 	// Execute the state machine
 	currentStateName := sm.StartAt
-	currentInput := input
+	currentInput := execCtx.Input
 
 	for {
 		// Check for timeout

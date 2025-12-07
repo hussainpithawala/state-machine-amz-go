@@ -14,6 +14,7 @@ type StateMachineInterface interface {
 	GetStartAt() string
 	GetState(name string) (states.State, error)
 	IsTimeout(startTime time.Time) bool
+	RunExecution(ctx context.Context, input interface{}, execCtx *execution.Execution) (*execution.Execution, error)
 }
 
 // Executor defines the interface for executing state machines
@@ -66,88 +67,6 @@ func NewBaseExecutor() *BaseExecutor {
 		executions: make(map[string]*execution.Execution),
 		registry:   NewStateRegistry(),
 	}
-}
-
-// Execute executes a state machine
-func (e *BaseExecutor) Execute(ctx context.Context, sm StateMachineInterface, execCtx *execution.Execution) (*execution.Execution, error) {
-	// Validate inputs
-	if sm == nil {
-		return nil, fmt.Errorf("state machine cannot be nil")
-	}
-
-	if execCtx == nil {
-		return nil, fmt.Errorf("execution context cannot be nil")
-	}
-
-	// Store execution
-	e.executions[execCtx.ID] = execCtx
-
-	// Set initial status
-	execCtx.Status = "RUNNING"
-
-	// Execute state machine
-	currentStateName := sm.GetStartAt()
-	currentInput := execCtx.Input
-
-	for {
-		// Check for timeout
-		if sm.IsTimeout(execCtx.StartTime) {
-			execCtx.Status = "TIMED_OUT"
-			execCtx.EndTime = time.Now()
-			return execCtx, fmt.Errorf("state machine execution timed out")
-		}
-
-		// Check if context is cancelled
-		select {
-		case <-ctx.Done():
-			execCtx.Status = "ABORTED"
-			execCtx.EndTime = time.Now()
-			return execCtx, ctx.Err()
-		default:
-		}
-
-		// Get current state
-		state, err := sm.GetState(currentStateName)
-		if err != nil {
-			execCtx.Status = "FAILED"
-			execCtx.EndTime = time.Now()
-			execCtx.Error = err
-			return execCtx, err
-		}
-
-		// Update execution context
-		execCtx.CurrentState = currentStateName
-
-		// Execute the state
-		output, nextState, err := state.Execute(ctx, currentInput)
-
-		// Record state history
-		execCtx.AddStateHistory(currentStateName, currentInput, output)
-
-		// Handle state execution result
-		if err != nil {
-			execCtx.Status = "FAILED"
-			execCtx.EndTime = time.Now()
-			execCtx.Error = err
-			execCtx.Output = output
-			return execCtx, err
-		}
-
-		// Check if this is an end state
-		if state.IsEnd() || nextState == nil {
-			// Execution completed successfully
-			execCtx.Status = "SUCCEEDED"
-			execCtx.EndTime = time.Now()
-			execCtx.Output = output
-			break
-		}
-
-		// Move to next state
-		currentStateName = *nextState
-		currentInput = output
-	}
-
-	return execCtx, nil
 }
 
 // GetStatus returns the status of an execution
