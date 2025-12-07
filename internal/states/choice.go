@@ -163,59 +163,91 @@ func (s *ChoiceState) evaluateOr(rules []ChoiceRule, context interface{}) (bool,
 }
 
 // evaluateComparison evaluates comparison operators
+// gocyclo:ignore
 func (s *ChoiceState) evaluateComparison(rule *ChoiceRule, variableValue interface{}) (bool, error) {
-	// Check each comparison operator
-	if rule.StringEquals != nil {
-		return s.compareString(variableValue, *rule.StringEquals, func(a, b string) bool { return a == b })
+	// Define comparison handlers for each operator type
+	comparisonHandlers := []struct {
+		condition  bool
+		comparison func() (bool, error)
+	}{
+		{rule.StringEquals != nil, func() (bool, error) {
+			return s.compareString(variableValue, *rule.StringEquals, stringsEqual)
+		}},
+		{rule.StringLessThan != nil, func() (bool, error) {
+			return s.compareString(variableValue, *rule.StringLessThan, stringLessThan)
+		}},
+		{rule.StringGreaterThan != nil, func() (bool, error) {
+			return s.compareString(variableValue, *rule.StringGreaterThan, stringGreaterThan)
+		}},
+		{rule.StringLessThanEquals != nil, func() (bool, error) {
+			return s.compareString(variableValue, *rule.StringLessThanEquals, stringLessThanEqual)
+		}},
+		{rule.StringGreaterThanEquals != nil, func() (bool, error) {
+			return s.compareString(variableValue, *rule.StringGreaterThanEquals, stringGreaterThanEqual)
+		}},
+		{rule.NumericEquals != nil, func() (bool, error) {
+			return s.compareNumeric(variableValue, *rule.NumericEquals, numericEqual)
+		}},
+		{rule.NumericLessThan != nil, func() (bool, error) {
+			return s.compareNumeric(variableValue, *rule.NumericLessThan, numericLessThan)
+		}},
+		{rule.NumericGreaterThan != nil, func() (bool, error) {
+			return s.compareNumeric(variableValue, *rule.NumericGreaterThan, numericGreaterThan)
+		}},
+		{rule.NumericLessThanEquals != nil, func() (bool, error) {
+			return s.compareNumeric(variableValue, *rule.NumericLessThanEquals, numericLessThanEqual)
+		}},
+		{rule.NumericGreaterThanEquals != nil, func() (bool, error) {
+			return s.compareNumeric(variableValue, *rule.NumericGreaterThanEquals, numericGreaterThanEqual)
+		}},
+		{rule.BooleanEquals != nil, func() (bool, error) {
+			return s.compareBoolean(variableValue, *rule.BooleanEquals)
+		}},
+		{rule.TimestampEquals != nil, func() (bool, error) {
+			return s.compareTimestamp(variableValue, *rule.TimestampEquals, timestampEqual)
+		}},
+		{rule.TimestampLessThan != nil, func() (bool, error) {
+			return s.compareTimestamp(variableValue, *rule.TimestampLessThan, timestampLessThan)
+		}},
+		{rule.TimestampGreaterThan != nil, func() (bool, error) {
+			return s.compareTimestamp(variableValue, *rule.TimestampGreaterThan, timestampGreaterThan)
+		}},
+		{rule.TimestampLessThanEquals != nil, func() (bool, error) {
+			return s.compareTimestamp(variableValue, *rule.TimestampLessThanEquals, timestampLessThanEqual)
+		}},
+		{rule.TimestampGreaterThanEquals != nil, func() (bool, error) {
+			return s.compareTimestamp(variableValue, *rule.TimestampGreaterThanEquals, timestampGreaterThanEqual)
+		}},
 	}
-	if rule.StringLessThan != nil {
-		return s.compareString(variableValue, *rule.StringLessThan, func(a, b string) bool { return a < b })
-	}
-	if rule.StringGreaterThan != nil {
-		return s.compareString(variableValue, *rule.StringGreaterThan, func(a, b string) bool { return a > b })
-	}
-	if rule.StringLessThanEquals != nil {
-		return s.compareString(variableValue, *rule.StringLessThanEquals, func(a, b string) bool { return a <= b })
-	}
-	if rule.StringGreaterThanEquals != nil {
-		return s.compareString(variableValue, *rule.StringGreaterThanEquals, func(a, b string) bool { return a >= b })
-	}
-	if rule.NumericEquals != nil {
-		return s.compareNumeric(variableValue, *rule.NumericEquals, func(a, b float64) bool { return a == b })
-	}
-	if rule.NumericLessThan != nil {
-		return s.compareNumeric(variableValue, *rule.NumericLessThan, func(a, b float64) bool { return a < b })
-	}
-	if rule.NumericGreaterThan != nil {
-		return s.compareNumeric(variableValue, *rule.NumericGreaterThan, func(a, b float64) bool { return a > b })
-	}
-	if rule.NumericLessThanEquals != nil {
-		return s.compareNumeric(variableValue, *rule.NumericLessThanEquals, func(a, b float64) bool { return a <= b })
-	}
-	if rule.NumericGreaterThanEquals != nil {
-		return s.compareNumeric(variableValue, *rule.NumericGreaterThanEquals, func(a, b float64) bool { return a >= b })
-	}
-	if rule.BooleanEquals != nil {
-		return s.compareBoolean(variableValue, *rule.BooleanEquals)
-	}
-	if rule.TimestampEquals != nil {
-		return s.compareTimestamp(variableValue, *rule.TimestampEquals, func(a, b time.Time) bool { return a.Equal(b) })
-	}
-	if rule.TimestampLessThan != nil {
-		return s.compareTimestamp(variableValue, *rule.TimestampLessThan, func(a, b time.Time) bool { return a.Before(b) })
-	}
-	if rule.TimestampGreaterThan != nil {
-		return s.compareTimestamp(variableValue, *rule.TimestampGreaterThan, func(a, b time.Time) bool { return a.After(b) })
-	}
-	if rule.TimestampLessThanEquals != nil {
-		return s.compareTimestamp(variableValue, *rule.TimestampLessThanEquals, func(a, b time.Time) bool { return a.Before(b) || a.Equal(b) })
-	}
-	if rule.TimestampGreaterThanEquals != nil {
-		return s.compareTimestamp(variableValue, *rule.TimestampGreaterThanEquals, func(a, b time.Time) bool { return a.After(b) || a.Equal(b) })
+
+	// Execute the first matching comparison
+	for _, handler := range comparisonHandlers {
+		if handler.condition {
+			return handler.comparison()
+		}
 	}
 
 	return false, fmt.Errorf("no comparison operator specified in choice rule")
 }
+
+// Comparison function definitions
+func stringsEqual(a, b string) bool           { return a == b }
+func stringLessThan(a, b string) bool         { return a < b }
+func stringGreaterThan(a, b string) bool      { return a > b }
+func stringLessThanEqual(a, b string) bool    { return a <= b }
+func stringGreaterThanEqual(a, b string) bool { return a >= b }
+
+func numericEqual(a, b float64) bool            { return a == b }
+func numericLessThan(a, b float64) bool         { return a < b }
+func numericGreaterThan(a, b float64) bool      { return a > b }
+func numericLessThanEqual(a, b float64) bool    { return a <= b }
+func numericGreaterThanEqual(a, b float64) bool { return a >= b }
+
+func timestampEqual(a, b time.Time) bool            { return a.Equal(b) }
+func timestampLessThan(a, b time.Time) bool         { return a.Before(b) }
+func timestampGreaterThan(a, b time.Time) bool      { return a.After(b) }
+func timestampLessThanEqual(a, b time.Time) bool    { return a.Before(b) || a.Equal(b) }
+func timestampGreaterThanEqual(a, b time.Time) bool { return a.After(b) || a.Equal(b) }
 
 // compareString compares string values
 func (s *ChoiceState) compareString(variableValue interface{}, expected string, compareFunc func(a, b string) bool) (bool, error) {
