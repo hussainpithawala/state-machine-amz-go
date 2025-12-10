@@ -3,9 +3,9 @@ name: CI
 
 on:
   push:
-    branches: [ perist-executions ]
+    branches: [ develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
 
 jobs:
   lint:
