@@ -1,0 +1,918 @@
+// Package repository pkg/repository/postgres.go
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	_ "github.com/lib/pq"
+)
+
+type PostgresStrategy struct {
+	db     *sql.DB
+	config *Config
+}
+
+// PostgresConfig extends Config with PostgreSQL-specific options
+type PostgresConfig struct {
+	MaxOpenConns     int
+	MaxIdleConns     int
+	ConnMaxLifetime  time.Duration
+	ConnMaxIdleTime  time.Duration
+	EnableWAL        bool   // Write-Ahead Logging
+	StatementTimeout string // e.g., "30s"
+	SearchPath       string // Schema search path
+}
+
+// NewPostgresStrategy creates a new PostgreSQL repository strategy
+func NewPostgresStrategy(config *Config) (*PostgresStrategy, error) {
+	if config.ConnectionURL == "" {
+		return nil, errors.New("connection URL is required for PostgreSQL strategy")
+	}
+
+	db, err := sql.Open("postgres", config.ConnectionURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open postgres connection: %w", err)
+	}
+
+	// Parse PostgreSQL-specific configuration
+	pgConfig := parsePostgresConfig(config.Options)
+
+	// Configure connection pool
+	db.SetMaxOpenConns(pgConfig.MaxOpenConns)
+	db.SetMaxIdleConns(pgConfig.MaxIdleConns)
+	db.SetConnMaxLifetime(pgConfig.ConnMaxLifetime)
+	db.SetConnMaxIdleTime(pgConfig.ConnMaxIdleTime)
+
+	strategy := &PostgresStrategy{
+		db:     db,
+		config: config,
+	}
+
+	return strategy, nil
+}
+
+// parsePostgresConfig extracts PostgreSQL-specific options
+func parsePostgresConfig(options map[string]interface{}) *PostgresConfig {
+	config := &PostgresConfig{
+		MaxOpenConns:     25,
+		MaxIdleConns:     5,
+		ConnMaxLifetime:  5 * time.Minute,
+		ConnMaxIdleTime:  5 * time.Minute,
+		EnableWAL:        true,
+		StatementTimeout: "30s",
+		SearchPath:       "public",
+	}
+
+	if options == nil {
+		return config
+	}
+
+	if v, ok := options["max_open_conns"].(int); ok {
+		config.MaxOpenConns = v
+	}
+	if v, ok := options["max_idle_conns"].(int); ok {
+		config.MaxIdleConns = v
+	}
+	if v, ok := options["conn_max_lifetime"].(time.Duration); ok {
+		config.ConnMaxLifetime = v
+	}
+	if v, ok := options["conn_max_idle_time"].(time.Duration); ok {
+		config.ConnMaxIdleTime = v
+	}
+	if v, ok := options["enable_wal"].(bool); ok {
+		config.EnableWAL = v
+	}
+	if v, ok := options["statement_timeout"].(string); ok {
+		config.StatementTimeout = v
+	}
+	if v, ok := options["search_path"].(string); ok {
+		config.SearchPath = v
+	}
+
+	return config
+}
+
+// Initialize creates the necessary database schema with optimizations
+func (ps *PostgresStrategy) Initialize(ctx context.Context) error {
+	// Set statement timeout for DDL operations
+	pgConfig := parsePostgresConfig(ps.config.Options)
+
+	_, err := ps.db.ExecContext(ctx, fmt.Sprintf("SET statement_timeout = '%s'", pgConfig.StatementTimeout))
+	if err != nil {
+		return fmt.Errorf("failed to set statement timeout: %w", err)
+	}
+
+	// Create schema if specified and not 'public'
+	if pgConfig.SearchPath != "public" && pgConfig.SearchPath != "" {
+		schemaQuery := fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pgConfig.SearchPath)
+		if _, err := ps.db.ExecContext(ctx, schemaQuery); err != nil {
+			return fmt.Errorf("failed to create schema: %w", err)
+		}
+
+		// Set search path
+		setPathQuery := fmt.Sprintf("SET search_path TO %s", pgConfig.SearchPath)
+		if _, err := ps.db.ExecContext(ctx, setPathQuery); err != nil {
+			return fmt.Errorf("failed to set search path: %w", err)
+		}
+	}
+
+	historySchema := `
+	CREATE TABLE IF NOT EXISTS state_history (
+		id VARCHAR(255) NOT NULL,
+		execution_id VARCHAR(255) NOT NULL,
+		execution_start_time TIMESTAMP NOT NULL,
+		state_name VARCHAR(255) NOT NULL,
+		state_type VARCHAR(50) NOT NULL,
+		input JSONB,
+		output JSONB,
+		status VARCHAR(50) NOT NULL CHECK (status IN ('SUCCEEDED', 'FAILED', 'RUNNING', 'CANCELLED', 'TIMED_OUT', 'RETRYING')),
+		start_time TIMESTAMP NOT NULL,
+		end_time TIMESTAMP,
+		error TEXT,
+		retry_count INTEGER DEFAULT 0 CHECK (retry_count >= 0),
+		sequence_number INTEGER NOT NULL CHECK (sequence_number >= 0),
+		metadata JSONB DEFAULT '{}'::jsonb,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (id, start_time),
+		CONSTRAINT fk_execution FOREIGN KEY (execution_id, execution_start_time) 
+			REFERENCES executions(execution_id, start_time) 
+			ON DELETE CASCADE
+			ON UPDATE CASCADE
+	) PARTITION BY RANGE (start_time);
+
+	-- Create default partition
+	CREATE TABLE IF NOT EXISTS state_history_default PARTITION OF state_history DEFAULT;
+
+	-- Indexes for common queries
+	CREATE INDEX IF NOT EXISTS idx_state_history_execution ON state_history(execution_id, start_time);
+	CREATE INDEX IF NOT EXISTS idx_state_history_sequence ON state_history(execution_id, sequence_number);
+	CREATE INDEX IF NOT EXISTS idx_state_history_start_time ON state_history(start_time DESC);
+	CREATE INDEX IF NOT EXISTS idx_state_history_state_name ON state_history(state_name);
+	CREATE INDEX IF NOT EXISTS idx_state_history_status ON state_history(status) WHERE status IN ('FAILED', 'RETRYING');
+	`
+	// Create executions table with partitioning support
+	executionsSchema := `
+	CREATE TABLE IF NOT EXISTS executions (
+		execution_id VARCHAR(255) NOT NULL,
+		state_machine_id VARCHAR(255) NOT NULL,
+		name VARCHAR(255) NOT NULL,
+		input JSONB,
+		output JSONB,
+		status VARCHAR(50) NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'ABORTED')),
+		start_time TIMESTAMP NOT NULL,
+		end_time TIMESTAMP,
+		current_state VARCHAR(255) NOT NULL,
+		error TEXT,
+		metadata JSONB DEFAULT '{}'::jsonb,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (execution_id, start_time)
+	) PARTITION BY RANGE (start_time);
+
+	-- Create default partition for current month
+	CREATE TABLE IF NOT EXISTS executions_default PARTITION OF executions DEFAULT;
+
+	-- Indexes for performance
+	CREATE INDEX IF NOT EXISTS idx_executions_status ON executions(status) WHERE status IN ('RUNNING', 'FAILED');
+	CREATE INDEX IF NOT EXISTS idx_executions_start_time ON executions(start_time DESC);
+	CREATE INDEX IF NOT EXISTS idx_executions_state_machine ON executions(state_machine_id, start_time DESC);
+	CREATE INDEX IF NOT EXISTS idx_executions_end_time ON executions(end_time DESC) WHERE end_time IS NOT NULL;
+	CREATE INDEX IF NOT EXISTS idx_executions_name ON executions(name) WHERE name IS NOT NULL;
+	
+	-- JSONB indexes for metadata queries
+	CREATE INDEX IF NOT EXISTS idx_executions_metadata_gin ON executions USING GIN (metadata);
+	`
+
+	// Create state_history table with partitioning
+
+	// Create function for automatic updated_at timestamp
+	triggerFunction := `
+	CREATE OR REPLACE FUNCTION update_updated_at_column()
+	RETURNS TRIGGER AS $$
+	BEGIN
+		NEW.updated_at = CURRENT_TIMESTAMP;
+		RETURN NEW;
+	END;
+	$$ language 'plpgsql';
+	`
+
+	// Create trigger for executions table
+	executionsTrigger := `
+	DROP TRIGGER IF EXISTS update_executions_updated_at ON executions;
+	CREATE TRIGGER update_executions_updated_at
+		BEFORE UPDATE ON executions
+		FOR EACH ROW
+		EXECUTE FUNCTION update_updated_at_column();
+	`
+
+	// Create materialized view for execution statistics
+	statsView := `
+	CREATE MATERIALIZED VIEW IF NOT EXISTS execution_statistics AS
+	SELECT 
+		state_machine_id,
+		status,
+		COUNT(*) as execution_count,
+		AVG(EXTRACT(EPOCH FROM (end_time - start_time))) as avg_duration_seconds,
+		MIN(start_time) as first_execution,
+		MAX(start_time) as last_execution
+	FROM executions
+	WHERE end_time IS NOT NULL
+	GROUP BY state_machine_id, status;
+
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_stats_unique 
+		ON execution_statistics(state_machine_id, status);
+	`
+
+	// Create function to refresh statistics
+	refreshStatsFunction := `
+	CREATE OR REPLACE FUNCTION refresh_execution_statistics()
+	RETURNS void AS $$
+	BEGIN
+		REFRESH MATERIALIZED VIEW CONCURRENTLY execution_statistics;
+	END;
+	$$ LANGUAGE plpgsql;
+	`
+
+	// Execute all schema creation statements
+	schemas := []string{
+		executionsSchema,
+		historySchema,
+		triggerFunction,
+		executionsTrigger,
+		statsView,
+		refreshStatsFunction,
+	}
+
+	for i, schema := range schemas {
+		if _, err := ps.db.ExecContext(ctx, schema); err != nil {
+			return fmt.Errorf("failed to execute schema statement %d: %w", i+1, err)
+		}
+	}
+
+	return nil
+}
+
+// Close closes the database connection gracefully
+func (ps *PostgresStrategy) Close() error {
+	if ps.db != nil {
+		return ps.db.Close()
+	}
+	return nil
+}
+
+// SaveExecution saves or updates an execution record with UPSERT
+func (ps *PostgresStrategy) SaveExecution(ctx context.Context, record *ExecutionRecord) error {
+	if record.ExecutionID == "" {
+		return errors.New("execution_id is required")
+	}
+
+	// Marshal JSON fields
+	inputJSON, err, outputJSON, metadataJSON, err2 := ps.saveExecutionRecord(record)
+	if err2 != nil {
+		return err2
+	}
+
+	// Use INSERT ... ON CONFLICT for UPSERT behavior
+	query := `
+		INSERT INTO executions (
+			execution_id, state_machine_id, name, input, output, status,
+			start_time, end_time, current_state, error, metadata
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (execution_id, start_time) DO UPDATE SET
+			output = EXCLUDED.output,
+			status = EXCLUDED.status,
+			end_time = EXCLUDED.end_time,
+			current_state = EXCLUDED.current_state,
+			error = EXCLUDED.error,
+			metadata = EXCLUDED.metadata,
+			updated_at = CURRENT_TIMESTAMP
+		RETURNING execution_id, created_at, updated_at
+	`
+
+	var returnedID string
+	var createdAt, updatedAt time.Time
+
+	err = ps.db.QueryRowContext(ctx, query,
+		record.ExecutionID,
+		record.StateMachineID,
+		record.Name,
+		inputJSON,
+		outputJSON,
+		record.Status,
+		record.StartTime,
+		record.EndTime,
+		record.CurrentState,
+		record.Error,
+		metadataJSON,
+	).Scan(&returnedID, &createdAt, &updatedAt)
+
+	if err != nil {
+		return fmt.Errorf("failed to save execution: %w", err)
+	}
+
+	return nil
+}
+
+func (ps *PostgresStrategy) saveExecutionRecord(record *ExecutionRecord) ([]byte, error, []byte, []byte, error) {
+	inputJSON, err := json.Marshal(record.Input)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to marshal input: %w", err)
+	}
+
+	outputJSON, err := json.Marshal(record.Output)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to marshal output: %w", err)
+	}
+
+	metadataJSON := []byte("{}")
+	if record.Metadata != nil {
+		metadataJSON, err = json.Marshal(record.Metadata)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		}
+	}
+	return inputJSON, err, outputJSON, metadataJSON, nil
+}
+
+// GetExecution retrieves an execution by ID with proper error handling
+func (ps *PostgresStrategy) GetExecution(ctx context.Context, executionID string) (*ExecutionRecord, error) {
+	if executionID == "" {
+		return nil, errors.New("execution_id is required")
+	}
+
+	query := `
+		SELECT 
+			execution_id, state_machine_id, name, input, output, status,
+			start_time, end_time, current_state, error, metadata
+		FROM executions
+		WHERE execution_id = $1
+		ORDER BY start_time DESC
+		LIMIT 1
+	`
+
+	row := ps.db.QueryRowContext(ctx, query, executionID)
+
+	record := &ExecutionRecord{}
+	var inputJSON, outputJSON, metadataJSON []byte
+	var endTime sql.NullTime
+	var errorStr sql.NullString
+
+	err := row.Scan(
+		&record.ExecutionID,
+		&record.StateMachineID,
+		&record.Name,
+		&inputJSON,
+		&outputJSON,
+		&record.Status,
+		&record.StartTime,
+		&endTime,
+		&record.CurrentState,
+		&errorStr,
+		&metadataJSON,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("execution not found: %s", executionID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get execution: %w", err)
+	}
+
+	// Unmarshal JSON fields
+	executionRecord, err2 := processJson(inputJSON, record, outputJSON, metadataJSON, endTime, errorStr)
+	if err2 != nil {
+		return executionRecord, err2
+	}
+
+	return record, nil
+}
+
+func processJson(inputJSON []byte, record *ExecutionRecord, outputJSON []byte, metadataJSON []byte, endTime sql.NullTime, errorStr sql.NullString) (*ExecutionRecord, error) {
+	if len(inputJSON) > 0 && string(inputJSON) != "null" {
+		if err := json.Unmarshal(inputJSON, &record.Input); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal input: %w", err)
+		}
+	}
+
+	if len(outputJSON) > 0 && string(outputJSON) != "null" {
+		if err := json.Unmarshal(outputJSON, &record.Output); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal output: %w", err)
+		}
+	}
+
+	if len(metadataJSON) > 0 && string(metadataJSON) != "null" && string(metadataJSON) != "{}" {
+		if err := json.Unmarshal(metadataJSON, &record.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+	}
+
+	if endTime.Valid {
+		record.EndTime = &endTime.Time
+	}
+
+	if errorStr.Valid {
+		record.Error = errorStr.String
+	}
+	return nil, nil
+}
+
+// SaveStateHistory saves a state execution to history
+func (ps *PostgresStrategy) SaveStateHistory(ctx context.Context, record *StateHistoryRecord) error {
+	if record.ExecutionID == "" {
+		return errors.New("execution_id is required")
+	}
+	if record.ID == "" {
+		return errors.New("history id is required")
+	}
+
+	// Marshal JSON fields
+	inputJSON, err := json.Marshal(record.Input)
+	if err != nil {
+		return fmt.Errorf("failed to marshal input: %w", err)
+	}
+
+	outputJSON, err := json.Marshal(record.Output)
+	if err != nil {
+		return fmt.Errorf("failed to marshal output: %w", err)
+	}
+
+	metadataJSON := []byte("{}")
+	if record.Metadata != nil {
+		metadataJSON, err = json.Marshal(record.Metadata)
+		if err != nil {
+			return fmt.Errorf("failed to marshal metadata: %w", err)
+		}
+	}
+
+	query := `
+		INSERT INTO state_history (
+			id, execution_id, execution_start_time, state_name, state_type, input, output,
+			status, start_time, end_time, error, retry_count, sequence_number, metadata
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		ON CONFLICT (id, start_time) DO UPDATE SET
+			output = EXCLUDED.output,
+			status = EXCLUDED.status,
+			end_time = EXCLUDED.end_time,
+			error = EXCLUDED.error,
+			error = EXCLUDED.error,
+			retry_count = EXCLUDED.retry_count
+	`
+
+	_, err = ps.db.ExecContext(ctx, query,
+		record.ID,
+		record.ExecutionID,
+		record.ExecutionStartTime,
+		record.StateName,
+		record.StateType,
+		inputJSON,
+		outputJSON,
+		record.Status,
+		record.StartTime,
+		record.EndTime,
+		record.Error,
+		record.RetryCount,
+		record.SequenceNumber,
+		metadataJSON,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to save state history: %w", err)
+	}
+
+	return nil
+}
+
+// GetStateHistory retrieves all state history for an execution ordered by sequence
+func (ps *PostgresStrategy) GetStateHistory(ctx context.Context, executionID string) ([]*StateHistoryRecord, error) {
+	if executionID == "" {
+		return nil, errors.New("execution_id is required")
+	}
+
+	query := `
+		SELECT 
+			id, execution_id, state_name, state_type, input, output,
+			status, start_time, end_time, error, retry_count, sequence_number, metadata
+		FROM state_history
+		WHERE execution_id = $1
+		ORDER BY sequence_number ASC, start_time ASC
+	`
+
+	rows, err := ps.db.QueryContext(ctx, query, executionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query state history: %w", err)
+	}
+	defer rows.Close()
+
+	var history []*StateHistoryRecord
+
+	for rows.Next() {
+		record := &StateHistoryRecord{}
+		var inputJSON, outputJSON, metadataJSON []byte
+		var endTime sql.NullTime
+		var errorStr sql.NullString
+
+		err := rows.Scan(
+			&record.ID,
+			&record.ExecutionID,
+			&record.StateName,
+			&record.StateType,
+			&inputJSON,
+			&outputJSON,
+			&record.Status,
+			&record.StartTime,
+			&endTime,
+			&errorStr,
+			&record.RetryCount,
+			&record.SequenceNumber,
+			&metadataJSON,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan state history: %w", err)
+		}
+
+		// Unmarshal JSON fields
+		if len(inputJSON) > 0 && string(inputJSON) != "null" {
+			if err := json.Unmarshal(inputJSON, &record.Input); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal input: %w", err)
+			}
+		}
+
+		if len(outputJSON) > 0 && string(outputJSON) != "null" {
+			if err := json.Unmarshal(outputJSON, &record.Output); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal output: %w", err)
+			}
+		}
+
+		if len(metadataJSON) > 0 && string(metadataJSON) != "null" && string(metadataJSON) != "{}" {
+			if err := json.Unmarshal(metadataJSON, &record.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			}
+		}
+
+		if endTime.Valid {
+			record.EndTime = &endTime.Time
+		}
+
+		if errorStr.Valid {
+			record.Error = errorStr.String
+		}
+
+		history = append(history, record)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating state history: %w", err)
+	}
+
+	return history, nil
+}
+
+// ListExecutions lists executions with comprehensive filtering and pagination
+func (ps *PostgresStrategy) ListExecutions(ctx context.Context, filters map[string]interface{}, limit, offset int) ([]*ExecutionRecord, error) {
+	var conditions []string
+	var args []interface{}
+	argCount := 1
+
+	// Build WHERE clause from filters
+	if filters != nil {
+		if status, ok := filters["status"].(string); ok && status != "" {
+			conditions = append(conditions, fmt.Sprintf("status = $%d", argCount))
+			args = append(args, status)
+			argCount++
+		}
+
+		if stateMachineID, ok := filters["state_machine_id"].(string); ok && stateMachineID != "" {
+			conditions = append(conditions, fmt.Sprintf("state_machine_id = $%d", argCount))
+			args = append(args, stateMachineID)
+			argCount++
+		}
+
+		if name, ok := filters["name"].(string); ok && name != "" {
+			conditions = append(conditions, fmt.Sprintf("name ILIKE $%d", argCount))
+			args = append(args, "%"+name+"%")
+			argCount++
+		}
+
+		// Time range filters
+		if startAfter, ok := filters["start_after"].(time.Time); ok {
+			conditions = append(conditions, fmt.Sprintf("start_time >= $%d", argCount))
+			args = append(args, startAfter)
+			argCount++
+		}
+
+		if startBefore, ok := filters["start_before"].(time.Time); ok {
+			conditions = append(conditions, fmt.Sprintf("start_time <= $%d", argCount))
+			args = append(args, startBefore)
+			argCount++
+		}
+
+		// Metadata JSON query
+		if metadataFilter, ok := filters["metadata"].(map[string]interface{}); ok && len(metadataFilter) > 0 {
+			metadataJSON, err := json.Marshal(metadataFilter)
+			if err == nil {
+				conditions = append(conditions, fmt.Sprintf("metadata @> $%d::jsonb", argCount))
+				args = append(args, string(metadataJSON))
+				argCount++
+			}
+		}
+	}
+
+	// Build query
+	query := `
+		SELECT DISTINCT ON (execution_id)
+			execution_id, state_machine_id, name, input, output, status,
+			start_time, end_time, current_state, error, metadata
+		FROM executions
+	`
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	query += " ORDER BY execution_id, start_time DESC"
+
+	// Apply pagination
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argCount)
+		args = append(args, limit)
+		argCount++
+	}
+
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argCount)
+		args = append(args, offset)
+	}
+
+	rows, err := ps.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list executions: %w", err)
+	}
+	defer rows.Close()
+
+	var executions []*ExecutionRecord
+
+	for rows.Next() {
+		record := &ExecutionRecord{}
+		var inputJSON, outputJSON, metadataJSON []byte
+		var endTime sql.NullTime
+		var errorStr sql.NullString
+
+		err := rows.Scan(
+			&record.ExecutionID,
+			&record.StateMachineID,
+			&record.Name,
+			&inputJSON,
+			&outputJSON,
+			&record.Status,
+			&record.StartTime,
+			&endTime,
+			&record.CurrentState,
+			&errorStr,
+			&metadataJSON,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan execution: %w", err)
+		}
+
+		// Unmarshal JSON with null checks
+		if len(inputJSON) > 0 && string(inputJSON) != "null" {
+			err := json.Unmarshal(inputJSON, &record.Input)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if len(outputJSON) > 0 && string(outputJSON) != "null" {
+			err := json.Unmarshal(outputJSON, &record.Output)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if len(metadataJSON) > 0 && string(metadataJSON) != "null" && string(metadataJSON) != "{}" {
+			err := json.Unmarshal(metadataJSON, &record.Metadata)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if endTime.Valid {
+			record.EndTime = &endTime.Time
+		}
+		if errorStr.Valid {
+			record.Error = errorStr.String
+		}
+
+		executions = append(executions, record)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating executions: %w", err)
+	}
+
+	return executions, nil
+}
+
+// DeleteExecution removes an execution and its history (cascade)
+func (ps *PostgresStrategy) DeleteExecution(ctx context.Context, executionID string) error {
+	if executionID == "" {
+		return errors.New("execution_id is required")
+	}
+
+	query := `DELETE FROM executions WHERE execution_id = $1`
+
+	result, err := ps.db.ExecContext(ctx, query, executionID)
+	if err != nil {
+		return fmt.Errorf("failed to delete execution: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("execution not found: %s", executionID)
+	}
+
+	return nil
+}
+
+// HealthCheck verifies the database connection is alive and responsive
+func (ps *PostgresStrategy) HealthCheck(ctx context.Context) error {
+	// Simple ping
+	if err := ps.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+
+	// Check if we can query
+	var result int
+	err := ps.db.QueryRowContext(ctx, "SELECT 1").Scan(&result)
+	if err != nil {
+		return fmt.Errorf("database query failed: %w", err)
+	}
+
+	if result != 1 {
+		return errors.New("database health check returned unexpected result")
+	}
+
+	return nil
+}
+
+// Additional utility methods
+
+// GetExecutionStats returns statistics for a state machine
+func (ps *PostgresStrategy) GetExecutionStats(ctx context.Context, stateMachineID string) (map[string]interface{}, error) {
+	query := `
+		SELECT 
+			status,
+			COUNT(*) as count,
+			AVG(EXTRACT(EPOCH FROM (end_time - start_time))) as avg_duration_seconds,
+			MIN(start_time) as first_execution,
+			MAX(start_time) as last_execution
+		FROM executions
+		WHERE state_machine_id = $1
+		AND end_time IS NOT NULL
+		GROUP BY status
+	`
+
+	rows, err := ps.db.QueryContext(ctx, query, stateMachineID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get execution stats: %w", err)
+	}
+	defer rows.Close()
+
+	stats := make(map[string]interface{})
+	stats["by_status"] = make(map[string]interface{})
+
+	for rows.Next() {
+		var status string
+		var count int
+		var avgDuration sql.NullFloat64
+		var firstExec, lastExec time.Time
+
+		if err := rows.Scan(&status, &count, &avgDuration, &firstExec, &lastExec); err != nil {
+			return nil, fmt.Errorf("failed to scan stats: %w", err)
+		}
+
+		statusStats := map[string]interface{}{
+			"count":           count,
+			"first_execution": firstExec,
+			"last_execution":  lastExec,
+		}
+
+		if avgDuration.Valid {
+			statusStats["avg_duration_seconds"] = avgDuration.Float64
+		}
+
+		stats["by_status"].(map[string]interface{})[status] = statusStats
+	}
+
+	return stats, nil
+}
+
+// CreatePartition creates a new partition for a time range
+func (ps *PostgresStrategy) CreatePartition(ctx context.Context, tableName string, startTime, endTime time.Time) error {
+	partitionName := fmt.Sprintf("%s_%s", tableName, startTime.Format("200601"))
+
+	query := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s PARTITION OF %s
+		FOR VALUES FROM ('%s') TO ('%s')
+	`, partitionName, tableName,
+		startTime.Format("2006-01-02"),
+		endTime.Format("2006-01-02"))
+
+	_, err := ps.db.ExecContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to create partition: %w", err)
+	}
+
+	return nil
+}
+
+// ArchiveOldExecutions moves old executions to an archive table
+func (ps *PostgresStrategy) ArchiveOldExecutions(ctx context.Context, olderThan time.Time) (int64, error) {
+	// Create archive table if not exists
+	archiveSchema := `
+	CREATE TABLE IF NOT EXISTS executions_archive (LIKE executions INCLUDING ALL);
+	CREATE TABLE IF NOT EXISTS state_history_archive (LIKE state_history INCLUDING ALL);
+	`
+
+	if _, err := ps.db.ExecContext(ctx, archiveSchema); err != nil {
+		return 0, fmt.Errorf("failed to create archive tables: %w", err)
+	}
+
+	// Begin transaction
+	tx, err := ps.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Move executions to archive
+	moveExecQuery := `
+		WITH moved AS (
+			DELETE FROM executions
+			WHERE start_time < $1
+			RETURNING *
+		)
+		INSERT INTO executions_archive SELECT * FROM moved
+	`
+
+	result, err := tx.ExecContext(ctx, moveExecQuery, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("failed to archive executions: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+
+	// Move state history to archive
+	moveHistoryQuery := `
+		WITH moved AS (
+			DELETE FROM state_history
+			WHERE start_time < $1
+			RETURNING *
+		)
+		INSERT INTO state_history_archive SELECT * FROM moved
+	`
+
+	if _, err := tx.ExecContext(ctx, moveHistoryQuery, olderThan); err != nil {
+		return 0, fmt.Errorf("failed to archive state history: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit archive transaction: %w", err)
+	}
+
+	return rowsAffected, nil
+}
+
+// VacuumTables runs VACUUM ANALYZE on the main tables for maintenance
+func (ps *PostgresStrategy) VacuumTables(ctx context.Context) error {
+	tables := []string{"executions", "state_history"}
+
+	for _, table := range tables {
+		query := fmt.Sprintf("VACUUM ANALYZE %s", table)
+		if _, err := ps.db.ExecContext(ctx, query); err != nil {
+			return fmt.Errorf("failed to vacuum table %s: %w", table, err)
+		}
+	}
+
+	return nil
+}
+
+// RefreshStatistics refreshes the materialized view for statistics
+func (ps *PostgresStrategy) RefreshStatistics(ctx context.Context) error {
+	_, err := ps.db.ExecContext(ctx, "SELECT refresh_execution_statistics()")
+	if err != nil {
+		return fmt.Errorf("failed to refresh statistics: %w", err)
+	}
+	return nil
+}

@@ -1,0 +1,819 @@
+// examples/postgres_with_yaml.go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"time"
+
+	"github.com/hussainpithawala/state-machine-amz-go/internal/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/internal/statemachine"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/persistence"
+	"gopkg.in/yaml.v3"
+)
+
+func main() {
+	fmt.Println("=== PostgreSQL with YAML Configuration Example ===\n")
+
+	if err := runSimpleWorkflowExample(); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := runComplexWorkflowExample(); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := runParallelWorkflowExample(); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("\n=== All examples completed successfully ===")
+}
+
+// runSimpleWorkflowExample demonstrates basic workflow with YAML
+func runSimpleWorkflowExample() error {
+	fmt.Println("--- Simple Workflow Example ---")
+
+	ctx := context.Background()
+
+	// 1. Load YAML workflow definition
+	yamlContent := `
+Comment: "Simple order processing workflow"
+StartAt: ProcessOrder
+States:
+  ProcessOrder:
+    Type: Task
+    Resource: "arn:aws:lambda:::process:order"
+    ResultPath: "$.orderResult"
+    Next: ValidatePayment
+
+  ValidatePayment:
+    Type: Task
+    Resource: "arn:aws:lambda:::validate:payment"
+    ResultPath: "$.paymentResult"
+    Next: SendNotification
+
+  SendNotification:
+    Type: Task
+    Resource: "arn:aws:lambda:::send:notification"
+    ResultPath: "$.notificationResult"
+    End: true
+`
+
+	// 2. Parse YAML into state machine definition
+	var definition statemachine.StateMachineDefinition
+	if err := yaml.Unmarshal([]byte(yamlContent), &definition); err != nil {
+		return fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	// 3. Create state machine from definition
+	sm, err := statemachine.NewStateMachineFromDefinition(&definition)
+	if err != nil {
+		return fmt.Errorf("failed to create state machine: %w", err)
+	}
+
+	// 4. Configure PostgreSQL persistence
+	persistenceConfig := &persistence.Config{
+		Strategy:      "postgres",
+		ConnectionURL: getConnectionURL(),
+		Options: map[string]interface{}{
+			"max_open_conns":    25,
+			"max_idle_conns":    5,
+			"conn_max_lifetime": 5 * time.Minute,
+		},
+	}
+
+	pm, err := persistence.NewPersistenceManager(persistenceConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create persistence manager: %w", err)
+	}
+	defer pm.Close()
+
+	// Initialize schema
+	if err := pm.Initialize(ctx); err != nil {
+		return fmt.Errorf("failed to initialize persistence: %w", err)
+	}
+
+	// 5. Create executor and register task handlers
+	exec := executor.NewBaseExecutor()
+
+	// Register handlers for the resources defined in YAML
+	exec.RegisterGoFunction("process:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Processing order...")
+		time.Sleep(100 * time.Millisecond)
+
+		inputMap := input.(map[string]interface{})
+		return map[string]interface{}{
+			"orderId":   inputMap["orderId"],
+			"processed": true,
+			"timestamp": time.Now().Format(time.RFC3339),
+		}, nil
+	})
+
+	exec.RegisterGoFunction("validate:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Validating payment...")
+		time.Sleep(100 * time.Millisecond)
+
+		return map[string]interface{}{
+			"valid":         true,
+			"transactionId": "TXN-" + time.Now().Format("20060102150405"),
+		}, nil
+	})
+
+	exec.RegisterGoFunction("send:notification", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Sending notification...")
+		time.Sleep(100 * time.Millisecond)
+
+		return map[string]interface{}{
+			"notificationSent": true,
+			"channel":          "email",
+		}, nil
+	})
+
+	// 6. Create execution context with persistence
+	execCtx := &execution.Execution{
+		ID:              "exec-simple-001",
+		Name:            "SimpleOrderProcessing",
+		StateMachineID:  "simple-workflow-v1",
+		Input: map[string]interface{}{
+			"orderId": "ORD-12345",
+			"amount":  150.00,
+			"customer": map[string]interface{}{
+				"id":   "CUST-001",
+				"name": "John Doe",
+			},
+		},
+		StartTime: time.Now(),
+		Status:    "RUNNING",
+	}
+
+	// Save initial execution state
+	if err := pm.SaveExecution(ctx, execCtx); err != nil {
+		return fmt.Errorf("failed to save initial execution: %w", err)
+	}
+
+	// 7. Execute the workflow
+	fmt.Println("\nExecuting workflow...")
+	result, err := exec.Execute(ctx, sm, execCtx)
+	if err != nil {
+		return fmt.Errorf("execution failed: %w", err)
+	}
+
+	// Save final execution state
+	if err := pm.SaveExecution(ctx, result); err != nil {
+		return fmt.Errorf("failed to save final execution: %w", err)
+	}
+
+	// Save each state history
+	for _, history := range result.StateHistory {
+		if err := pm.SaveStateHistory(ctx, result.ID, &history); err != nil {
+			fmt.Printf("Warning: failed to save state history: %v\n", err)
+		}
+	}
+
+	fmt.Printf("\n✓ Execution completed: %s (Status: %s)\n", result.ID, result.Status)
+
+	// 8. Retrieve and display history from database
+	history, err := pm.GetStateHistory(ctx, result.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get history: %w", err)
+	}
+
+// examples/postgres_with_yaml.go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"time"
+
+	"github.com/hussainpithawala/state-machine-amz-go/internal/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/internal/statemachine"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
+	"gopkg.in/yaml.v3"
+)
+
+func main() {
+	fmt.Println("=== PostgreSQL with YAML Configuration Example ===\n")
+
+	if err := runSimpleWorkflowExample(); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := runComplexWorkflowExample(); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := runParallelWorkflowExample(); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("\n=== All examples completed successfully ===")
+}
+
+// runSimpleWorkflowExample demonstrates basic workflow with YAML
+func runSimpleWorkflowExample() error {
+	fmt.Println("--- Simple Workflow Example ---")
+
+	ctx := context.Background()
+
+	// 1. Load YAML workflow definition
+	yamlContent := `
+Comment: "Simple order processing workflow"
+StartAt: ProcessOrder
+States:
+  ProcessOrder:
+    Type: Task
+    Resource: "arn:aws:lambda:::process:order"
+    ResultPath: "$.orderResult"
+    Next: ValidatePayment
+
+  ValidatePayment:
+    Type: Task
+    Resource: "arn:aws:lambda:::validate:payment"
+    ResultPath: "$.paymentResult"
+    Next: SendNotification
+
+  SendNotification:
+    Type: Task
+    Resource: "arn:aws:lambda:::send:notification"
+    ResultPath: "$.notificationResult"
+    End: true
+`
+
+	// 2. Parse YAML into state machine definition
+	var definition statemachine.StateMachineDefinition
+	if err := yaml.Unmarshal([]byte(yamlContent), &definition); err != nil {
+		return fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	// 3. Create state machine from definition
+	sm, err := statemachine.NewStateMachineFromDefinition(&definition)
+	if err != nil {
+		return fmt.Errorf("failed to create state machine: %w", err)
+	}
+
+	// 4. Configure PostgreSQL repository
+	repoConfig := &repository.Config{
+		Strategy:      "postgres",
+		ConnectionURL: getConnectionURL(),
+		Options: map[string]interface{}{
+			"max_open_conns":    25,
+			"max_idle_conns":    5,
+			"conn_max_lifetime": 5 * time.Minute,
+		},
+	}
+
+	rm, err := repository.NewRepositoryManager(repoConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create repository manager: %w", err)
+	}
+	defer rm.Close()
+
+	// Initialize schema
+	if err := rm.Initialize(ctx); err != nil {
+		return fmt.Errorf("failed to initialize repository: %w", err)
+	}
+
+	// 5. Create executor and register task handlers
+	exec := executor.NewBaseExecutor()
+
+	// Register handlers for the resources defined in YAML
+	exec.RegisterGoFunction("process:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Processing order...")
+		time.Sleep(100 * time.Millisecond)
+
+		inputMap := input.(map[string]interface{})
+		return map[string]interface{}{
+			"orderId":   inputMap["orderId"],
+			"processed": true,
+			"timestamp": time.Now().Format(time.RFC3339),
+		}, nil
+	})
+
+	exec.RegisterGoFunction("validate:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Validating payment...")
+		time.Sleep(100 * time.Millisecond)
+
+		return map[string]interface{}{
+			"valid":         true,
+			"transactionId": "TXN-" + time.Now().Format("20060102150405"),
+		}, nil
+	})
+
+	exec.RegisterGoFunction("send:notification", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Sending notification...")
+		time.Sleep(100 * time.Millisecond)
+
+		return map[string]interface{}{
+			"notificationSent": true,
+			"channel":          "email",
+		}, nil
+	})
+
+	// 6. Create execution context with repository
+	execCtx := &execution.Execution{
+		ID:             "exec-simple-001",
+		Name:           "SimpleOrderProcessing",
+		StateMachineID: "simple-workflow-v1",
+		Input: map[string]interface{}{
+			"orderId": "ORD-12345",
+			"amount":  150.00,
+			"customer": map[string]interface{}{
+				"id":   "CUST-001",
+				"name": "John Doe",
+			},
+		},
+		StartTime: time.Now(),
+		Status:    "RUNNING",
+	}
+
+	// Save initial execution state
+	if err := rm.SaveExecution(ctx, execCtx); err != nil {
+		return fmt.Errorf("failed to save initial execution: %w", err)
+	}
+
+	// 7. Execute the workflow
+	fmt.Println("\nExecuting workflow...")
+	result, err := exec.Execute(ctx, sm, execCtx)
+	if err != nil {
+		return fmt.Errorf("execution failed: %w", err)
+	}
+
+	// Save final execution state
+	if err := rm.SaveExecution(ctx, result); err != nil {
+		return fmt.Errorf("failed to save final execution: %w", err)
+	}
+
+	// Save each state history
+	for _, history := range result.StateHistory {
+		if err := rm.SaveStateHistory(ctx, result.ID, &history); err != nil {
+			fmt.Printf("Warning: failed to save state history: %v\n", err)
+		}
+	}
+
+	fmt.Printf("\n✓ Execution completed: %s (Status: %s)\n", result.ID, result.Status)
+
+	// 8. Retrieve and display history from database
+	history, err := rm.GetStateHistory(ctx, result.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get history: %w", err)
+	}
+
+	fmt.Println("\nExecution History (from PostgreSQL):")
+	displayHistory(history)
+
+	fmt.Println("\n✓ Simple workflow example completed\n")
+	return nil
+}
+
+// runComplexWorkflowExample demonstrates a workflow with retries and error handling
+func runComplexWorkflowExample() error {
+	fmt.Println("--- Complex Workflow with Retries Example ---")
+
+	ctx := context.Background()
+
+	// 1. Load YAML with retry configuration
+	yamlContent := `
+Comment: "Order workflow with retry and error handling"
+StartAt: ValidateOrder
+States:
+  ValidateOrder:
+    Type: Task
+    Resource: "arn:aws:lambda:::validate:order"
+    ResultPath: "$.validation"
+    Next: CheckInventory
+    Retry:
+      - ErrorEquals: ["States.TaskFailed"]
+        IntervalSeconds: 2
+        MaxAttempts: 3
+        BackoffRate: 2.0
+    Catch:
+      - ErrorEquals: ["ValidationError"]
+        ResultPath: "$.error"
+        Next: HandleValidationError
+
+  CheckInventory:
+    Type: Task
+    Resource: "arn:aws:lambda:::check:inventory"
+    ResultPath: "$.inventory"
+    Next: ProcessPayment
+    TimeoutSeconds: 30
+
+  ProcessPayment:
+    Type: Task
+    Resource: "arn:aws:lambda:::process:payment"
+    ResultPath: "$.payment"
+    Next: SendConfirmation
+    Retry:
+      - ErrorEquals: ["PaymentGatewayError"]
+        IntervalSeconds: 1
+        MaxAttempts: 5
+        BackoffRate: 2.0
+
+  SendConfirmation:
+    Type: Task
+    Resource: "arn:aws:lambda:::send:confirmation"
+    ResultPath: "$.confirmation"
+    End: true
+
+  HandleValidationError:
+    Type: Fail
+    Error: "OrderValidationFailed"
+    Cause: "The order failed validation"
+`
+
+	var definition statemachine.StateMachineDefinition
+	if err := yaml.Unmarshal([]byte(yamlContent), &definition); err != nil {
+		return fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	sm, err := statemachine.NewStateMachineFromDefinition(&definition)
+	if err != nil {
+		return fmt.Errorf("failed to create state machine: %w", err)
+	}
+
+	// 2. Setup repository
+	repoConfig := &repository.Config{
+		Strategy:      "postgres",
+		ConnectionURL: getConnectionURL(),
+	}
+
+	rm, err := repository.NewRepositoryManager(repoConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create repository: %w", err)
+	}
+	defer rm.Close()
+
+	rm.Initialize(ctx)
+
+	// 3. Create executor with handlers
+	exec := executor.NewBaseExecutor()
+
+	exec.RegisterGoFunction("validate:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Validating order...")
+		time.Sleep(100 * time.Millisecond)
+
+		return map[string]interface{}{
+			"valid":  true,
+			"checks": []string{"format", "customer", "products"},
+		}, nil
+	})
+
+	exec.RegisterGoFunction("check:inventory", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Checking inventory...")
+		time.Sleep(150 * time.Millisecond)
+
+		return map[string]interface{}{
+			"available": true,
+			"warehouse": "WH-001",
+			"quantity":  10,
+		}, nil
+	})
+
+	exec.RegisterGoFunction("process:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Processing payment...")
+		time.Sleep(200 * time.Millisecond)
+
+		return map[string]interface{}{
+			"status":        "SUCCESS",
+			"transactionId": "TXN-" + time.Now().Format("20060102150405"),
+			"amount":        150.00,
+		}, nil
+	})
+
+	exec.RegisterGoFunction("send:confirmation", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Sending confirmation...")
+		time.Sleep(100 * time.Millisecond)
+
+		return map[string]interface{}{
+			"sent":      true,
+			"channel":   "email",
+			"messageId": "MSG-" + time.Now().Format("20060102150405"),
+		}, nil
+	})
+
+	// 4. Execute
+	execCtx := &execution.Execution{
+		ID:             "exec-complex-001",
+		Name:           "ComplexOrderProcessing",
+		StateMachineID: "order-workflow-v2",
+		Input: map[string]interface{}{
+			"orderId": "ORD-67890",
+			"items": []map[string]interface{}{
+				{"sku": "ITEM-001", "quantity": 2},
+				{"sku": "ITEM-002", "quantity": 1},
+			},
+			"total": 299.99,
+		},
+		StartTime: time.Now(),
+		Status:    "RUNNING",
+	}
+
+	rm.SaveExecution(ctx, execCtx)
+
+	fmt.Println("\nExecuting complex workflow...")
+	result, err := exec.Execute(ctx, sm, execCtx)
+	if err != nil {
+		fmt.Printf("Execution failed: %v\n", err)
+	}
+
+	rm.SaveExecution(ctx, result)
+	for _, h := range result.StateHistory {
+		rm.SaveStateHistory(ctx, result.ID, &h)
+	}
+
+	fmt.Printf("\n✓ Execution completed: %s (Status: %s)\n", result.ID, result.Status)
+
+	// Display history
+	history, _ := rm.GetStateHistory(ctx, result.ID)
+	displayDetailedHistory(history)
+
+	fmt.Println("\n✓ Complex workflow example completed\n")
+	return nil
+}
+
+// runParallelWorkflowExample demonstrates parallel state execution
+func runParallelWorkflowExample() error {
+	fmt.Println("--- Parallel Workflow Example ---")
+
+	ctx := context.Background()
+
+	// 1. Load YAML with parallel states
+	yamlContent := `
+Comment: "Payment processing with parallel fraud checks"
+StartAt: InitiatePayment
+States:
+  InitiatePayment:
+    Type: Task
+    Resource: "arn:aws:lambda:::initiate:payment"
+    ResultPath: "$.paymentInit"
+    Next: ParallelFraudChecks
+
+  ParallelFraudChecks:
+    Type: Parallel
+    ResultPath: "$.fraudChecks"
+    Next: EvaluateFraudResults
+    Branches:
+      - StartAt: CheckCreditScore
+        States:
+          CheckCreditScore:
+            Type: Task
+            Resource: "arn:aws:lambda:::check:credit-score"
+            End: true
+
+      - StartAt: CheckTransactionHistory
+        States:
+          CheckTransactionHistory:
+            Type: Task
+            Resource: "arn:aws:lambda:::check:transaction-history"
+            End: true
+
+      - StartAt: CheckDeviceFingerprint
+        States:
+          CheckDeviceFingerprint:
+            Type: Task
+            Resource: "arn:aws:lambda:::check:device-fingerprint"
+            End: true
+
+  EvaluateFraudResults:
+    Type: Choice
+    Choices:
+      - Variable: "$.fraudChecks.riskScore"
+        NumericGreaterThan: 80
+        Next: RejectPayment
+      - Variable: "$.fraudChecks.riskScore"
+        NumericGreaterThan: 50
+        Next: ManualReview
+    Default: ApprovePayment
+
+  ApprovePayment:
+    Type: Task
+    Resource: "arn:aws:lambda:::approve:payment"
+    ResultPath: "$.approval"
+    End: true
+
+  RejectPayment:
+    Type: Task
+    Resource: "arn:aws:lambda:::reject:payment"
+    ResultPath: "$.rejection"
+    End: true
+
+  ManualReview:
+    Type: Task
+    Resource: "arn:aws:lambda:::manual:review"
+    ResultPath: "$.manualReview"
+    End: true
+`
+
+	var definition statemachine.StateMachineDefinition
+	if err := yaml.Unmarshal([]byte(yamlContent), &definition); err != nil {
+		return fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	sm, err := statemachine.NewStateMachineFromDefinition(&definition)
+	if err != nil {
+		return fmt.Errorf("failed to create state machine: %w", err)
+	}
+
+	// 2. Setup repository
+	repoConfig := &repository.Config{
+		Strategy:      "postgres",
+		ConnectionURL: getConnectionURL(),
+	}
+
+	rm, err := repository.NewRepositoryManager(repoConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create repository: %w", err)
+	}
+	defer rm.Close()
+
+	rm.Initialize(ctx)
+
+	// 3. Create executor with handlers
+	exec := executor.NewBaseExecutor()
+
+	exec.RegisterGoFunction("initiate:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Initiating payment...")
+		time.Sleep(100 * time.Millisecond)
+
+		return map[string]interface{}{
+			"paymentId": "PAY-" + time.Now().Format("20060102150405"),
+			"status":    "PENDING",
+		}, nil
+	})
+
+	exec.RegisterGoFunction("check:credit-score", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Checking credit score...")
+		time.Sleep(200 * time.Millisecond)
+
+		return map[string]interface{}{
+			"score":  720,
+			"risk":   "LOW",
+			"factor": 0.1,
+		}, nil
+	})
+
+	exec.RegisterGoFunction("check:transaction-history", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Checking transaction history...")
+		time.Sleep(150 * time.Millisecond)
+
+		return map[string]interface{}{
+			"totalTransactions": 45,
+			"chargebacks":       0,
+			"risk":              "LOW",
+			"factor":            0.15,
+		}, nil
+	})
+
+	exec.RegisterGoFunction("check:device-fingerprint", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Checking device fingerprint...")
+		time.Sleep(180 * time.Millisecond)
+
+		return map[string]interface{}{
+			"deviceId":     "DEV-12345",
+			"knownDevice":  true,
+			"risk":         "LOW",
+			"factor":       0.05,
+		}, nil
+	})
+
+	exec.RegisterGoFunction("approve:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Approving payment...")
+		time.Sleep(100 * time.Millisecond)
+
+		return map[string]interface{}{
+			"approved":   true,
+			"approvalId": "APR-" + time.Now().Format("20060102150405"),
+		}, nil
+	})
+
+	exec.RegisterGoFunction("reject:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Rejecting payment...")
+
+		return map[string]interface{}{
+			"rejected": true,
+			"reason":   "High fraud risk",
+		}, nil
+	})
+
+	exec.RegisterGoFunction("manual:review", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Sending for manual review...")
+
+		return map[string]interface{}{
+			"reviewQueued": true,
+			"reviewId":     "REV-" + time.Now().Format("20060102150405"),
+		}, nil
+	})
+
+	// 4. Execute
+	execCtx := &execution.Execution{
+		ID:             "exec-parallel-001",
+		Name:           "ParallelFraudCheck",
+		StateMachineID: "payment-workflow-v1",
+		Input: map[string]interface{}{
+			"amount":     500.00,
+			"currency":   "USD",
+			"customerId": "CUST-12345",
+			"riskScore":  30, // Low risk for this example
+		},
+		StartTime: time.Now(),
+		Status:    "RUNNING",
+	}
+
+	rm.SaveExecution(ctx, execCtx)
+
+	fmt.Println("\nExecuting parallel workflow...")
+	result, err := exec.Execute(ctx, sm, execCtx)
+	if err != nil {
+		return fmt.Errorf("execution failed: %w", err)
+	}
+
+	rm.SaveExecution(ctx, result)
+	for _, h := range result.StateHistory {
+		rm.SaveStateHistory(ctx, result.ID, &h)
+	}
+
+	fmt.Printf("\n✓ Execution completed: %s (Status: %s)\n", result.ID, result.Status)
+
+	// Display history
+	history, _ := rm.GetStateHistory(ctx, result.ID)
+	displayHistory(history)
+
+	// Show execution statistics
+	postgresRepo := rm.strategy.(*repository.PostgresRepository)
+	stats, _ := postgresRepo.GetExecutionStats(ctx, "payment-workflow-v1")
+	if stats != nil {
+		fmt.Println("\nExecution Statistics:")
+		fmt.Printf("  %+v\n", stats)
+	}
+
+	fmt.Println("\n✓ Parallel workflow example completed\n")
+	return nil
+}
+
+// Helper functions
+
+func getConnectionURL() string {
+	// Check environment variable first
+	if url := os.Getenv("DATABASE_URL"); url != "" {
+		return url
+	}
+	// Default for local development
+	return "postgres://postgres:postgres@localhost:5432/statemachine?sslmode=disable"
+}
+
+func displayHistory(history []*repository.StateHistoryRecord) {
+	for _, h := range history {
+		duration := "N/A"
+		if h.EndTime != nil {
+			duration = h.EndTime.Sub(h.StartTime).String()
+		}
+
+		fmt.Printf("  [%d] %s (%s): %s (duration: %s)\n",
+			h.SequenceNumber,
+			h.StateName,
+			h.StateType,
+			h.Status,
+			duration,
+		)
+	}
+}
+
+func displayDetailedHistory(history []*repository.StateHistoryRecord) {
+	fmt.Println("\nDetailed Execution History:")
+	fmt.Println("─────────────────────────────────────────────────────────────")
+
+	for _, h := range history {
+		duration := "N/A"
+		if h.EndTime != nil {
+			duration = h.EndTime.Sub(h.StartTime).String()
+		}
+
+		fmt.Printf("Step %d: %s (%s)\n", h.SequenceNumber, h.StateName, h.StateType)
+		fmt.Printf("  Status: %s\n", h.Status)
+		fmt.Printf("  Duration: %s\n", duration)
+		fmt.Printf("  Retry Count: %d\n", h.RetryCount)
+
+		if h.Error != "" {
+			fmt.Printf("  Error: %s\n", h.Error)
+		}
+
+		if h.Input != nil {
+			fmt.Printf("  Input: %+v\n", h.Input)
+		}
+
+		if h.Output != nil {
+			fmt.Printf("  Output: %+v\n", h.Output)
+		}
+
+		fmt.Println()
+	}
+	fmt.Println("─────────────────────────────────────────────────────────────")
+}

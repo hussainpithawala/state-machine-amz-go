@@ -9,24 +9,32 @@ import (
 
 // Execution represents a state machine execution instance
 type Execution struct {
-	ID           string
-	Name         string
-	Status       string
-	StartTime    time.Time
-	EndTime      time.Time
-	Input        interface{}
-	Output       interface{}
-	Error        error
-	CurrentState string
-	History      []StateHistory
+	StateMachineID string
+	ID             string
+	Name           string
+	Status         string
+	StartTime      time.Time
+	EndTime        time.Time
+	Input          interface{}
+	Output         interface{}
+	Error          error
+	CurrentState   string
+	History        []StateHistory
 }
 
 // StateHistory represents the history of a state execution
 type StateHistory struct {
-	StateName string
-	Input     interface{}
-	Output    interface{}
-	Timestamp time.Time
+	StateName      string
+	StateType      string
+	Status         string
+	Input          interface{}
+	Output         interface{}
+	Timestamp      time.Time
+	StartTime      time.Time
+	EndTime        time.Time
+	RetryCount     int
+	SequenceNumber int
+	Error          error
 }
 
 // NewContext creates a new execution context
@@ -62,6 +70,7 @@ func New(id, name string, input interface{}) *Execution {
 func (e *Execution) AddStateHistory(stateName string, input, output interface{}) {
 	e.History = append(e.History, StateHistory{
 		StateName: stateName,
+		Status:    "SUCCEEDED",
 		Input:     input,
 		Output:    output,
 		Timestamp: time.Now(),

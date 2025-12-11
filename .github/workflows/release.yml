@@ -104,7 +104,7 @@ jobs:
       - name: Run unit tests
         run: |
           echo "Running tests with Go ${{ matrix.go-version }} on ${{ matrix.os }}..."
-          go test ./... -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
+          go test ./... -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out -tags 'exclude_integration'
 
       - name: Run integration tests
         run: |
@@ -113,7 +113,7 @@ jobs:
           for example in examples/*/*.go; do
             if [ -f "$example" ]; then
               echo "Testing $example..."
-              go test -c -o /dev/null "$example" 2>/dev/null || echo "Note: $example is not a test file"
+              go test -c -o /dev/null "$example" 2>/dev/null || echo "Note: $example is not a test file" -tags 'exclude_integration'
             fi
           done
 
@@ -314,7 +314,7 @@ jobs:
             
             Run the test suite:
             ```bash
-            go test ./...
+            go test ./... -tags 'exclude_integration' 
             ```
             
             ### 📄 License

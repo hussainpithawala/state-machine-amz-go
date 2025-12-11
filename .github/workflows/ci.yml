@@ -54,7 +54,7 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test ./... -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
+        run: go test ./... -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out -tags 'exclude_integration'
 
       - name: Upload coverage
         uses: codecov/codecov-action@v3

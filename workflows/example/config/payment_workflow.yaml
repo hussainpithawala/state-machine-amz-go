@@ -1,0 +1,81 @@
+Comment: "Payment processing with parallel fraud checks"
+StartAt: InitiatePayment
+States:
+  InitiatePayment:
+    Type: Task
+    Resource: "arn:aws:lambda:::initiate:payment"
+    ResultPath: "$.paymentInit"
+    Next: ParallelFraudChecks
+
+  ParallelFraudChecks:
+    Type: Parallel
+    ResultPath: "$.fraudChecks"
+    Next: EvaluateFraudResults
+    Branches:
+      - StartAt: CheckCreditScore
+        States:
+          CheckCreditScore:
+            Type: Task
+            Resource: "arn:aws:lambda:::check:credit-score"
+            End: true
+
+      - StartAt: CheckTransactionHistory
+        States:
+          CheckTransactionHistory:
+            Type: Task
+            Resource: "arn:aws:lambda:::check:transaction-history"
+            End: true
+
+      - StartAt: CheckDeviceFingerprint
+        States:
+          CheckDeviceFingerprint:
+            Type: Task
+            Resource: "arn:aws:lambda:::check:device-fingerprint"
+            End: true
+
+  EvaluateFraudResults:
+    Type: Choice
+    Choices:
+      - Variable: "$.fraudChecks.riskScore"
+        NumericGreaterThan: 80
+        Next: RejectPayment
+      - Variable: "$.fraudChecks.riskScore"
+        NumericGreaterThan: 50
+        Next: ManualReview
+    Default: ApprovePayment
+
+  ApprovePayment:
+    Type: Task
+    Resource: "arn:aws:lambda:::approve:payment"
+    ResultPath: "$.approval"
+    End: true
+
+  RejectPayment:
+    Type: Task
+    Resource: "arn:aws:lambda:::reject:payment"
+    ResultPath: "$.rejection"
+    End: true
+
+  ManualReview:
+    Type: Task
+    Resource: "arn:aws:lambda:::manual:review"
+    ResultPath: "$.manualReview"
+    Next: WaitForReview
+
+  WaitForReview:
+    Type: Wait
+    Seconds: 300
+    Next: CheckReviewStatus
+
+  CheckReviewStatus:
+    Type: Task
+    Resource: "arn:aws:lambda:::check:review-status"
+    Next: EvaluateReview
+
+  EvaluateReview:
+    Type: Choice
+    Choices:
+      - Variable: "$.manualReview.approved"
+        BooleanEquals: true
+        Next: ApprovePayment
+    Default: RejectPayment

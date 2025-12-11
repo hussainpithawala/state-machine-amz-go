@@ -1,0 +1,47 @@
+Comment: "Complete order processing workflow with persistence"
+StartAt: ValidateOrder
+States:
+  ValidateOrder:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:validate-order"
+    ResultPath: "$.validation"
+    Next: CheckInventory
+    Retry:
+      - ErrorEquals: ["States.TaskFailed"]
+        IntervalSeconds: 2
+        MaxAttempts: 3
+        BackoffRate: 2.0
+    Catch:
+      - ErrorEquals: ["ValidationError"]
+        ResultPath: "$.error"
+        Next: HandleValidationError
+
+  CheckInventory:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:check-inventory"
+    ResultPath: "$.inventory"
+    Next: ProcessPayment
+    TimeoutSeconds: 30
+    HeartbeatSeconds: 10
+
+  ProcessPayment:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:process-payment"
+    ResultPath: "$.payment"
+    Next: SendConfirmation
+    Retry:
+      - ErrorEquals: ["PaymentGatewayError"]
+        IntervalSeconds: 1
+        MaxAttempts: 5
+        BackoffRate: 2.0
+
+  SendConfirmation:
+    Type: Task
+    Resource: "arn:aws:lambda:us-east-1:123456789012:function:send-confirmation"
+    ResultPath: "$.confirmation"
+    End: true
+
+  HandleValidationError:
+    Type: Fail
+    Error: "OrderValidationFailed"
+    Cause: "The order failed validation"
