@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -277,14 +278,26 @@ func (sh *StateHistory) IncrementRetry() {
 // generateExecutionID generates a unique execution ID
 func generateExecutionID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
-	return fmt.Sprintf("exec-%s", hex.EncodeToString(b))
+	// Check the error return value
+	_, err := rand.Read(b)
+
+	if err != nil {
+		// Log the error and panic/fatal exit, as cryptographic security has failed
+		log.Fatalf("Fatal error reading from crypto/rand: %v", err)
+	}
+	return fmt.Sprintf("[generateExecutionID] exec-%s", hex.EncodeToString(b))
 }
 
 // generateStateHistoryID generates a unique state history ID
 func generateStateHistoryID(executionID, stateName string, sequenceNumber int) string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	_, err := rand.Read(b)
+
+	if err != nil {
+		// Log the error and panic/fatal exit, as cryptographic security has failed
+		log.Fatalf("[generateStateHistoryID] Fatal error reading from crypto/rand: %v", err)
+	}
+
 	return fmt.Sprintf("%s-%s-%d-%s", executionID, stateName, sequenceNumber, hex.EncodeToString(b)[:8])
 }
 

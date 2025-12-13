@@ -273,7 +273,8 @@ func (r *GormStrategy) GetStateHistory(ctx context.Context, executionID string) 
 	}
 
 	histories := make([]*StateHistoryRecord, len(models))
-	for i, model := range models {
+	for i := range models {
+		model := models[i]
 		histories[i] = fromStateHistoryModel(&model)
 	}
 
@@ -325,7 +326,8 @@ func (r *GormStrategy) ListExecutions(ctx context.Context, filter *ExecutionFilt
 	}
 
 	executions := make([]*ExecutionRecord, len(models))
-	for i, model := range models {
+	for i := range models {
+		model := models[i]
 		executions[i] = fromExecutionModel(&model)
 	}
 
@@ -409,7 +411,8 @@ func (r *GormStrategy) GetExecutionWithHistory(ctx context.Context, executionID 
 	execution := fromExecutionModel(&execModel)
 
 	histories := make([]*StateHistoryRecord, len(historyModels))
-	for i, h := range historyModels {
+	for i := range historyModels {
+		h := historyModels[i]
 		histories[i] = fromStateHistoryModel(&h)
 	}
 

@@ -19,9 +19,9 @@ type fakeStrategy struct {
 
 	lastExecutionID string
 
-	lastListFilters map[string]interface{}
-	lastListLimit   int
-	lastListOffset  int
+	//	lastListFilters map[string]interface{}
+	lastListLimit  int
+	lastListOffset int
 
 	getExecutionID string
 	getHistoryID   string

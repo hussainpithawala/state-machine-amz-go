@@ -24,9 +24,9 @@ type fakeStrategy struct {
 	getExecutionID string
 	getHistoryID   string
 
-	listFilters map[string]interface{}
-	listLimit   int
-	listOffset  int
+	//	listFilters map[string]interface{}
+	listLimit  int
+	listOffset int
 }
 
 func (f *fakeStrategy) Initialize(ctx context.Context) error  { f.initializeCalls++; return nil }

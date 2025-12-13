@@ -21,7 +21,7 @@ type PostgresStrategy struct {
 }
 
 func (ps *PostgresStrategy) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
@@ -628,9 +628,7 @@ func (ps *PostgresStrategy) ListExecutions(ctx context.Context, filter *Executio
 		}
 		results = append(results, &rec)
 	}
-
 	return results, nil
-
 }
 
 // buildExecutionFilters constructs WHERE conditions and args from filters
@@ -671,26 +669,26 @@ func (ps *PostgresStrategy) buildExecutionFilters(
 	if !filter.StartBefore.IsZero() {
 		conditions = append(conditions, fmt.Sprintf("start_before <= $%d", argCount))
 		args = append(args, filter.StartBefore)
-		argCount++
+		// argCount++
 	}
 
 	// need to solve this
-	//if filter.e {
+	//  if filter.e {
 	//	if metadataJSON, err := json.Marshal(metadataFilter); err == nil {
 	//		conditions = append(conditions, fmt.Sprintf("metadata @> $%d::jsonb", argCount))
 	//		args = append(args, string(metadataJSON))
 	//	}
-	//}
+	//	}
 
 	return conditions, args
 }
 
-//func (ps *PostgresStrategy) buildExecutionFilters(
-//	filters map[string]interface{},
-//	conditions []string,
-//	args []interface{},
-//) (newConditions []string, newArgs []interface{}) {
-//	if filters == nil {
+//	func (ps *PostgresStrategy) buildExecutionFilters(
+//		filters map[string]interface{},
+//		conditions []string,
+//		args []interface{},
+//	) (newConditions []string, newArgs []interface{}) {
+//		if filters == nil {
 //		return conditions, args
 //	}
 //
