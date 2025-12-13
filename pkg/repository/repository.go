@@ -17,7 +17,7 @@ type ExecutionRecord struct {
 	Input          interface{}            `json:"input"`
 	Output         interface{}            `json:"output,omitempty"`
 	Status         string                 `json:"status"`
-	StartTime      time.Time              `json:"start_time"`
+	StartTime      *time.Time             `json:"start_time"`
 	EndTime        *time.Time             `json:"end_time,omitempty"`
 	CurrentState   string                 `json:"current_state"`
 	Error          string                 `json:"error,omitempty"`
@@ -28,13 +28,13 @@ type ExecutionRecord struct {
 type StateHistoryRecord struct {
 	ID                 string                 `json:"id"`
 	ExecutionID        string                 `json:"execution_id"`
-	ExecutionStartTime time.Time              `json:"execution_start_time"`
+	ExecutionStartTime *time.Time             `json:"execution_start_time"`
 	StateName          string                 `json:"state_name"`
 	StateType          string                 `json:"state_type"`
 	Input              interface{}            `json:"input"`
 	Output             interface{}            `json:"output,omitempty"`
 	Status             string                 `json:"status"`
-	StartTime          time.Time              `json:"start_time"`
+	StartTime          *time.Time             `json:"start_time"`
 	EndTime            *time.Time             `json:"end_time,omitempty"`
 	Error              string                 `json:"error,omitempty"`
 	RetryCount         int                    `json:"retry_count"`
@@ -128,7 +128,7 @@ func (pm *Manager) SaveExecution(ctx context.Context, exec *execution.Execution)
 		Input:        exec.Input,
 		Output:       exec.Output,
 		Status:       exec.Status,
-		StartTime:    exec.StartTime,
+		StartTime:    &exec.StartTime,
 		CurrentState: exec.CurrentState,
 	}
 
@@ -148,13 +148,13 @@ func (pm *Manager) SaveStateHistory(ctx context.Context, executionInstance *exec
 	record := &StateHistoryRecord{
 		ID:                 generateHistoryID(executionInstance.ID, history.StateName, time.Now()),
 		ExecutionID:        executionInstance.ID,
-		ExecutionStartTime: executionInstance.StartTime,
+		ExecutionStartTime: &executionInstance.StartTime,
 		StateName:          history.StateName,
 		StateType:          history.StateType,
 		Input:              history.Input,
 		Output:             history.Output,
 		Status:             history.Status,
-		StartTime:          history.StartTime,
+		StartTime:          &history.StartTime,
 		RetryCount:         history.RetryCount,
 		SequenceNumber:     history.SequenceNumber,
 	}

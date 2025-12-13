@@ -114,19 +114,61 @@ func parseGormConfig(options map[string]interface{}) *GormConfig {
 
 // Initialize creates tables and indexes using GORM AutoMigrate
 func (r *GormStrategy) Initialize(ctx context.Context) error {
-	// Auto migrate all models
-	err := r.db.WithContext(ctx).AutoMigrate(
-		&ExecutionModel{},
-		&StateHistoryModel{},
-		&ExecutionStatisticsModel{},
-	)
+	// Migrate tables in correct order (parent tables first)
+
+	// Step 1: Migrate executions table first (no dependencies)
+	err := r.db.WithContext(ctx).AutoMigrate(&ExecutionModel{})
 	if err != nil {
-		return fmt.Errorf("failed to auto migrate: %w", err)
+		return fmt.Errorf("failed to migrate executions table: %w", err)
 	}
 
-	// Create additional indexes for better performance
+	// Step 2: Migrate state_history table (depends on executions)
+	err = r.db.WithContext(ctx).AutoMigrate(&StateHistoryModel{})
+	if err != nil {
+		return fmt.Errorf("failed to migrate state_history table: %w", err)
+	}
+
+	// Step 3: Add foreign key constraint manually after both tables exist
+	if err := r.addForeignKeyConstraints(ctx); err != nil {
+		// Log warning but don't fail if constraint already exists
+		// This is safe because constraint might already exist from previous run
+		fmt.Printf("Warning: could not add foreign key constraints: %v\n", err)
+	}
+
+	// Step 4: Migrate statistics table (independent)
+	err = r.db.WithContext(ctx).AutoMigrate(&ExecutionStatisticsModel{})
+	if err != nil {
+		return fmt.Errorf("failed to migrate statistics table: %w", err)
+	}
+
+	// Step 5: Create additional indexes for better performance
 	if err := r.createAdditionalIndexes(ctx); err != nil {
 		return fmt.Errorf("failed to create additional indexes: %w", err)
+	}
+
+	return nil
+}
+
+// addForeignKeyConstraints adds foreign key constraints after tables are created
+func (r *GormStrategy) addForeignKeyConstraints(ctx context.Context) error {
+	// Add foreign key from state_history to executions
+	constraint_state_history := `
+		ALTER TABLE state_history 
+		DROP CONSTRAINT IF EXISTS fk_state_history_execution;
+	`
+	constraint_executions := `
+			ALTER TABLE state_history 
+		ADD CONSTRAINT fk_state_history_execution 
+		FOREIGN KEY (execution_id) 
+		REFERENCES executions(execution_id) 
+		ON DELETE CASCADE;
+	`
+
+	if err := r.db.WithContext(ctx).Exec(constraint_state_history).Error; err != nil {
+		return fmt.Errorf("failed to add foreign key constraint: %w", err)
+	}
+	if err := r.db.WithContext(ctx).Exec(constraint_executions).Error; err != nil {
+		return fmt.Errorf("failed to add foreign key constraint: %w", err)
 	}
 
 	return nil
@@ -175,8 +217,8 @@ func (r *GormStrategy) Close() error {
 }
 
 // SaveExecution saves or updates an execution using GORM
-func (r *GormStrategy) SaveExecution(ctx context.Context, record *ExecutionRecord) error {
-	model := toExecutionModel(record)
+func (r *GormStrategy) SaveExecution(ctx context.Context, exec *ExecutionRecord) error {
+	model := toExecutionModel(exec)
 
 	// GORM's Save handles both INSERT and UPDATE
 	result := r.db.WithContext(ctx).Save(model)
@@ -243,26 +285,6 @@ func (r *GormStrategy) ListExecutions(ctx context.Context, filter *ExecutionFilt
 	query := r.db.WithContext(ctx).Model(&ExecutionModel{})
 
 	// Apply filters
-	query = r.MakeQueryUsingFilter(filter, query)
-
-	// Always order by start time descending
-	query = query.Order("start_time DESC")
-
-	var models []ExecutionModel
-	result := query.Find(&models)
-	if result.Error != nil {
-		return nil, fmt.Errorf("failed to list executions: %w", result.Error)
-	}
-
-	executions := make([]*ExecutionRecord, len(models))
-	for i, model := range models {
-		executions[i] = fromExecutionModel(&model)
-	}
-
-	return executions, nil
-}
-
-func (r *GormStrategy) MakeQueryUsingFilter(filter *ExecutionFilter, query *gorm.DB) *gorm.DB {
 	if filter != nil {
 		if filter.Status != "" {
 			query = query.Where("status = ?", filter.Status)
@@ -292,7 +314,22 @@ func (r *GormStrategy) MakeQueryUsingFilter(filter *ExecutionFilter, query *gorm
 			query = query.Offset(filter.Offset)
 		}
 	}
-	return query
+
+	// Always order by start time descending
+	query = query.Order("start_time DESC")
+
+	var models []ExecutionModel
+	result := query.Find(&models)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to list executions: %w", result.Error)
+	}
+
+	executions := make([]*ExecutionRecord, len(models))
+	for i, model := range models {
+		executions[i] = fromExecutionModel(&model)
+	}
+
+	return executions, nil
 }
 
 // CountExecutions returns the count of executions matching the filter
@@ -345,26 +382,34 @@ func (r *GormStrategy) DeleteExecution(ctx context.Context, executionID string) 
 
 // GetExecutionWithHistory retrieves an execution with its full state history using eager loading
 func (r *GormStrategy) GetExecutionWithHistory(ctx context.Context, executionID string) (*ExecutionRecord, []*StateHistoryRecord, error) {
-	var model ExecutionModel
-
+	// Get execution
+	var execModel ExecutionModel
 	result := r.db.WithContext(ctx).
-		Preload("StateHistory", func(db *gorm.DB) *gorm.DB {
-			return db.Order("sequence_number ASC")
-		}).
 		Where("execution_id = ?", executionID).
-		First(&model)
+		First(&execModel)
 
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
 			return nil, nil, fmt.Errorf("execution not found: %s", executionID)
 		}
-		return nil, nil, fmt.Errorf("failed to get execution with history: %w", result.Error)
+		return nil, nil, fmt.Errorf("failed to get execution: %w", result.Error)
 	}
 
-	execution := fromExecutionModel(&model)
+	// Get state history separately
+	var historyModels []StateHistoryModel
+	result = r.db.WithContext(ctx).
+		Where("execution_id = ?", executionID).
+		Order("sequence_number ASC").
+		Find(&historyModels)
 
-	histories := make([]*StateHistoryRecord, len(model.StateHistory))
-	for i, h := range model.StateHistory {
+	if result.Error != nil {
+		return nil, nil, fmt.Errorf("failed to get state history: %w", result.Error)
+	}
+
+	execution := fromExecutionModel(&execModel)
+
+	histories := make([]*StateHistoryRecord, len(historyModels))
+	for i, h := range historyModels {
 		histories[i] = fromStateHistoryModel(&h)
 	}
 
@@ -483,7 +528,7 @@ func toExecutionModel(exec *ExecutionRecord) *ExecutionModel {
 		StateMachineID: exec.StateMachineID,
 		Name:           exec.Name,
 		Status:         exec.Status,
-		StartTime:      exec.StartTime,
+		StartTime:      *exec.StartTime,
 		CurrentState:   exec.CurrentState,
 	}
 
@@ -493,7 +538,10 @@ func toExecutionModel(exec *ExecutionRecord) *ExecutionModel {
 	if exec.Output != nil {
 		model.Output = toJSONB(exec.Output)
 	}
-	if !exec.EndTime.IsZero() {
+	if exec.StartTime != nil && exec.StartTime.IsZero() {
+		model.StartTime = *exec.StartTime
+	}
+	if exec.EndTime != nil && !exec.EndTime.IsZero() {
 		model.EndTime = exec.EndTime
 	}
 	if exec.Error != NULL {
@@ -507,32 +555,32 @@ func toExecutionModel(exec *ExecutionRecord) *ExecutionModel {
 }
 
 func fromExecutionModel(model *ExecutionModel) *ExecutionRecord {
-	execRecord := &ExecutionRecord{
+	exec := &ExecutionRecord{
 		ExecutionID:    model.ExecutionID,
 		StateMachineID: model.StateMachineID,
 		Name:           model.Name,
 		Status:         model.Status,
-		StartTime:      model.StartTime,
+		StartTime:      &model.StartTime,
 		CurrentState:   model.CurrentState,
 	}
 
 	if model.Input != nil {
-		execRecord.Input = fromJSONB(model.Input)
+		exec.Input = fromJSONB(model.Input)
 	}
 	if model.Output != nil {
-		execRecord.Output = fromJSONB(model.Output)
+		exec.Output = fromJSONB(model.Output)
 	}
 	if model.EndTime != nil {
-		execRecord.EndTime = model.EndTime
+		exec.EndTime = model.EndTime
 	}
-	if model.Error != NULL {
-		execRecord.Error = model.Error
+	if model.Error != "" {
+		exec.Error = model.Error
 	}
 	if model.Metadata != nil {
-		execRecord.Metadata = fromJSONB(model.Metadata)
+		exec.Metadata = fromJSONB(model.Metadata)
 	}
 
-	return execRecord
+	return exec
 }
 
 func toStateHistoryModel(history *StateHistoryRecord) *StateHistoryModel {
@@ -542,7 +590,7 @@ func toStateHistoryModel(history *StateHistoryRecord) *StateHistoryModel {
 		StateName:      history.StateName,
 		StateType:      history.StateType,
 		Status:         history.Status,
-		StartTime:      history.StartTime,
+		StartTime:      *history.StartTime,
 		RetryCount:     history.RetryCount,
 		SequenceNumber: history.SequenceNumber,
 	}
@@ -573,7 +621,7 @@ func fromStateHistoryModel(model *StateHistoryModel) *StateHistoryRecord {
 		StateName:      model.StateName,
 		StateType:      model.StateType,
 		Status:         model.Status,
-		StartTime:      model.StartTime,
+		StartTime:      &model.StartTime,
 		RetryCount:     model.RetryCount,
 		SequenceNumber: model.SequenceNumber,
 	}
@@ -587,7 +635,7 @@ func fromStateHistoryModel(model *StateHistoryModel) *StateHistoryRecord {
 	if model.EndTime != nil {
 		history.EndTime = model.EndTime
 	}
-	if model.Error != NULL {
+	if model.Error != "" {
 		history.Error = model.Error
 	}
 	if model.Metadata != nil {

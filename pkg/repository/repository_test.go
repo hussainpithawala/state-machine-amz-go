@@ -131,7 +131,8 @@ func TestManager_SaveExecution_MapsFields_EndTimeAndError(t *testing.T) {
 	require.Equal(t, exec.Input, rec.Input)
 	require.Equal(t, exec.Output, rec.Output)
 	require.Equal(t, "FAILED", rec.Status)
-	require.Equal(t, exec.StartTime, rec.StartTime)
+	require.Equal(t, exec.StartTime, *rec.StartTime)
+	require.Equal(t, exec.EndTime, *rec.EndTime)
 	require.Equal(t, "SomeState", rec.CurrentState)
 
 	require.NotNil(t, rec.EndTime)
@@ -189,13 +190,14 @@ func TestManager_SaveStateHistory_MapsFields_EndTimeAndError(t *testing.T) {
 
 	rec := fs.lastSavedStateHistory
 	require.Equal(t, "exec-9", rec.ExecutionID)
-	require.Equal(t, exec.StartTime, rec.ExecutionStartTime)
+	require.Equal(t, exec.StartTime, *rec.ExecutionStartTime)
 	require.Equal(t, "A", rec.StateName)
 	require.Equal(t, "Pass", rec.StateType)
 	require.Equal(t, "in", rec.Input)
 	require.Equal(t, "out", rec.Output)
 	require.Equal(t, "FAILED", rec.Status)
-	require.Equal(t, h.StartTime, rec.StartTime)
+	require.Equal(t, h.StartTime, *rec.StartTime)
+	require.Equal(t, h.EndTime, *rec.EndTime)
 	require.Equal(t, 2, rec.RetryCount)
 	require.Equal(t, 7, rec.SequenceNumber)
 

@@ -57,9 +57,6 @@ type ExecutionModel struct {
 	Metadata       JSONB      `gorm:"type:jsonb;default:'{}'"`
 	CreatedAt      time.Time  `gorm:"autoCreateTime"`
 	UpdatedAt      time.Time  `gorm:"autoUpdateTime"`
-
-	// Relationships
-	StateHistory []StateHistoryModel `gorm:"foreignKey:ExecutionID;references:ExecutionID;constraint:OnDelete:CASCADE"`
 }
 
 // TableName specifies the table name for ExecutionModel
@@ -94,9 +91,6 @@ type StateHistoryModel struct {
 	SequenceNumber int        `gorm:"not null;index:idx_sequence"`
 	Metadata       JSONB      `gorm:"type:jsonb;default:'{}'"`
 	CreatedAt      time.Time  `gorm:"autoCreateTime"`
-
-	// Foreign key relationship
-	Execution ExecutionModel `gorm:"foreignKey:ExecutionID;references:ExecutionID"`
 }
 
 // TableName specifies the table name for StateHistoryModel
