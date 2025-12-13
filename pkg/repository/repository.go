@@ -63,7 +63,7 @@ type Strategy interface {
 	GetStateHistory(ctx context.Context, executionID string) ([]*StateHistoryRecord, error)
 
 	// ListExecutions lists executions with optional filters
-	ListExecutions(ctx context.Context, filters map[string]interface{}, limit, offset int) ([]*ExecutionRecord, error)
+	ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error)
 
 	// DeleteExecution removes an execution and its history
 	DeleteExecution(ctx context.Context, executionID string) error
@@ -73,11 +73,6 @@ type Strategy interface {
 }
 
 // Config holds configuration for the repository layer
-type Config struct {
-	Strategy      string                 // "postgres", "dynamodb", "redis", etc.
-	ConnectionURL string                 // Connection string
-	Options       map[string]interface{} // Strategy-specific options
-}
 
 // Manager manages the persistence strategy
 type Manager struct {
@@ -93,6 +88,8 @@ func NewPersistenceManager(config *Config) (*Manager, error) {
 	switch config.Strategy {
 	case "postgres":
 		strategy, err = NewPostgresStrategy(config)
+	case "gorm-postgres":
+		strategy, err = NewGormStrategy(config)
 	case "dynamodb":
 		return nil, fmt.Errorf("DynamoDB strategy not yet implemented")
 	case "redis":
@@ -184,8 +181,8 @@ func (pm *Manager) GetStateHistory(ctx context.Context, executionID string) ([]*
 }
 
 // ListExecutions lists executions
-func (pm *Manager) ListExecutions(ctx context.Context, filters map[string]interface{}, limit, offset int) ([]*ExecutionRecord, error) {
-	return pm.strategy.ListExecutions(ctx, filters, limit, offset)
+func (pm *Manager) ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error) {
+	return pm.strategy.ListExecutions(ctx, filter)
 }
 
 // Helper function to generate unique history IDs

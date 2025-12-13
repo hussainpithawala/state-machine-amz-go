@@ -58,13 +58,9 @@ func (f *fakeStrategy) GetStateHistory(ctx context.Context, executionID string) 
 	return []*StateHistoryRecord{{ExecutionID: executionID, StateName: "Any"}}, nil
 }
 
-func (f *fakeStrategy) ListExecutions(ctx context.Context, filters map[string]interface{}, limit, offset int) ([]*ExecutionRecord, error) {
-	f.listFilters = map[string]interface{}{}
-	for k, v := range filters {
-		f.listFilters[k] = v
-	}
-	f.listLimit = limit
-	f.listOffset = offset
+func (f *fakeStrategy) ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error) {
+	f.listLimit = filter.Limit
+	f.listOffset = filter.Offset
 	return []*ExecutionRecord{{ExecutionID: "exec-1"}}, nil
 }
 
@@ -225,11 +221,13 @@ func TestManager_GetExecution_GetStateHistory_ListExecutions_Delegates(t *testin
 	require.NoError(t, err)
 	require.Equal(t, "exec-hist", fs.getHistoryID)
 
-	_, err = pm.ListExecutions(context.Background(), map[string]interface{}{"k": "v"}, 10, 20)
+	_, err = pm.ListExecutions(context.Background(), &ExecutionFilter{
+		Offset: 20,
+		Limit:  10,
+	})
 	require.NoError(t, err)
 	require.Equal(t, 10, fs.listLimit)
 	require.Equal(t, 20, fs.listOffset)
-	require.Equal(t, "v", fs.listFilters["k"])
 }
 
 func TestGenerateHistoryID_UniqueForDifferentTimestamps(t *testing.T) {

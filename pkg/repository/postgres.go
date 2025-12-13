@@ -20,6 +20,11 @@ type PostgresStrategy struct {
 	config *Config
 }
 
+func (ps *PostgresStrategy) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 // PostgresConfig extends Config with PostgreSQL-specific options
 type PostgresConfig struct {
 	MaxOpenConns     int
@@ -588,13 +593,12 @@ func (r *StateHistoryRecord) setNullableFields(endTime sql.NullTime, errorStr sq
 	}
 }
 
-// ListExecutions lists executions with comprehensive filtering and pagination
-func (ps *PostgresStrategy) ListExecutions(ctx context.Context, filters map[string]interface{}, limit, offset int) ([]*ExecutionRecord, error) {
+func (ps *PostgresStrategy) ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error) {
 	var conditions []string
 	var args []interface{}
 
 	// Delegate filter building to a helper
-	conditions, args = ps.buildExecutionFilters(filters, conditions, args)
+	conditions, args = ps.buildExecutionFilters(filter, conditions, args)
 
 	// Build final query
 	query := "SELECT * FROM executions"
@@ -602,14 +606,19 @@ func (ps *PostgresStrategy) ListExecutions(ctx context.Context, filters map[stri
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 	query += " ORDER BY start_time DESC LIMIT $1 OFFSET $2"
-	args = append(args, limit, offset)
+	args = append(args, filter.Limit, filter.Offset)
 
 	// Execute query
 	rows, err := ps.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query executions: %w", err)
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			fmt.Printf("failed to close rows: %v\n", err)
+		}
+	}(rows)
 
 	var results []*ExecutionRecord
 	for rows.Next() {
@@ -621,59 +630,111 @@ func (ps *PostgresStrategy) ListExecutions(ctx context.Context, filters map[stri
 	}
 
 	return results, nil
+
 }
 
 // buildExecutionFilters constructs WHERE conditions and args from filters
 func (ps *PostgresStrategy) buildExecutionFilters(
-	filters map[string]interface{},
+	filter *ExecutionFilter,
 	conditions []string,
 	args []interface{},
 ) (newConditions []string, newArgs []interface{}) {
-	if filters == nil {
+	if filter == nil {
 		return conditions, args
 	}
 
 	argCount := len(args) + 1
 
-	if status, ok := filters["status"].(string); ok && status != "" {
+	if filter.Status != "" {
 		conditions = append(conditions, fmt.Sprintf("status = $%d", argCount))
-		args = append(args, status)
+		args = append(args, filter.Status)
 		argCount++
 	}
 
-	if stateMachineID, ok := filters["state_machine_id"].(string); ok && stateMachineID != "" {
+	if filter.StateMachineID != "" {
 		conditions = append(conditions, fmt.Sprintf("state_machine_id = $%d", argCount))
-		args = append(args, stateMachineID)
+		args = append(args, filter.StateMachineID)
 		argCount++
 	}
 
-	if name, ok := filters["name"].(string); ok && name != "" {
+	if filter.Name != "" {
 		conditions = append(conditions, fmt.Sprintf("name ILIKE $%d", argCount))
-		args = append(args, "%"+name+"%")
+		args = append(args, "%"+filter.Name+"%")
 		argCount++
 	}
 
-	if startAfter, ok := filters["start_after"].(time.Time); ok {
+	if !filter.StartAfter.IsZero() {
 		conditions = append(conditions, fmt.Sprintf("start_time >= $%d", argCount))
-		args = append(args, startAfter)
+		args = append(args, filter.StartAfter)
+	}
+
+	if !filter.StartBefore.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("start_before <= $%d", argCount))
+		args = append(args, filter.StartBefore)
 		argCount++
 	}
 
-	if startBefore, ok := filters["start_before"].(time.Time); ok {
-		conditions = append(conditions, fmt.Sprintf("start_time <= $%d", argCount))
-		args = append(args, startBefore)
-		argCount++
-	}
-
-	if metadataFilter, ok := filters["metadata"].(map[string]interface{}); ok && len(metadataFilter) > 0 {
-		if metadataJSON, err := json.Marshal(metadataFilter); err == nil {
-			conditions = append(conditions, fmt.Sprintf("metadata @> $%d::jsonb", argCount))
-			args = append(args, string(metadataJSON))
-		}
-	}
+	// need to solve this
+	//if filter.e {
+	//	if metadataJSON, err := json.Marshal(metadataFilter); err == nil {
+	//		conditions = append(conditions, fmt.Sprintf("metadata @> $%d::jsonb", argCount))
+	//		args = append(args, string(metadataJSON))
+	//	}
+	//}
 
 	return conditions, args
 }
+
+//func (ps *PostgresStrategy) buildExecutionFilters(
+//	filters map[string]interface{},
+//	conditions []string,
+//	args []interface{},
+//) (newConditions []string, newArgs []interface{}) {
+//	if filters == nil {
+//		return conditions, args
+//	}
+//
+//	argCount := len(args) + 1
+//
+//	if status, ok := filters["status"].(string); ok && status != "" {
+//		conditions = append(conditions, fmt.Sprintf("status = $%d", argCount))
+//		args = append(args, status)
+//		argCount++
+//	}
+//
+//	if stateMachineID, ok := filters["state_machine_id"].(string); ok && stateMachineID != "" {
+//		conditions = append(conditions, fmt.Sprintf("state_machine_id = $%d", argCount))
+//		args = append(args, stateMachineID)
+//		argCount++
+//	}
+//
+//	if name, ok := filters["name"].(string); ok && name != "" {
+//		conditions = append(conditions, fmt.Sprintf("name ILIKE $%d", argCount))
+//		args = append(args, "%"+name+"%")
+//		argCount++
+//	}
+//
+//	if startAfter, ok := filters["start_after"].(time.Time); ok {
+//		conditions = append(conditions, fmt.Sprintf("start_time >= $%d", argCount))
+//		args = append(args, startAfter)
+//		argCount++
+//	}
+//
+//	if startBefore, ok := filters["start_before"].(time.Time); ok {
+//		conditions = append(conditions, fmt.Sprintf("start_time <= $%d", argCount))
+//		args = append(args, startBefore)
+//		argCount++
+//	}
+//
+//	if metadataFilter, ok := filters["metadata"].(map[string]interface{}); ok && len(metadataFilter) > 0 {
+//		if metadataJSON, err := json.Marshal(metadataFilter); err == nil {
+//			conditions = append(conditions, fmt.Sprintf("metadata @> $%d::jsonb", argCount))
+//			args = append(args, string(metadataJSON))
+//		}
+//	}
+//
+//	return conditions, args
+//}
 
 // DeleteExecution removes an execution and its history (cascade)
 func (ps *PostgresStrategy) DeleteExecution(ctx context.Context, executionID string) error {

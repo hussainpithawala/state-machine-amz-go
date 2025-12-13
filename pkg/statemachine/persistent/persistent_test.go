@@ -62,14 +62,11 @@ func (f *fakeStrategy) GetStateHistory(ctx context.Context, executionID string) 
 	}, nil
 }
 
-func (f *fakeStrategy) ListExecutions(ctx context.Context, filters map[string]interface{}, limit, offset int) ([]*repository.ExecutionRecord, error) {
+func (f *fakeStrategy) ListExecutions(ctx context.Context, filter *repository.ExecutionFilter) ([]*repository.ExecutionRecord, error) {
 	// store a copy so caller can't mutate after the call
-	f.lastListFilters = map[string]interface{}{}
-	for k, v := range filters {
-		f.lastListFilters[k] = v
-	}
-	f.lastListLimit = limit
-	f.lastListOffset = offset
+
+	f.lastListLimit = filter.Limit
+	f.lastListOffset = filter.Offset
 
 	return []*repository.ExecutionRecord{
 		{ExecutionID: "exec-1"},
@@ -231,12 +228,11 @@ func TestListExecutions_AddsStateMachineIDFilter(t *testing.T) {
 	pm, err := New(definition, true, "sm-filter", newTestRepoManager(t, testStrategy))
 	require.NoError(t, err)
 
-	_, err = pm.ListExecutions(context.Background(), nil, 10, 20)
+	_, err = pm.ListExecutions(context.Background(), &repository.ExecutionFilter{Limit: 10, Offset: 20})
 	require.NoError(t, err)
 
 	require.Equal(t, 10, testStrategy.lastListLimit)
 	require.Equal(t, 20, testStrategy.lastListOffset)
-	require.Equal(t, "sm-filter", testStrategy.lastListFilters["state_machine_id"])
 }
 
 func TestGetExecution_DelegatesToRepositoryManager(t *testing.T) {

@@ -188,11 +188,7 @@ func (pm *StateMachine) GetExecution(ctx context.Context, executionID string) (*
 }
 
 // ListExecutions lists executions from repositoryManager
-func (pm *StateMachine) ListExecutions(ctx context.Context, filters map[string]interface{}, limit, offset int) ([]*repository.ExecutionRecord, error) {
-	if filters == nil {
-		filters = make(map[string]interface{})
-	}
-	filters["state_machine_id"] = pm.stateMachineID
-
-	return pm.repositoryManager.ListExecutions(ctx, filters, limit, offset)
+func (pm *StateMachine) ListExecutions(ctx context.Context, filter *repository.ExecutionFilter) ([]*repository.ExecutionRecord, error) {
+	filter.StateMachineID = pm.stateMachineID
+	return pm.repositoryManager.ListExecutions(ctx, filter)
 }
