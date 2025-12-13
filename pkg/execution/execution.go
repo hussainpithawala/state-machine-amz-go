@@ -89,9 +89,9 @@ func (e *Execution) GetLastState() (*StateHistory, error) {
 // GetStateHistory returns history for a specific state
 func (e *Execution) GetStateHistory(stateName string) []StateHistory {
 	var history []StateHistory
-	for _, h := range e.History {
-		if h.StateName == stateName {
-			history = append(history, h)
+	for i := range e.History {
+		if e.History[i].StateName == stateName {
+			history = append(history, e.History[i])
 		}
 	}
 	return history
@@ -144,10 +144,10 @@ func (e *Execution) ToMap() map[string]interface{} {
 	// Add history summary
 	if len(e.History) > 0 {
 		history := make([]map[string]interface{}, len(e.History))
-		for i, h := range e.History {
-			history[i] = map[string]interface{}{
-				"state":     h.StateName,
-				"timestamp": h.Timestamp.Format(time.RFC3339),
+		for index := range e.History {
+			history[index] = map[string]interface{}{
+				"state":     e.History[index].StateName,
+				"timestamp": e.History[index].Timestamp.Format(time.RFC3339),
 				// "input":     h.Input,
 				// "output":    h.Output,
 			}

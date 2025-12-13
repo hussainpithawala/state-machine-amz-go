@@ -13,6 +13,8 @@ import (
 	_ "github.com/lib/pq"
 )
 
+const NULL = "null"
+
 type PostgresStrategy struct {
 	db     *sql.DB
 	config *Config
@@ -273,9 +275,9 @@ func (ps *PostgresStrategy) SaveExecution(ctx context.Context, record *Execution
 	}
 
 	// Marshal JSON fields
-	inputJSON, err, outputJSON, metadataJSON, err2 := ps.saveExecutionRecord(record)
-	if err2 != nil {
-		return err2
+	inputJSON, outputJSON, metadataJSON, err := ps.marshalExecutionRecord(record)
+	if err != nil {
+		return fmt.Errorf("failed to marhshal the execution record: %w", err)
 	}
 
 	// Use INSERT ... ON CONFLICT for UPSERT behavior
@@ -319,25 +321,29 @@ func (ps *PostgresStrategy) SaveExecution(ctx context.Context, record *Execution
 	return nil
 }
 
-func (ps *PostgresStrategy) saveExecutionRecord(record *ExecutionRecord) ([]byte, error, []byte, []byte, error) {
-	inputJSON, err := json.Marshal(record.Input)
+func (ps *PostgresStrategy) marshalExecutionRecord(record *ExecutionRecord) (
+	inputJSON, outputJSON, metadataJSON []byte,
+	err error,
+) {
+	inputJSON, err = json.Marshal(record.Input)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to marshal input: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to marshal input: %w", err)
 	}
 
-	outputJSON, err := json.Marshal(record.Output)
+	outputJSON, err = json.Marshal(record.Output)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to marshal output: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to marshal output: %w", err)
 	}
 
-	metadataJSON := []byte("{}")
+	metadataJSON = []byte("{}")
 	if record.Metadata != nil {
 		metadataJSON, err = json.Marshal(record.Metadata)
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("failed to marshal metadata: %w", err)
+			return nil, nil, nil, fmt.Errorf("failed to marshal metadata: %w", err)
 		}
 	}
-	return inputJSON, err, outputJSON, metadataJSON, nil
+
+	return inputJSON, outputJSON, metadataJSON, nil
 }
 
 // GetExecution retrieves an execution by ID with proper error handling
@@ -393,20 +399,20 @@ func (ps *PostgresStrategy) GetExecution(ctx context.Context, executionID string
 	return record, nil
 }
 
-func processJson(inputJSON []byte, record *ExecutionRecord, outputJSON []byte, metadataJSON []byte, endTime sql.NullTime, errorStr sql.NullString) (*ExecutionRecord, error) {
-	if len(inputJSON) > 0 && string(inputJSON) != "null" {
+func processJson(inputJSON []byte, record *ExecutionRecord, outputJSON, metadataJSON []byte, endTime sql.NullTime, errorStr sql.NullString) (*ExecutionRecord, error) {
+	if len(inputJSON) > 0 && string(inputJSON) != NULL {
 		if err := json.Unmarshal(inputJSON, &record.Input); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal input: %w", err)
 		}
 	}
 
-	if len(outputJSON) > 0 && string(outputJSON) != "null" {
+	if len(outputJSON) > 0 && string(outputJSON) != NULL {
 		if err := json.Unmarshal(outputJSON, &record.Output); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal output: %w", err)
 		}
 	}
 
-	if len(metadataJSON) > 0 && string(metadataJSON) != "null" && string(metadataJSON) != "{}" {
+	if len(metadataJSON) > 0 && string(metadataJSON) != NULL && string(metadataJSON) != "{}" {
 		if err := json.Unmarshal(metadataJSON, &record.Metadata); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
@@ -459,7 +465,6 @@ func (ps *PostgresStrategy) SaveStateHistory(ctx context.Context, record *StateH
 			output = EXCLUDED.output,
 			status = EXCLUDED.status,
 			end_time = EXCLUDED.end_time,
-			error = EXCLUDED.error,
 			error = EXCLUDED.error,
 			retry_count = EXCLUDED.retry_count
 	`
@@ -532,37 +537,16 @@ func (ps *PostgresStrategy) GetStateHistory(ctx context.Context, executionID str
 			&record.SequenceNumber,
 			&metadataJSON,
 		)
-
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan state history: %w", err)
 		}
 
-		// Unmarshal JSON fields
-		if len(inputJSON) > 0 && string(inputJSON) != "null" {
-			if err := json.Unmarshal(inputJSON, &record.Input); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal input: %w", err)
-			}
+		// Delegate JSON and null handling
+		if err := record.unmarshalFields(inputJSON, outputJSON, metadataJSON); err != nil {
+			return nil, err
 		}
 
-		if len(outputJSON) > 0 && string(outputJSON) != "null" {
-			if err := json.Unmarshal(outputJSON, &record.Output); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal output: %w", err)
-			}
-		}
-
-		if len(metadataJSON) > 0 && string(metadataJSON) != "null" && string(metadataJSON) != "{}" {
-			if err := json.Unmarshal(metadataJSON, &record.Metadata); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-			}
-		}
-
-		if endTime.Valid {
-			record.EndTime = &endTime.Time
-		}
-
-		if errorStr.Valid {
-			record.Error = errorStr.String
-		}
+		record.setNullableFields(endTime, errorStr)
 
 		history = append(history, record)
 	}
@@ -574,149 +558,121 @@ func (ps *PostgresStrategy) GetStateHistory(ctx context.Context, executionID str
 	return history, nil
 }
 
+// unmarshalFields handles unmarshaling JSON fields safely
+func (r *StateHistoryRecord) unmarshalFields(input, output, metadata []byte) error {
+	if len(input) > 0 && string(input) != NULL {
+		if err := json.Unmarshal(input, &r.Input); err != nil {
+			return fmt.Errorf("failed to unmarshal input: %w", err)
+		}
+	}
+	if len(output) > 0 && string(output) != "null" {
+		if err := json.Unmarshal(output, &r.Output); err != nil {
+			return fmt.Errorf("failed to unmarshal output: %w", err)
+		}
+	}
+	if len(metadata) > 0 && string(metadata) != "null" && string(metadata) != "{}" {
+		if err := json.Unmarshal(metadata, &r.Metadata); err != nil {
+			return fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+	}
+	return nil
+}
+
+// setNullableFields handles nullable SQL types
+func (r *StateHistoryRecord) setNullableFields(endTime sql.NullTime, errorStr sql.NullString) {
+	if endTime.Valid {
+		r.EndTime = &endTime.Time
+	}
+	if errorStr.Valid {
+		r.Error = errorStr.String
+	}
+}
+
 // ListExecutions lists executions with comprehensive filtering and pagination
 func (ps *PostgresStrategy) ListExecutions(ctx context.Context, filters map[string]interface{}, limit, offset int) ([]*ExecutionRecord, error) {
 	var conditions []string
 	var args []interface{}
-	argCount := 1
 
-	// Build WHERE clause from filters
-	if filters != nil {
-		if status, ok := filters["status"].(string); ok && status != "" {
-			conditions = append(conditions, fmt.Sprintf("status = $%d", argCount))
-			args = append(args, status)
-			argCount++
-		}
+	// Delegate filter building to a helper
+	conditions, args = ps.buildExecutionFilters(filters, conditions, args)
 
-		if stateMachineID, ok := filters["state_machine_id"].(string); ok && stateMachineID != "" {
-			conditions = append(conditions, fmt.Sprintf("state_machine_id = $%d", argCount))
-			args = append(args, stateMachineID)
-			argCount++
-		}
-
-		if name, ok := filters["name"].(string); ok && name != "" {
-			conditions = append(conditions, fmt.Sprintf("name ILIKE $%d", argCount))
-			args = append(args, "%"+name+"%")
-			argCount++
-		}
-
-		// Time range filters
-		if startAfter, ok := filters["start_after"].(time.Time); ok {
-			conditions = append(conditions, fmt.Sprintf("start_time >= $%d", argCount))
-			args = append(args, startAfter)
-			argCount++
-		}
-
-		if startBefore, ok := filters["start_before"].(time.Time); ok {
-			conditions = append(conditions, fmt.Sprintf("start_time <= $%d", argCount))
-			args = append(args, startBefore)
-			argCount++
-		}
-
-		// Metadata JSON query
-		if metadataFilter, ok := filters["metadata"].(map[string]interface{}); ok && len(metadataFilter) > 0 {
-			metadataJSON, err := json.Marshal(metadataFilter)
-			if err == nil {
-				conditions = append(conditions, fmt.Sprintf("metadata @> $%d::jsonb", argCount))
-				args = append(args, string(metadataJSON))
-				argCount++
-			}
-		}
-	}
-
-	// Build query
-	query := `
-		SELECT DISTINCT ON (execution_id)
-			execution_id, state_machine_id, name, input, output, status,
-			start_time, end_time, current_state, error, metadata
-		FROM executions
-	`
-
+	// Build final query
+	query := "SELECT * FROM executions"
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
+	query += " ORDER BY start_time DESC LIMIT $1 OFFSET $2"
+	args = append(args, limit, offset)
 
-	query += " ORDER BY execution_id, start_time DESC"
-
-	// Apply pagination
-	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", argCount)
-		args = append(args, limit)
-		argCount++
-	}
-
-	if offset > 0 {
-		query += fmt.Sprintf(" OFFSET $%d", argCount)
-		args = append(args, offset)
-	}
-
+	// Execute query
 	rows, err := ps.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list executions: %w", err)
+		return nil, fmt.Errorf("failed to query executions: %w", err)
 	}
 	defer rows.Close()
 
-	var executions []*ExecutionRecord
-
+	var results []*ExecutionRecord
 	for rows.Next() {
-		record := &ExecutionRecord{}
-		var inputJSON, outputJSON, metadataJSON []byte
-		var endTime sql.NullTime
-		var errorStr sql.NullString
-
-		err := rows.Scan(
-			&record.ExecutionID,
-			&record.StateMachineID,
-			&record.Name,
-			&inputJSON,
-			&outputJSON,
-			&record.Status,
-			&record.StartTime,
-			&endTime,
-			&record.CurrentState,
-			&errorStr,
-			&metadataJSON,
-		)
-
-		if err != nil {
+		var rec ExecutionRecord
+		if err := rows.Scan( /* ... your columns ... */ ); err != nil {
 			return nil, fmt.Errorf("failed to scan execution: %w", err)
 		}
-
-		// Unmarshal JSON with null checks
-		if len(inputJSON) > 0 && string(inputJSON) != "null" {
-			err := json.Unmarshal(inputJSON, &record.Input)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if len(outputJSON) > 0 && string(outputJSON) != "null" {
-			err := json.Unmarshal(outputJSON, &record.Output)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if len(metadataJSON) > 0 && string(metadataJSON) != "null" && string(metadataJSON) != "{}" {
-			err := json.Unmarshal(metadataJSON, &record.Metadata)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		if endTime.Valid {
-			record.EndTime = &endTime.Time
-		}
-		if errorStr.Valid {
-			record.Error = errorStr.String
-		}
-
-		executions = append(executions, record)
+		results = append(results, &rec)
 	}
 
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating executions: %w", err)
+	return results, nil
+}
+
+// buildExecutionFilters constructs WHERE conditions and args from filters
+func (ps *PostgresStrategy) buildExecutionFilters(
+	filters map[string]interface{},
+	conditions []string,
+	args []interface{},
+) (newConditions []string, newArgs []interface{}) {
+	if filters == nil {
+		return conditions, args
 	}
 
-	return executions, nil
+	argCount := len(args) + 1
+
+	if status, ok := filters["status"].(string); ok && status != "" {
+		conditions = append(conditions, fmt.Sprintf("status = $%d", argCount))
+		args = append(args, status)
+		argCount++
+	}
+
+	if stateMachineID, ok := filters["state_machine_id"].(string); ok && stateMachineID != "" {
+		conditions = append(conditions, fmt.Sprintf("state_machine_id = $%d", argCount))
+		args = append(args, stateMachineID)
+		argCount++
+	}
+
+	if name, ok := filters["name"].(string); ok && name != "" {
+		conditions = append(conditions, fmt.Sprintf("name ILIKE $%d", argCount))
+		args = append(args, "%"+name+"%")
+		argCount++
+	}
+
+	if startAfter, ok := filters["start_after"].(time.Time); ok {
+		conditions = append(conditions, fmt.Sprintf("start_time >= $%d", argCount))
+		args = append(args, startAfter)
+		argCount++
+	}
+
+	if startBefore, ok := filters["start_before"].(time.Time); ok {
+		conditions = append(conditions, fmt.Sprintf("start_time <= $%d", argCount))
+		args = append(args, startBefore)
+		argCount++
+	}
+
+	if metadataFilter, ok := filters["metadata"].(map[string]interface{}); ok && len(metadataFilter) > 0 {
+		if metadataJSON, err := json.Marshal(metadataFilter); err == nil {
+			conditions = append(conditions, fmt.Sprintf("metadata @> $%d::jsonb", argCount))
+			args = append(args, string(metadataJSON))
+		}
+	}
+
+	return conditions, args
 }
 
 // DeleteExecution removes an execution and its history (cascade)
@@ -838,7 +794,7 @@ func (ps *PostgresStrategy) CreatePartition(ctx context.Context, tableName strin
 
 // ArchiveOldExecutions moves old executions to an archive table
 func (ps *PostgresStrategy) ArchiveOldExecutions(ctx context.Context, olderThan time.Time) (int64, error) {
-	// Create archive table if not exists
+	// Create an archive table if not exists
 	archiveSchema := `
 	CREATE TABLE IF NOT EXISTS executions_archive (LIKE executions INCLUDING ALL);
 	CREATE TABLE IF NOT EXISTS state_history_archive (LIKE state_history INCLUDING ALL);
@@ -853,7 +809,12 @@ func (ps *PostgresStrategy) ArchiveOldExecutions(ctx context.Context, olderThan 
 	if err != nil {
 		return 0, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func(tx *sql.Tx) {
+		err := tx.Rollback()
+		if err != nil {
+			fmt.Printf("failed to rollback transaction: %v\n", err)
+		}
+	}(tx)
 
 	// Move executions to archive
 	moveExecQuery := `

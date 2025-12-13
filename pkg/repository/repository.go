@@ -97,8 +97,8 @@ func NewPersistenceManager(config *Config) (*Manager, error) {
 		return nil, fmt.Errorf("DynamoDB strategy not yet implemented")
 	case "redis":
 		return nil, fmt.Errorf("redis strategy not yet implemented")
-	//case "memory":
-	//	strategy = NewMemoryStrategy()
+	case "memory":
+		return nil, fmt.Errorf("InMemory strategy not yet implemented")
 	default:
 		return nil, fmt.Errorf("unsupported persistence strategy: %s", config.Strategy)
 	}

@@ -10,7 +10,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
-	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
 	"gopkg.in/yaml.v3"
 )
 
@@ -62,38 +62,16 @@ States:
     End: true
 `
 
+	// 1. Create persistence manager
+	persistenceManager, err2 := getPersistenceManager(ctx)
+	if err2 != nil {
+		return err2
+	}
+
 	// 2. Create state machine from definition
-	//statemachine.New(&definition, false)
-	sm, err := statemachine.New([]byte(yamlContent), false)
+	pm, err := persistent.New([]byte(yamlContent), false, "sm-1", persistenceManager)
 	if err != nil {
-		return fmt.Errorf("failed to create state machine: %w", err)
-	}
-
-	// 4. Configure PostgreSQL persistence
-	persistenceConfig := &repository.Config{
-		Strategy:      "postgres",
-		ConnectionURL: getConnectionURL(),
-		Options: map[string]interface{}{
-			"max_open_conns":    25,
-			"max_idle_conns":    5,
-			"conn_max_lifetime": 5 * time.Minute,
-		},
-	}
-
-	pm, err := repository.NewPersistenceManager(persistenceConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create persistence manager: %w", err)
-	}
-	defer func(pm *repository.Manager) {
-		err := pm.Close()
-		if err != nil {
-
-		}
-	}(pm)
-
-	// Initialize schema
-	if err := pm.Initialize(ctx); err != nil {
-		return fmt.Errorf("failed to initialize persistence: %w", err)
+		return fmt.Errorf("failed to create a peristent state machine: %w", err)
 	}
 
 	// 5. Create executor and register task handlers
@@ -150,42 +128,66 @@ States:
 	}
 
 	// Save initial execution state
-	if err := pm.SaveExecution(ctx, execCtx); err != nil {
-		return fmt.Errorf("failed to save initial execution: %w", err)
-	}
+	//if err := pm.SaveExecution(ctx, execCtx); err != nil {
+	//	return fmt.Errorf("failed to save initial execution: %w", err)
+	//}
 
 	// 7. Execute the workflow
 	fmt.Println("\nExecuting workflow...")
 
-	executionInstance, err := sm.Execute(ctx, execCtx)
+	executionInstance, err := pm.Execute(ctx, execCtx)
 
 	if err != nil {
 		return fmt.Errorf("execution failed: %w", err)
 	}
 
-	// Save final execution state
-	if err := pm.SaveExecution(ctx, executionInstance); err != nil {
-		return fmt.Errorf("failed to save final execution: %w", err)
-	}
-
-	// Save each state history
-	for _, history := range executionInstance.History {
-		if err := pm.SaveStateHistory(ctx, executionInstance, &history); err != nil {
-			fmt.Printf("Warning: failed to save state history: %v\n", err)
-		}
-	}
-
 	fmt.Printf("\n✓ Execution completed: %s (Status: %s)\n", executionInstance.ID, executionInstance.Status)
 
 	// 8. Retrieve and display history from database
-	history, err := pm.GetStateHistory(ctx, executionInstance.ID)
+	history, err := pm.GetExecutionHistory(ctx, executionInstance.ID)
 	if err != nil {
 		return fmt.Errorf("failed to get history: %w", err)
 	} else {
 		fmt.Println("\nExecution History:")
-		yaml.NewEncoder(os.Stdout).Encode(history)
+		err := yaml.NewEncoder(os.Stdout).Encode(history)
+		if err != nil {
+			return fmt.Errorf("failed to marshal history: %w", err)
+		}
 	}
+	defer func(pm *repository.Manager) {
+		err := pm.Close()
+		if err != nil {
+			fmt.Printf("Warning: failed to close persistence manager: %v\n", err)
+		} else {
+			fmt.Printf("Info: Closed the persistence manager: %v\n", err)
+		}
+	}(persistenceManager)
+
 	return nil
+}
+
+func getPersistenceManager(ctx context.Context) (*repository.Manager, error) {
+	// 4. Configure PostgreSQL persistence
+	persistenceConfig := &repository.Config{
+		Strategy:      "postgres",
+		ConnectionURL: getConnectionURL(),
+		Options: map[string]interface{}{
+			"max_open_conns":    25,
+			"max_idle_conns":    5,
+			"conn_max_lifetime": 5 * time.Minute,
+		},
+	}
+
+	persistenceManager, err := repository.NewPersistenceManager(persistenceConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create persistence manager: %w", err)
+	}
+
+	// Initialize schema
+	if err := persistenceManager.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize persistence: %w", err)
+	}
+	return persistenceManager, nil
 }
 
 func getConnectionURL() string {
