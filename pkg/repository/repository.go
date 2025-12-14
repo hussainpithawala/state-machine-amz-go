@@ -42,82 +42,50 @@ type StateHistoryRecord struct {
 	Metadata           map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// Strategy defines the interface for different persistence backends
-type Strategy interface {
-	// Initialize the persistence layer
-	Initialize(ctx context.Context) error
-
-	// Close the persistence connection
-	Close() error
-
-	// SaveExecution saves or updates an execution record
-	SaveExecution(ctx context.Context, record *ExecutionRecord) error
-
-	// GetExecution retrieves an execution by ID
-	GetExecution(ctx context.Context, executionID string) (*ExecutionRecord, error)
-
-	// SaveStateHistory saves a state execution to history
-	SaveStateHistory(ctx context.Context, record *StateHistoryRecord) error
-
-	// GetStateHistory retrieves all state history for an execution
-	GetStateHistory(ctx context.Context, executionID string) ([]*StateHistoryRecord, error)
-
-	// ListExecutions lists executions with optional filters
-	ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error)
-
-	// DeleteExecution removes an execution and its history
-	DeleteExecution(ctx context.Context, executionID string) error
-
-	// HealthCheck verifies the persistence backend is available
-	HealthCheck(ctx context.Context) error
-}
-
-// Config holds configuration for the repository layer
-
-// Manager manages the persistence strategy
+// Manager manages the persistence repository
 type Manager struct {
-	strategy Strategy
-	config   *Config
+	repository Repository
+	config     *Config
 }
 
 // NewPersistenceManager creates a new persistence manager
 func NewPersistenceManager(config *Config) (*Manager, error) {
-	var strategy Strategy
+	var repository Repository
 	var err error
 
 	switch config.Strategy {
 	case "postgres":
-		strategy, err = NewPostgresStrategy(config)
+		repository, err = NewPostgresRepository(config)
 	case "gorm-postgres":
-		strategy, err = NewGormStrategy(config)
+		repository, err = NewGormStrategy(config)
 	case "dynamodb":
-		return nil, fmt.Errorf("DynamoDB strategy not yet implemented")
+		return nil, fmt.Errorf("DynamoDB repository not yet implemented")
 	case "redis":
-		return nil, fmt.Errorf("redis strategy not yet implemented")
+		return nil, fmt.Errorf("redis repository not yet implemented")
 	case "memory":
-		return nil, fmt.Errorf("InMemory strategy not yet implemented")
+		return nil, fmt.Errorf("InMemory repository not yet implemented")
 	default:
-		return nil, fmt.Errorf("unsupported persistence strategy: %s", config.Strategy)
+		return nil, fmt.Errorf("unsupported persistence repository: %s", config.Strategy)
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to create persistence strategy: %w", err)
+		return nil, fmt.Errorf("failed to create persistence repository: %w", err)
 	}
 
 	return &Manager{
-		strategy: strategy,
-		config:   config,
+		repository: repository,
+		config:     config,
 	}, nil
 }
 
 // Initialize initializes the persistence layer
 func (pm *Manager) Initialize(ctx context.Context) error {
-	return pm.strategy.Initialize(ctx)
+	return pm.repository.Initialize(ctx)
 }
 
 // Close closes the persistence layer
 func (pm *Manager) Close() error {
-	return pm.strategy.Close()
+	return pm.repository.Close()
 }
 
 // SaveExecution saves an execution record
@@ -140,7 +108,7 @@ func (pm *Manager) SaveExecution(ctx context.Context, exec *execution.Execution)
 		record.Error = exec.Error.Error()
 	}
 
-	return pm.strategy.SaveExecution(ctx, record)
+	return pm.repository.SaveExecution(ctx, record)
 }
 
 // SaveStateHistory saves a state history entry
@@ -167,22 +135,26 @@ func (pm *Manager) SaveStateHistory(ctx context.Context, executionInstance *exec
 		record.Error = history.Error.Error()
 	}
 
-	return pm.strategy.SaveStateHistory(ctx, record)
+	return pm.repository.SaveStateHistory(ctx, record)
 }
 
 // GetExecution retrieves an execution
 func (pm *Manager) GetExecution(ctx context.Context, executionID string) (*ExecutionRecord, error) {
-	return pm.strategy.GetExecution(ctx, executionID)
+	return pm.repository.GetExecution(ctx, executionID)
 }
 
 // GetStateHistory retrieves state history
 func (pm *Manager) GetStateHistory(ctx context.Context, executionID string) ([]*StateHistoryRecord, error) {
-	return pm.strategy.GetStateHistory(ctx, executionID)
+	return pm.repository.GetStateHistory(ctx, executionID)
 }
 
 // ListExecutions lists executions
 func (pm *Manager) ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error) {
-	return pm.strategy.ListExecutions(ctx, filter)
+	return pm.repository.ListExecutions(ctx, filter)
+}
+
+func (pm *Manager) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {
+	return pm.repository.CountExecutions(ctx, filter)
 }
 
 // Helper function to generate unique history IDs

@@ -123,22 +123,22 @@ type ExtendedRepository interface {
 
 // Config holds repository configuration
 type Config struct {
-	Strategy      string                 // Repository strategy: "gorm", "postgres", "memory"
+	Strategy      string                 // Repository repository: "gorm", "postgres", "memory"
 	ConnectionURL string                 // Database connection URL
 	Options       map[string]interface{} // Strategy-specific options
 }
 
-// NewRepository creates a new repository based on the strategy
+// NewRepository creates a new repository based on the repository
 func NewRepository(config *Config) (Repository, error) {
 	switch config.Strategy {
 	case "gorm":
 		return NewGormStrategy(config)
 	case "postgres":
-		return NewPostgresStrategy(config)
+		return NewPostgresRepository(config)
 	case "memory":
-		return nil, fmt.Errorf("in-memory strategy is not supported: %s", config.Strategy)
+		return nil, fmt.Errorf("in-memory repository is not supported: %s", config.Strategy)
 	default:
-		return nil, fmt.Errorf("unsupported repository strategy: %s", config.Strategy)
+		return nil, fmt.Errorf("unsupported repository repository: %s", config.Strategy)
 	}
 }
 

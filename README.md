@@ -385,9 +385,10 @@ StateHistory []StateHistory
 
 
 ## Roadmap
-- [ ] Distributed execution support
-- [ ] Persistence layer for executions
-  - [ ] Support for AWS DynamoDB, Redis, Postgres, etc. 
+-[ ] Distributed execution support
+- [✅] Persistence layer for executions
+  - [✅] Support for Postgres
+  - [ ] Support for Redis, AWS DynamoDB, etc. 
 - [ ] Web dashboard for monitoring
 
 ## License

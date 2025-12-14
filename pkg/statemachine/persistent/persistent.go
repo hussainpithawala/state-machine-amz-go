@@ -189,6 +189,16 @@ func (pm *StateMachine) GetExecution(ctx context.Context, executionID string) (*
 
 // ListExecutions lists executions from repositoryManager
 func (pm *StateMachine) ListExecutions(ctx context.Context, filter *repository.ExecutionFilter) ([]*repository.ExecutionRecord, error) {
-	filter.StateMachineID = pm.stateMachineID
+	if filter != nil {
+		filter.StateMachineID = pm.stateMachineID
+	}
+
 	return pm.repositoryManager.ListExecutions(ctx, filter)
+}
+
+func (pm *StateMachine) CountExecutions(ctx context.Context, filter *repository.ExecutionFilter) (int64, error) {
+	if filter != nil {
+		filter.StateMachineID = pm.stateMachineID
+	}
+	return pm.repositoryManager.CountExecutions(ctx, filter)
 }

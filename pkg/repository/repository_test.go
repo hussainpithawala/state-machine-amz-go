@@ -64,11 +64,15 @@ func (f *fakeStrategy) ListExecutions(ctx context.Context, filter *ExecutionFilt
 	return []*ExecutionRecord{{ExecutionID: "exec-1"}}, nil
 }
 
+func (f *fakeStrategy) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {
+	return 1, nil
+}
+
 func TestNewPersistenceManager_UnsupportedStrategy(t *testing.T) {
 	pm, err := NewPersistenceManager(&Config{Strategy: "nope"})
 	require.Error(t, err)
 	require.Nil(t, pm)
-	require.Contains(t, err.Error(), "unsupported persistence strategy")
+	require.Contains(t, err.Error(), "unsupported persistence repository")
 }
 
 func TestNewPersistenceManager_NotImplementedStrategies(t *testing.T) {
@@ -94,7 +98,7 @@ func TestNewPersistenceManager_NotImplementedStrategies(t *testing.T) {
 
 func TestManager_InitializeAndClose_DelegatesToStrategy(t *testing.T) {
 	fs := &fakeStrategy{}
-	pm := &Manager{strategy: fs, config: &Config{Strategy: "fake"}}
+	pm := &Manager{repository: fs, config: &Config{Strategy: "fake"}}
 
 	require.NoError(t, pm.Initialize(context.Background()))
 	require.NoError(t, pm.Close())
@@ -105,7 +109,7 @@ func TestManager_InitializeAndClose_DelegatesToStrategy(t *testing.T) {
 
 func TestManager_SaveExecution_MapsFields_EndTimeAndError(t *testing.T) {
 	fs := &fakeStrategy{}
-	pm := &Manager{strategy: fs, config: &Config{Strategy: "fake"}}
+	pm := &Manager{repository: fs, config: &Config{Strategy: "fake"}}
 
 	exec := &execution.Execution{
 		ID:           "exec-123",
@@ -143,7 +147,7 @@ func TestManager_SaveExecution_MapsFields_EndTimeAndError(t *testing.T) {
 
 func TestManager_SaveExecution_DoesNotSetEndTimeOrError_WhenMissing(t *testing.T) {
 	fs := &fakeStrategy{}
-	pm := &Manager{strategy: fs, config: &Config{Strategy: "fake"}}
+	pm := &Manager{repository: fs, config: &Config{Strategy: "fake"}}
 
 	exec := &execution.Execution{
 		ID:           "exec-1",
@@ -163,7 +167,7 @@ func TestManager_SaveExecution_DoesNotSetEndTimeOrError_WhenMissing(t *testing.T
 
 func TestManager_SaveStateHistory_MapsFields_EndTimeAndError(t *testing.T) {
 	fs := &fakeStrategy{}
-	pm := &Manager{strategy: fs, config: &Config{Strategy: "fake"}}
+	pm := &Manager{repository: fs, config: &Config{Strategy: "fake"}}
 
 	exec := &execution.Execution{
 		ID:        "exec-9",
@@ -213,7 +217,7 @@ func TestManager_SaveStateHistory_MapsFields_EndTimeAndError(t *testing.T) {
 
 func TestManager_GetExecution_GetStateHistory_ListExecutions_Delegates(t *testing.T) {
 	fs := &fakeStrategy{}
-	pm := &Manager{strategy: fs, config: &Config{Strategy: "fake"}}
+	pm := &Manager{repository: fs, config: &Config{Strategy: "fake"}}
 
 	_, err := pm.GetExecution(context.Background(), "exec-abc")
 	require.NoError(t, err)

@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type fakeStrategy struct {
+type fakeRepository struct {
 	saveExecutionCalls    int
 	saveStateHistoryCalls int
 
@@ -30,14 +30,14 @@ type fakeStrategy struct {
 	saveStateHistoryErr error
 }
 
-func (f *fakeStrategy) Initialize(ctx context.Context) error  { return nil }
-func (f *fakeStrategy) Close() error                          { return nil }
-func (f *fakeStrategy) HealthCheck(ctx context.Context) error { return nil }
-func (f *fakeStrategy) DeleteExecution(ctx context.Context, executionID string) error {
+func (f *fakeRepository) Initialize(ctx context.Context) error  { return nil }
+func (f *fakeRepository) Close() error                          { return nil }
+func (f *fakeRepository) HealthCheck(ctx context.Context) error { return nil }
+func (f *fakeRepository) DeleteExecution(ctx context.Context, executionID string) error {
 	return nil
 }
 
-func (f *fakeStrategy) SaveExecution(ctx context.Context, record *repository.ExecutionRecord) error {
+func (f *fakeRepository) SaveExecution(ctx context.Context, record *repository.ExecutionRecord) error {
 	f.saveExecutionCalls++
 	if record != nil {
 		f.lastExecutionID = record.ExecutionID
@@ -45,24 +45,24 @@ func (f *fakeStrategy) SaveExecution(ctx context.Context, record *repository.Exe
 	return f.saveExecutionErr
 }
 
-func (f *fakeStrategy) GetExecution(ctx context.Context, executionID string) (*repository.ExecutionRecord, error) {
+func (f *fakeRepository) GetExecution(ctx context.Context, executionID string) (*repository.ExecutionRecord, error) {
 	f.getExecutionID = executionID
 	return &repository.ExecutionRecord{ExecutionID: executionID}, nil
 }
 
-func (f *fakeStrategy) SaveStateHistory(ctx context.Context, record *repository.StateHistoryRecord) error {
+func (f *fakeRepository) SaveStateHistory(ctx context.Context, record *repository.StateHistoryRecord) error {
 	f.saveStateHistoryCalls++
 	return f.saveStateHistoryErr
 }
 
-func (f *fakeStrategy) GetStateHistory(ctx context.Context, executionID string) ([]*repository.StateHistoryRecord, error) {
+func (f *fakeRepository) GetStateHistory(ctx context.Context, executionID string) ([]*repository.StateHistoryRecord, error) {
 	f.getHistoryID = executionID
 	return []*repository.StateHistoryRecord{
 		{ExecutionID: executionID, StateName: "SomeState"},
 	}, nil
 }
 
-func (f *fakeStrategy) ListExecutions(ctx context.Context, filter *repository.ExecutionFilter) ([]*repository.ExecutionRecord, error) {
+func (f *fakeRepository) ListExecutions(ctx context.Context, filter *repository.ExecutionFilter) ([]*repository.ExecutionRecord, error) {
 	// store a copy so caller can't mutate after the call
 
 	f.lastListLimit = filter.Limit
@@ -71,6 +71,10 @@ func (f *fakeStrategy) ListExecutions(ctx context.Context, filter *repository.Ex
 	return []*repository.ExecutionRecord{
 		{ExecutionID: "exec-1"},
 	}, nil
+}
+
+func (f *fakeRepository) CountExecutions(ctx context.Context, filter *repository.ExecutionFilter) (int64, error) {
+	return 1, nil
 }
 
 // setUnexportedField sets an unexported struct field via unsafe reflection (test-only helper).
@@ -93,10 +97,10 @@ func setUnexportedField(t *testing.T, obj any, fieldName string, value any) {
 	writable.Set(reflect.ValueOf(value))
 }
 
-func newTestRepoManager(t *testing.T, testStrategy repository.Strategy) *repository.Manager {
+func newTestRepoManager(t *testing.T, testRepository repository.Repository) *repository.Manager {
 	t.Helper()
 	m := &repository.Manager{}
-	setUnexportedField(t, m, "strategy", testStrategy)
+	setUnexportedField(t, m, "repository", testRepository)
 	setUnexportedField(t, m, "config", &repository.Config{Strategy: "fake"})
 	return m
 }
@@ -109,7 +113,7 @@ func TestNew_GeneratesStateMachineID_WhenEmpty(t *testing.T) {
 		}
 	}`)
 
-	pm, err := New(definition, true, "", newTestRepoManager(t, &fakeStrategy{}))
+	pm, err := New(definition, true, "", newTestRepoManager(t, &fakeRepository{}))
 	require.NoError(t, err)
 	require.NotNil(t, pm)
 	require.NotEmpty(t, pm.stateMachineID)
@@ -124,7 +128,7 @@ func TestNew_UsesProvidedStateMachineID(t *testing.T) {
 		}
 	}`)
 
-	pm, err := New(definition, true, "my-sm-id", newTestRepoManager(t, &fakeStrategy{}))
+	pm, err := New(definition, true, "my-sm-id", newTestRepoManager(t, &fakeRepository{}))
 	require.NoError(t, err)
 	require.Equal(t, "my-sm-id", pm.stateMachineID)
 }
@@ -137,7 +141,7 @@ func TestExecute_PersistsExecutionAndHistory_Success(t *testing.T) {
 		}
 	}`)
 
-	testStrategy := &fakeStrategy{}
+	testStrategy := &fakeRepository{}
 	manager := newTestRepoManager(t, testStrategy)
 
 	pm, err := New(definition, true, "sm-fixed", manager)
@@ -172,7 +176,7 @@ func TestRunExecution_ContextCancelled_PersistsCancelledAndReturnsError(t *testi
 		}
 	}`)
 
-	testStrategy := &fakeStrategy{}
+	testStrategy := &fakeRepository{}
 	pm, err := New(definition, true, "sm-cancel", newTestRepoManager(t, testStrategy))
 	require.NoError(t, err)
 
@@ -201,7 +205,7 @@ func TestRunExecution_StateNotFound_PersistsFailedAndReturnsError(t *testing.T) 
 		}
 	}`)
 
-	testStrategy := &fakeStrategy{}
+	testStrategy := &fakeRepository{}
 	pm, err := New(definition, true, "sm-missing", newTestRepoManager(t, testStrategy))
 	require.NoError(t, err)
 
@@ -224,7 +228,7 @@ func TestListExecutions_AddsStateMachineIDFilter(t *testing.T) {
 		}
 	}`)
 
-	testStrategy := &fakeStrategy{}
+	testStrategy := &fakeRepository{}
 	pm, err := New(definition, true, "sm-filter", newTestRepoManager(t, testStrategy))
 	require.NoError(t, err)
 
@@ -243,7 +247,7 @@ func TestGetExecution_DelegatesToRepositoryManager(t *testing.T) {
 		}
 	}`)
 
-	testStrategy := &fakeStrategy{}
+	testStrategy := &fakeRepository{}
 	pm, err := New(definition, true, "sm-x", newTestRepoManager(t, testStrategy))
 	require.NoError(t, err)
 
@@ -261,7 +265,7 @@ func TestGetExecutionHistory_DelegatesToRepositoryManager(t *testing.T) {
 		}
 	}`)
 
-	testStrategy := &fakeStrategy{}
+	testStrategy := &fakeRepository{}
 	pm, err := New(definition, true, "sm-x", newTestRepoManager(t, testStrategy))
 	require.NoError(t, err)
 

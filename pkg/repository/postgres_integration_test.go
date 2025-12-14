@@ -19,8 +19,8 @@ import (
 // PostgresIntegrationTestSuite contains all PostgreSQL integration tests
 type PostgresIntegrationTestSuite struct {
 	suite.Suite
-	strategy *PostgresStrategy
-	ctx      context.Context
+	repository *PostgresRepository
+	ctx        context.Context
 }
 
 // SetupSuite runs once before all tests
@@ -46,20 +46,20 @@ func (suite *PostgresIntegrationTestSuite) SetupSuite() {
 	}
 
 	var err error
-	suite.strategy, err = NewPostgresStrategy(&config)
-	require.NoError(suite.T(), err, "Failed to create PostgreSQL strategy")
+	suite.repository, err = NewPostgresRepository(&config)
+	require.NoError(suite.T(), err, "Failed to create PostgreSQL repository")
 
 	// Initialize schema
-	err = suite.strategy.Initialize(suite.ctx)
+	err = suite.repository.Initialize(suite.ctx)
 	require.NoError(suite.T(), err, "Failed to initialize PostgreSQL schema")
 }
 
 // TearDownSuite runs once after all tests
 func (suite *PostgresIntegrationTestSuite) TearDownSuite() {
-	if suite.strategy != nil {
+	if suite.repository != nil {
 		// Clean up test data
 		suite.cleanupTestData()
-		err := suite.strategy.Close()
+		err := suite.repository.Close()
 		if err != nil {
 			return
 		}
@@ -75,11 +75,11 @@ func (suite *PostgresIntegrationTestSuite) SetupTest() {
 // cleanupTestData removes all test data
 func (suite *PostgresIntegrationTestSuite) cleanupTestData() {
 	// This is safe because we're using a test database
-	_, err := suite.strategy.db.ExecContext(suite.ctx, "TRUNCATE TABLE state_history CASCADE")
+	_, err := suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE state_history CASCADE")
 	if err != nil {
 		return
 	}
-	_, err2 := suite.strategy.db.ExecContext(suite.ctx, "TRUNCATE TABLE executions CASCADE")
+	_, err2 := suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE executions CASCADE")
 	if err2 != nil {
 		return
 	}
@@ -87,6 +87,7 @@ func (suite *PostgresIntegrationTestSuite) cleanupTestData() {
 
 // TestSaveAndGetExecution tests basic save and retrieve operations
 func (suite *PostgresIntegrationTestSuite) TestSaveAndGetExecution() {
+	var now = time.Now()
 	record := &ExecutionRecord{
 		ExecutionID:    "exec-test-001",
 		StateMachineID: "sm-test-001",
@@ -96,7 +97,7 @@ func (suite *PostgresIntegrationTestSuite) TestSaveAndGetExecution() {
 			"amount":  100.50,
 		},
 		Status:       "RUNNING",
-		StartTime:    time.Now(),
+		StartTime:    &now,
 		CurrentState: "ProcessOrder",
 		Metadata: map[string]interface{}{
 			"version": "1.0",
@@ -105,11 +106,11 @@ func (suite *PostgresIntegrationTestSuite) TestSaveAndGetExecution() {
 	}
 
 	// Save execution
-	err := suite.strategy.SaveExecution(suite.ctx, record)
+	err := suite.repository.SaveExecution(suite.ctx, record)
 	require.NoError(suite.T(), err)
 
 	// Retrieve execution
-	retrieved, err := suite.strategy.GetExecution(suite.ctx, "exec-test-001")
+	retrieved, err := suite.repository.GetExecution(suite.ctx, "exec-test-001")
 	require.NoError(suite.T(), err)
 	assert.Equal(suite.T(), record.ExecutionID, retrieved.ExecutionID)
 	assert.Equal(suite.T(), record.Status, retrieved.Status)
@@ -123,18 +124,19 @@ func (suite *PostgresIntegrationTestSuite) TestSaveAndGetExecution() {
 
 // TestUpdateExecution tests updating an existing execution
 func (suite *PostgresIntegrationTestSuite) TestUpdateExecution() {
+	var now = time.Now()
 	record := &ExecutionRecord{
 		ExecutionID:    "exec-test-002",
 		StateMachineID: "sm-test-001",
 		Name:           "update-test",
 		Input:          map[string]interface{}{"test": "data"},
 		Status:         "RUNNING",
-		StartTime:      time.Now(),
+		StartTime:      &now,
 		CurrentState:   "State1",
 	}
 
 	// Save initial
-	require.NoError(suite.T(), suite.strategy.SaveExecution(suite.ctx, record))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, record))
 
 	// Update
 	record.Status = "SUCCEEDED"
@@ -143,10 +145,10 @@ func (suite *PostgresIntegrationTestSuite) TestUpdateExecution() {
 	record.EndTime = &endTime
 	record.Output = map[string]interface{}{"result": "success"}
 
-	require.NoError(suite.T(), suite.strategy.SaveExecution(suite.ctx, record))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, record))
 
 	// Verify update
-	retrieved, err := suite.strategy.GetExecution(suite.ctx, "exec-test-002")
+	retrieved, err := suite.repository.GetExecution(suite.ctx, "exec-test-002")
 	require.NoError(suite.T(), err)
 	assert.Equal(suite.T(), "SUCCEEDED", retrieved.Status)
 	assert.Equal(suite.T(), "State2", retrieved.CurrentState)
@@ -156,6 +158,7 @@ func (suite *PostgresIntegrationTestSuite) TestUpdateExecution() {
 
 // TestSaveStateHistory tests saving state execution history
 func (suite *PostgresIntegrationTestSuite) TestSaveStateHistory() {
+	var now = time.Now()
 	// First create an execution
 	execRecord := &ExecutionRecord{
 		ExecutionID:    "exec-test-003",
@@ -163,10 +166,10 @@ func (suite *PostgresIntegrationTestSuite) TestSaveStateHistory() {
 		Name:           "history-test",
 		Input:          map[string]interface{}{},
 		Status:         "RUNNING",
-		StartTime:      time.Now(),
+		StartTime:      &now,
 		CurrentState:   "State1",
 	}
-	require.NoError(suite.T(), suite.strategy.SaveExecution(suite.ctx, execRecord))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, execRecord))
 
 	// Save multiple state history records
 	for i := 0; i < 3; i++ {
@@ -187,18 +190,18 @@ func (suite *PostgresIntegrationTestSuite) TestSaveStateHistory() {
 				"result": "processed",
 			},
 			Status:         "SUCCEEDED",
-			StartTime:      startTime,
+			StartTime:      &startTime,
 			EndTime:        &endTime,
 			SequenceNumber: i,
 			RetryCount:     0,
 		}
 
-		err := suite.strategy.SaveStateHistory(suite.ctx, histRecord)
+		err := suite.repository.SaveStateHistory(suite.ctx, histRecord)
 		require.NoError(suite.T(), err)
 	}
 
 	// Retrieve history
-	history, err := suite.strategy.GetStateHistory(suite.ctx, "exec-test-003")
+	history, err := suite.repository.GetStateHistory(suite.ctx, "exec-test-003")
 	require.NoError(suite.T(), err)
 	assert.Len(suite.T(), history, 3)
 
@@ -213,6 +216,7 @@ func (suite *PostgresIntegrationTestSuite) TestSaveStateHistory() {
 
 // TestStateHistoryWithRetries tests retry tracking
 func (suite *PostgresIntegrationTestSuite) TestStateHistoryWithRetries() {
+	var now = time.Now()
 	// Create execution
 	execRecord := &ExecutionRecord{
 		ExecutionID:    "exec-test-004",
@@ -220,10 +224,10 @@ func (suite *PostgresIntegrationTestSuite) TestStateHistoryWithRetries() {
 		Name:           "retry-test",
 		Input:          map[string]interface{}{},
 		Status:         "RUNNING",
-		StartTime:      time.Now(),
+		StartTime:      &now,
 		CurrentState:   "FlakyState",
 	}
-	require.NoError(suite.T(), suite.strategy.SaveExecution(suite.ctx, execRecord))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, execRecord))
 
 	// Simulate retries
 	for retry := 0; retry < 3; retry++ {
@@ -246,19 +250,19 @@ func (suite *PostgresIntegrationTestSuite) TestStateHistoryWithRetries() {
 			StateType:          "Task",
 			Input:              map[string]interface{}{},
 			Status:             status,
-			StartTime:          startTime,
+			StartTime:          &startTime,
 			EndTime:            &endTime,
 			Error:              errorStr,
 			RetryCount:         retry,
 			SequenceNumber:     0, // Same state, multiple attempts
 		}
 
-		err := suite.strategy.SaveStateHistory(suite.ctx, histRecord)
+		err := suite.repository.SaveStateHistory(suite.ctx, histRecord)
 		require.NoError(suite.T(), err)
 	}
 
 	// Verify retry history
-	history, err := suite.strategy.GetStateHistory(suite.ctx, "exec-test-004")
+	history, err := suite.repository.GetStateHistory(suite.ctx, "exec-test-004")
 	require.NoError(suite.T(), err)
 	assert.Len(suite.T(), history, 3)
 
@@ -288,58 +292,78 @@ func (suite *PostgresIntegrationTestSuite) TestListExecutions() {
 	}
 
 	for _, tc := range testCases {
+		var startTime = baseTime.Add(tc.offset)
 		record := &ExecutionRecord{
 			ExecutionID:    tc.id,
 			StateMachineID: tc.smID,
 			Name:           "list-test",
 			Input:          map[string]interface{}{},
 			Status:         tc.status,
-			StartTime:      baseTime.Add(tc.offset),
+			StartTime:      &startTime,
 			CurrentState:   "SomeState",
 		}
-		require.NoError(suite.T(), suite.strategy.SaveExecution(suite.ctx, record))
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, record))
 	}
 
 	// Test: List all
-	executions, err := suite.strategy.ListExecutions(suite.ctx, nil, 100, 0)
+	executions, err := suite.repository.ListExecutions(suite.ctx, &ExecutionFilter{
+		Limit:  100,
+		Offset: 0,
+	})
 	require.NoError(suite.T(), err)
 	assert.GreaterOrEqual(suite.T(), len(executions), 5)
 
 	// Test: Filter by status
-	executions, err = suite.strategy.ListExecutions(suite.ctx, map[string]interface{}{
-		"status": "SUCCEEDED",
-	}, 100, 0)
+	executions, err = suite.repository.ListExecutions(suite.ctx, &ExecutionFilter{
+		Limit:  100,
+		Offset: 0,
+		Status: "SUCCEEDED",
+	})
 	require.NoError(suite.T(), err)
 	assert.Equal(suite.T(), 3, len(executions))
 
 	// Test: Filter by state machine ID
-	executions, err = suite.strategy.ListExecutions(suite.ctx, map[string]interface{}{
-		"state_machine_id": "sm-order",
-	}, 100, 0)
+	executions, err = suite.repository.ListExecutions(suite.ctx, &ExecutionFilter{
+		StateMachineID: "sm-order",
+		Limit:          100,
+		Offset:         0,
+	})
 	require.NoError(suite.T(), err)
 	assert.Equal(suite.T(), 3, len(executions))
 
 	// Test: Combined filters
-	executions, err = suite.strategy.ListExecutions(suite.ctx, map[string]interface{}{
-		"state_machine_id": "sm-order",
-		"status":           "SUCCEEDED",
-	}, 100, 0)
+	executions, err = suite.repository.ListExecutions(suite.ctx, &ExecutionFilter{
+		StateMachineID: "sm-order",
+		Status:         "SUCCEEDED",
+		Limit:          100,
+		Offset:         0,
+	})
 	require.NoError(suite.T(), err)
 	assert.Equal(suite.T(), 1, len(executions))
 
 	// Test: Pagination
-	executions, err = suite.strategy.ListExecutions(suite.ctx, nil, 2, 0)
+	executions, err = suite.repository.ListExecutions(suite.ctx, &ExecutionFilter{
+		Limit:  2,
+		Offset: 0,
+	})
 	require.NoError(suite.T(), err)
 	assert.Equal(suite.T(), 2, len(executions))
 
-	executions, err = suite.strategy.ListExecutions(suite.ctx, nil, 2, 2)
+	executions, err = suite.repository.ListExecutions(suite.ctx, &ExecutionFilter{
+		Limit:  2,
+		Offset: 0,
+	})
 	require.NoError(suite.T(), err)
 	assert.Equal(suite.T(), 2, len(executions))
 
 	// Test: Time range filter
-	executions, err = suite.strategy.ListExecutions(suite.ctx, map[string]interface{}{
-		"start_after": baseTime.Add(15 * time.Minute),
-	}, 100, 0)
+	timeLapse := baseTime.Add(15 * time.Minute)
+
+	executions, err = suite.repository.ListExecutions(suite.ctx, &ExecutionFilter{
+		Limit:      3,
+		Offset:     0,
+		StartAfter: timeLapse,
+	})
 	require.NoError(suite.T(), err)
 	assert.Equal(suite.T(), 3, len(executions))
 }
@@ -347,18 +371,20 @@ func (suite *PostgresIntegrationTestSuite) TestListExecutions() {
 // TestDeleteExecution tests cascade deletion
 func (suite *PostgresIntegrationTestSuite) TestDeleteExecution() {
 	// Create execution with history
+	startTime := time.Now()
 	execRecord := &ExecutionRecord{
 		ExecutionID:    "exec-test-delete",
 		StateMachineID: "sm-test-001",
 		Name:           "delete-test",
 		Input:          map[string]interface{}{},
 		Status:         "SUCCEEDED",
-		StartTime:      time.Now(),
+		StartTime:      &startTime,
 		CurrentState:   "Final",
 	}
-	require.NoError(suite.T(), suite.strategy.SaveExecution(suite.ctx, execRecord))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, execRecord))
 
 	// Add state history
+	startTimeHistory := time.Now()
 	histRecord := &StateHistoryRecord{
 		ID:                 "hist-delete",
 		ExecutionID:        execRecord.ExecutionID,
@@ -367,28 +393,28 @@ func (suite *PostgresIntegrationTestSuite) TestDeleteExecution() {
 		StateType:          "Task",
 		Input:              map[string]interface{}{},
 		Status:             "SUCCEEDED",
-		StartTime:          time.Now(),
+		StartTime:          &startTimeHistory,
 		SequenceNumber:     0,
 	}
-	require.NoError(suite.T(), suite.strategy.SaveStateHistory(suite.ctx, histRecord))
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx, histRecord))
 
 	// Delete execution
-	err := suite.strategy.DeleteExecution(suite.ctx, "exec-test-delete")
+	err := suite.repository.DeleteExecution(suite.ctx, "exec-test-delete")
 	require.NoError(suite.T(), err)
 
 	// Verify deletion
-	_, err = suite.strategy.GetExecution(suite.ctx, "exec-test-delete")
+	_, err = suite.repository.GetExecution(suite.ctx, "exec-test-delete")
 	assert.Error(suite.T(), err)
 
 	// Verify history was also deleted (cascade)
-	history, err := suite.strategy.GetStateHistory(suite.ctx, "exec-test-delete")
+	history, err := suite.repository.GetStateHistory(suite.ctx, "exec-test-delete")
 	require.NoError(suite.T(), err)
 	assert.Empty(suite.T(), history)
 }
 
 // TestHealthCheck tests database health check
 func (suite *PostgresIntegrationTestSuite) TestHealthCheck() {
-	err := suite.strategy.HealthCheck(suite.ctx)
+	err := suite.repository.HealthCheck(suite.ctx)
 	assert.NoError(suite.T(), err)
 }
 
@@ -403,17 +429,18 @@ func (suite *PostgresIntegrationTestSuite) TestConcurrentWrites() {
 	for g := 0; g < numGoroutines; g++ {
 		go func(goroutineID int) {
 			for i := 0; i < writesPerGoroutine; i++ {
+				startTime := time.Now()
 				record := &ExecutionRecord{
 					ExecutionID:    fmt.Sprintf("exec-concurrent-%d-%d", goroutineID, i),
 					StateMachineID: "sm-concurrent",
 					Name:           "concurrent-test",
 					Input:          map[string]interface{}{"g": goroutineID, "i": i},
 					Status:         "SUCCEEDED",
-					StartTime:      time.Now(),
+					StartTime:      &startTime,
 					CurrentState:   "Final",
 				}
 
-				if err := suite.strategy.SaveExecution(suite.ctx, record); err != nil {
+				if err := suite.repository.SaveExecution(suite.ctx, record); err != nil {
 					errChan <- err
 					return
 				}
@@ -435,9 +462,11 @@ func (suite *PostgresIntegrationTestSuite) TestConcurrentWrites() {
 	}
 
 	// Verify all records were created
-	executions, err := suite.strategy.ListExecutions(suite.ctx, map[string]interface{}{
-		"state_machine_id": "sm-concurrent",
-	}, 1000, 0)
+	executions, err := suite.repository.ListExecutions(suite.ctx, &ExecutionFilter{
+		StateMachineID: "sm-concurrent",
+		Limit:          1000,
+		Offset:         0,
+	})
 	require.NoError(suite.T(), err)
 	assert.Equal(suite.T(), numGoroutines*writesPerGoroutine, len(executions))
 }
@@ -457,7 +486,7 @@ func (suite *PostgresIntegrationTestSuite) TestGetExecutionStats() {
 			Name:           "stats-test",
 			Input:          map[string]interface{}{},
 			Status:         status,
-			StartTime:      startTime,
+			StartTime:      &startTime,
 			CurrentState:   "Final",
 		}
 
@@ -465,11 +494,11 @@ func (suite *PostgresIntegrationTestSuite) TestGetExecutionStats() {
 			record.EndTime = &endTime
 		}
 
-		require.NoError(suite.T(), suite.strategy.SaveExecution(suite.ctx, record))
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, record))
 	}
 
 	// Get statistics
-	stats, err := suite.strategy.GetExecutionStats(suite.ctx, "sm-stats-test")
+	stats, err := suite.repository.GetExecutionStats(suite.ctx, "sm-stats-test")
 	require.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), stats)
 
@@ -488,27 +517,28 @@ func (suite *PostgresIntegrationTestSuite) TestGetExecutionStats() {
 // TestErrorHandling tests various error scenarios
 func (suite *PostgresIntegrationTestSuite) TestErrorHandling() {
 	// Test: Save with empty execution ID
-	err := suite.strategy.SaveExecution(suite.ctx, &ExecutionRecord{
+	err := suite.repository.SaveExecution(suite.ctx, &ExecutionRecord{
 		ExecutionID: "",
 	})
 	assert.Error(suite.T(), err)
 
 	// Test: Get non-existent execution
-	_, err = suite.strategy.GetExecution(suite.ctx, "non-existent")
+	_, err = suite.repository.GetExecution(suite.ctx, "non-existent")
 	assert.Error(suite.T(), err)
 
 	// Test: Delete non-existent execution
-	err = suite.strategy.DeleteExecution(suite.ctx, "non-existent")
+	err = suite.repository.DeleteExecution(suite.ctx, "non-existent")
 	assert.Error(suite.T(), err)
 
+	var now = time.Now()
 	// Test: Save state history without execution
-	err = suite.strategy.SaveStateHistory(suite.ctx, &StateHistoryRecord{
+	err = suite.repository.SaveStateHistory(suite.ctx, &StateHistoryRecord{
 		ID:             "orphan-hist",
 		ExecutionID:    "non-existent-exec",
 		StateName:      "State1",
 		StateType:      "Task",
 		Status:         "SUCCEEDED",
-		StartTime:      time.Now(),
+		StartTime:      &now,
 		SequenceNumber: 0,
 	})
 	assert.Error(suite.T(), err) // Should fail due to foreign key constraint
@@ -516,7 +546,6 @@ func (suite *PostgresIntegrationTestSuite) TestErrorHandling() {
 
 // Run the test suite
 func TestPostgresIntegrationSuite(t *testing.T) {
-
 	if testing.Short() {
 		t.Skip("Skipping PostgreSQL integration tests in short mode")
 	}
@@ -533,7 +562,7 @@ func TestPostgresIntegrationSuite(t *testing.T) {
 		ConnectionURL: connURL,
 	}
 
-	strategy, err := NewPostgresStrategy(config)
+	strategy, err := NewPostgresRepository(config)
 	if err != nil {
 		t.Skip("PostgreSQL not available, skipping integration tests")
 		return

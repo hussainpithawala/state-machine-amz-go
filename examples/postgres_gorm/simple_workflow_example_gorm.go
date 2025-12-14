@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -11,7 +12,6 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
-	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -21,13 +21,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	//if err := runComplexWorkflowExample(); err != nil {
-	//	log.Fatal(err)
-	//}
+	// if err := runComplexWorkflowExample(); err != nil {
+	// 	log.Fatal(err)
+	// }
 	//
-	//if err := runParallelWorkflowExample(); err != nil {
+	// if err := runParallelWorkflowExample(); err != nil {
 	//	log.Fatal(err)
-	//}
+	// }
 
 	fmt.Println("\n=== All examples completed successfully ===")
 }
@@ -132,11 +132,6 @@ States:
 		Status:    "RUNNING",
 	}
 
-	// Save initial execution state
-	//if err := pm.SaveExecution(ctx, execCtx); err != nil {
-	//	return fmt.Errorf("failed to save initial execution: %w", err)
-	//}
-
 	// 7. Execute the workflow
 	fmt.Println("\nExecuting workflow...")
 
@@ -154,11 +149,28 @@ States:
 		return fmt.Errorf("failed to get history: %w", err)
 	} else {
 		fmt.Println("\nExecution History:")
-		err := yaml.NewEncoder(os.Stdout).Encode(history)
+		err := json.NewEncoder(os.Stdout).Encode(history)
 		if err != nil {
 			return fmt.Errorf("failed to marshal history: %w", err)
 		}
 	}
+
+	// Retrieve and display all execution records
+	executionRecords, err := pm.ListExecutions(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to list executions: %w", err)
+	}
+	fmt.Println("\nExecution Records:")
+	err = json.NewEncoder(os.Stdout).Encode(executionRecords)
+
+	// count the number of executions
+	executionCount, err := pm.CountExecutions(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to count executions: %w", err)
+	}
+	fmt.Printf("\nTotal executions: %d\n", executionCount)
+
+	// last step: close persistence manager
 	defer func(pm *repository.Manager) {
 		err := pm.Close()
 		if err != nil {

@@ -15,14 +15,9 @@ import (
 
 const NULL = "null"
 
-type PostgresStrategy struct {
+type PostgresRepository struct {
 	db     *sql.DB
 	config *Config
-}
-
-func (ps *PostgresStrategy) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {
-	// TODO implement me
-	panic("implement me")
 }
 
 // PostgresConfig extends Config with PostgreSQL-specific options
@@ -36,10 +31,10 @@ type PostgresConfig struct {
 	SearchPath       string // Schema search path
 }
 
-// NewPostgresStrategy creates a new PostgreSQL repository strategy
-func NewPostgresStrategy(config *Config) (*PostgresStrategy, error) {
+// NewPostgresRepository creates a new PostgreSQL repository repository
+func NewPostgresRepository(config *Config) (*PostgresRepository, error) {
 	if config.ConnectionURL == "" {
-		return nil, errors.New("connection URL is required for PostgreSQL strategy")
+		return nil, errors.New("connection URL is required for PostgreSQL repository")
 	}
 
 	db, err := sql.Open("postgres", config.ConnectionURL)
@@ -56,7 +51,7 @@ func NewPostgresStrategy(config *Config) (*PostgresStrategy, error) {
 	db.SetConnMaxLifetime(pgConfig.ConnMaxLifetime)
 	db.SetConnMaxIdleTime(pgConfig.ConnMaxIdleTime)
 
-	strategy := &PostgresStrategy{
+	strategy := &PostgresRepository{
 		db:     db,
 		config: config,
 	}
@@ -106,7 +101,7 @@ func parsePostgresConfig(options map[string]interface{}) *PostgresConfig {
 }
 
 // Initialize creates the necessary database schema with optimizations
-func (ps *PostgresStrategy) Initialize(ctx context.Context) error {
+func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 	// Set statement timeout for DDL operations
 	pgConfig := parsePostgresConfig(ps.config.Options)
 
@@ -266,7 +261,7 @@ func (ps *PostgresStrategy) Initialize(ctx context.Context) error {
 }
 
 // Close closes the database connection gracefully
-func (ps *PostgresStrategy) Close() error {
+func (ps *PostgresRepository) Close() error {
 	if ps.db != nil {
 		return ps.db.Close()
 	}
@@ -274,7 +269,7 @@ func (ps *PostgresStrategy) Close() error {
 }
 
 // SaveExecution saves or updates an execution record with UPSERT
-func (ps *PostgresStrategy) SaveExecution(ctx context.Context, record *ExecutionRecord) error {
+func (ps *PostgresRepository) SaveExecution(ctx context.Context, record *ExecutionRecord) error {
 	if record.ExecutionID == "" {
 		return errors.New("execution_id is required")
 	}
@@ -326,7 +321,30 @@ func (ps *PostgresStrategy) SaveExecution(ctx context.Context, record *Execution
 	return nil
 }
 
-func (ps *PostgresStrategy) marshalExecutionRecord(record *ExecutionRecord) (
+func (ps *PostgresRepository) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {
+	var conditions []string
+	var args []interface{}
+
+	// Delegate filter building to a helper
+	conditions, args = ps.buildExecutionFilters(filter, conditions, args)
+
+	// Build final query
+	query := "SELECT COUNT(*) FROM executions"
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	var count int64
+	// Execute query
+	err := ps.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	if err != nil {
+		return -1, fmt.Errorf("failed to scan count: %w", err)
+	}
+
+	return count, nil
+}
+
+func (ps *PostgresRepository) marshalExecutionRecord(record *ExecutionRecord) (
 	inputJSON, outputJSON, metadataJSON []byte,
 	err error,
 ) {
@@ -352,7 +370,7 @@ func (ps *PostgresStrategy) marshalExecutionRecord(record *ExecutionRecord) (
 }
 
 // GetExecution retrieves an execution by ID with proper error handling
-func (ps *PostgresStrategy) GetExecution(ctx context.Context, executionID string) (*ExecutionRecord, error) {
+func (ps *PostgresRepository) GetExecution(ctx context.Context, executionID string) (*ExecutionRecord, error) {
 	if executionID == "" {
 		return nil, errors.New("execution_id is required")
 	}
@@ -434,7 +452,7 @@ func processJson(inputJSON []byte, record *ExecutionRecord, outputJSON, metadata
 }
 
 // SaveStateHistory saves a state execution to history
-func (ps *PostgresStrategy) SaveStateHistory(ctx context.Context, record *StateHistoryRecord) error {
+func (ps *PostgresRepository) SaveStateHistory(ctx context.Context, record *StateHistoryRecord) error {
 	if record.ExecutionID == "" {
 		return errors.New("execution_id is required")
 	}
@@ -499,7 +517,7 @@ func (ps *PostgresStrategy) SaveStateHistory(ctx context.Context, record *StateH
 }
 
 // GetStateHistory retrieves all state history for an execution ordered by sequence
-func (ps *PostgresStrategy) GetStateHistory(ctx context.Context, executionID string) ([]*StateHistoryRecord, error) {
+func (ps *PostgresRepository) GetStateHistory(ctx context.Context, executionID string) ([]*StateHistoryRecord, error) {
 	if executionID == "" {
 		return nil, errors.New("execution_id is required")
 	}
@@ -517,7 +535,12 @@ func (ps *PostgresStrategy) GetStateHistory(ctx context.Context, executionID str
 	if err != nil {
 		return nil, fmt.Errorf("failed to query state history: %w", err)
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			fmt.Println("Failed to close state history rows")
+		}
+	}(rows)
 
 	var history []*StateHistoryRecord
 
@@ -570,12 +593,12 @@ func (r *StateHistoryRecord) unmarshalFields(input, output, metadata []byte) err
 			return fmt.Errorf("failed to unmarshal input: %w", err)
 		}
 	}
-	if len(output) > 0 && string(output) != "null" {
+	if len(output) > 0 && string(output) != NULL {
 		if err := json.Unmarshal(output, &r.Output); err != nil {
 			return fmt.Errorf("failed to unmarshal output: %w", err)
 		}
 	}
-	if len(metadata) > 0 && string(metadata) != "null" && string(metadata) != "{}" {
+	if len(metadata) > 0 && string(metadata) != NULL && string(metadata) != "{}" {
 		if err := json.Unmarshal(metadata, &r.Metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
@@ -593,22 +616,9 @@ func (r *StateHistoryRecord) setNullableFields(endTime sql.NullTime, errorStr sq
 	}
 }
 
-func (ps *PostgresStrategy) ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error) {
-	var conditions []string
-	var args []interface{}
+func (ps *PostgresRepository) ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error) {
+	query, args := ps.buildListExecutionsQuery(filter)
 
-	// Delegate filter building to a helper
-	conditions, args = ps.buildExecutionFilters(filter, conditions, args)
-
-	// Build final query
-	query := "SELECT * FROM executions"
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-	query += " ORDER BY start_time DESC LIMIT $1 OFFSET $2"
-	args = append(args, filter.Limit, filter.Offset)
-
-	// Execute query
 	rows, err := ps.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query executions: %w", err)
@@ -616,23 +626,119 @@ func (ps *PostgresStrategy) ListExecutions(ctx context.Context, filter *Executio
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			fmt.Printf("failed to close rows: %v\n", err)
+			fmt.Println("Failed to close executions rows")
 		}
-	}(rows)
+	}(rows) // Safe: log in production if needed, but defer is fine
 
 	var results []*ExecutionRecord
 	for rows.Next() {
-		var rec ExecutionRecord
-		if err := rows.Scan( /* ... your columns ... */ ); err != nil {
-			return nil, fmt.Errorf("failed to scan execution: %w", err)
+		record, err := ps.scanExecutionRow(rows)
+		if err != nil {
+			return nil, err
 		}
-		results = append(results, &rec)
+		results = append(results, record)
 	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating executions: %w", err)
+	}
+
 	return results, nil
 }
 
+func (ps *PostgresRepository) buildListExecutionsQuery(filter *ExecutionFilter) (query string, args []interface{}) {
+	baseQuery := `
+		SELECT DISTINCT ON (execution_id)
+			execution_id, state_machine_id, name, input, output, status,
+			start_time, end_time, current_state, error, metadata
+		FROM executions
+	`
+
+	var conditions []string
+	args = []interface{}{} // initialize args since it's a named return
+
+	if filter != nil {
+		conditions, args = ps.buildExecutionFilters(filter, conditions, args)
+	}
+
+	query = baseQuery
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY execution_id, start_time DESC"
+
+	// Handle pagination
+	if filter != nil {
+		if filter.Limit > 0 {
+			query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+			args = append(args, filter.Limit)
+		}
+		if filter.Offset > 0 {
+			query += fmt.Sprintf(" OFFSET $%d", len(args)+1)
+			args = append(args, filter.Offset)
+		}
+	}
+
+	return query, args
+}
+
+func (ps *PostgresRepository) scanExecutionRow(rows *sql.Rows) (*ExecutionRecord, error) {
+	record := &ExecutionRecord{}
+	var inputJSON, outputJSON, metadataJSON []byte
+	var endTime sql.NullTime
+	var errorStr sql.NullString
+
+	err := rows.Scan(
+		&record.ExecutionID,
+		&record.StateMachineID,
+		&record.Name,
+		&inputJSON,
+		&outputJSON,
+		&record.Status,
+		&record.StartTime,
+		&endTime,
+		&record.CurrentState,
+		&errorStr,
+		&metadataJSON,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan execution: %w", err)
+	}
+
+	if err := ps.unmarshalJSONField(inputJSON, &record.Input); err != nil {
+		return nil, fmt.Errorf("unmarshal input: %w", err)
+	}
+	if err := ps.unmarshalJSONField(outputJSON, &record.Output); err != nil {
+		return nil, fmt.Errorf("unmarshal output: %w", err)
+	}
+	if err := ps.unmarshalJSONField(metadataJSON, &record.Metadata); err != nil {
+		return nil, fmt.Errorf("unmarshal metadata: %w", err)
+	}
+
+	if endTime.Valid {
+		record.EndTime = &endTime.Time
+	}
+	if errorStr.Valid {
+		record.Error = errorStr.String
+	}
+
+	return record, nil
+}
+
+// Helper to safely unmarshal JSON, treating empty or "null" as skip
+func (ps *PostgresRepository) unmarshalJSONField(data []byte, target interface{}) error {
+	if len(data) == 0 {
+		return nil
+	}
+	asStr := string(data)
+	if asStr == "null" || asStr == "{}" {
+		return nil
+	}
+	return json.Unmarshal(data, target)
+}
+
 // buildExecutionFilters constructs WHERE conditions and args from filters
-func (ps *PostgresStrategy) buildExecutionFilters(
+func (ps *PostgresRepository) buildExecutionFilters(
 	filter *ExecutionFilter,
 	conditions []string,
 	args []interface{},
@@ -683,59 +789,8 @@ func (ps *PostgresStrategy) buildExecutionFilters(
 	return conditions, args
 }
 
-//	func (ps *PostgresStrategy) buildExecutionFilters(
-//		filters map[string]interface{},
-//		conditions []string,
-//		args []interface{},
-//	) (newConditions []string, newArgs []interface{}) {
-//		if filters == nil {
-//		return conditions, args
-//	}
-//
-//	argCount := len(args) + 1
-//
-//	if status, ok := filters["status"].(string); ok && status != "" {
-//		conditions = append(conditions, fmt.Sprintf("status = $%d", argCount))
-//		args = append(args, status)
-//		argCount++
-//	}
-//
-//	if stateMachineID, ok := filters["state_machine_id"].(string); ok && stateMachineID != "" {
-//		conditions = append(conditions, fmt.Sprintf("state_machine_id = $%d", argCount))
-//		args = append(args, stateMachineID)
-//		argCount++
-//	}
-//
-//	if name, ok := filters["name"].(string); ok && name != "" {
-//		conditions = append(conditions, fmt.Sprintf("name ILIKE $%d", argCount))
-//		args = append(args, "%"+name+"%")
-//		argCount++
-//	}
-//
-//	if startAfter, ok := filters["start_after"].(time.Time); ok {
-//		conditions = append(conditions, fmt.Sprintf("start_time >= $%d", argCount))
-//		args = append(args, startAfter)
-//		argCount++
-//	}
-//
-//	if startBefore, ok := filters["start_before"].(time.Time); ok {
-//		conditions = append(conditions, fmt.Sprintf("start_time <= $%d", argCount))
-//		args = append(args, startBefore)
-//		argCount++
-//	}
-//
-//	if metadataFilter, ok := filters["metadata"].(map[string]interface{}); ok && len(metadataFilter) > 0 {
-//		if metadataJSON, err := json.Marshal(metadataFilter); err == nil {
-//			conditions = append(conditions, fmt.Sprintf("metadata @> $%d::jsonb", argCount))
-//			args = append(args, string(metadataJSON))
-//		}
-//	}
-//
-//	return conditions, args
-//}
-
 // DeleteExecution removes an execution and its history (cascade)
-func (ps *PostgresStrategy) DeleteExecution(ctx context.Context, executionID string) error {
+func (ps *PostgresRepository) DeleteExecution(ctx context.Context, executionID string) error {
 	if executionID == "" {
 		return errors.New("execution_id is required")
 	}
@@ -760,7 +815,7 @@ func (ps *PostgresStrategy) DeleteExecution(ctx context.Context, executionID str
 }
 
 // HealthCheck verifies the database connection is alive and responsive
-func (ps *PostgresStrategy) HealthCheck(ctx context.Context) error {
+func (ps *PostgresRepository) HealthCheck(ctx context.Context) error {
 	// Simple ping
 	if err := ps.db.PingContext(ctx); err != nil {
 		return fmt.Errorf("database ping failed: %w", err)
@@ -783,7 +838,7 @@ func (ps *PostgresStrategy) HealthCheck(ctx context.Context) error {
 // Additional utility methods
 
 // GetExecutionStats returns statistics for a state machine
-func (ps *PostgresStrategy) GetExecutionStats(ctx context.Context, stateMachineID string) (map[string]interface{}, error) {
+func (ps *PostgresRepository) GetExecutionStats(ctx context.Context, stateMachineID string) (map[string]interface{}, error) {
 	query := `
 		SELECT 
 			status,
@@ -801,7 +856,12 @@ func (ps *PostgresStrategy) GetExecutionStats(ctx context.Context, stateMachineI
 	if err != nil {
 		return nil, fmt.Errorf("failed to get execution stats: %w", err)
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			fmt.Println("Failed to close execution stats rows")
+		}
+	}(rows)
 
 	stats := make(map[string]interface{})
 	stats["by_status"] = make(map[string]interface{})
@@ -833,7 +893,7 @@ func (ps *PostgresStrategy) GetExecutionStats(ctx context.Context, stateMachineI
 }
 
 // CreatePartition creates a new partition for a time range
-func (ps *PostgresStrategy) CreatePartition(ctx context.Context, tableName string, startTime, endTime time.Time) error {
+func (ps *PostgresRepository) CreatePartition(ctx context.Context, tableName string, startTime, endTime time.Time) error {
 	partitionName := fmt.Sprintf("%s_%s", tableName, startTime.Format("200601"))
 
 	query := fmt.Sprintf(`
@@ -852,7 +912,7 @@ func (ps *PostgresStrategy) CreatePartition(ctx context.Context, tableName strin
 }
 
 // ArchiveOldExecutions moves old executions to an archive table
-func (ps *PostgresStrategy) ArchiveOldExecutions(ctx context.Context, olderThan time.Time) (int64, error) {
+func (ps *PostgresRepository) ArchiveOldExecutions(ctx context.Context, olderThan time.Time) (int64, error) {
 	// Create an archive table if not exists
 	archiveSchema := `
 	CREATE TABLE IF NOT EXISTS executions_archive (LIKE executions INCLUDING ALL);
@@ -915,7 +975,7 @@ func (ps *PostgresStrategy) ArchiveOldExecutions(ctx context.Context, olderThan 
 }
 
 // VacuumTables runs VACUUM ANALYZE on the main tables for maintenance
-func (ps *PostgresStrategy) VacuumTables(ctx context.Context) error {
+func (ps *PostgresRepository) VacuumTables(ctx context.Context) error {
 	tables := []string{"executions", "state_history"}
 
 	for _, table := range tables {
@@ -929,7 +989,7 @@ func (ps *PostgresStrategy) VacuumTables(ctx context.Context) error {
 }
 
 // RefreshStatistics refreshes the materialized view for statistics
-func (ps *PostgresStrategy) RefreshStatistics(ctx context.Context) error {
+func (ps *PostgresRepository) RefreshStatistics(ctx context.Context) error {
 	_, err := ps.db.ExecContext(ctx, "SELECT refresh_execution_statistics()")
 	if err != nil {
 		return fmt.Errorf("failed to refresh statistics: %w", err)

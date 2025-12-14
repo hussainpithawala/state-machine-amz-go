@@ -287,25 +287,7 @@ func (r *GormStrategy) ListExecutions(ctx context.Context, filter *ExecutionFilt
 
 	// Apply filters
 	if filter != nil {
-		if filter.Status != "" {
-			query = query.Where("status = ?", filter.Status)
-		}
-
-		if filter.StateMachineID != "" {
-			query = query.Where("state_machine_id = ?", filter.StateMachineID)
-		}
-
-		if filter.Name != "" {
-			query = query.Where("name ILIKE ?", "%"+filter.Name+"%")
-		}
-
-		if !filter.StartAfter.IsZero() {
-			query = query.Where("start_time >= ?", filter.StartAfter)
-		}
-
-		if !filter.StartBefore.IsZero() {
-			query = query.Where("start_time <= ?", filter.StartBefore)
-		}
+		query = addFiltersToQuery(filter, query)
 
 		// Apply pagination
 		if filter.Limit > 0 {
@@ -334,27 +316,36 @@ func (r *GormStrategy) ListExecutions(ctx context.Context, filter *ExecutionFilt
 	return executions, nil
 }
 
+func addFiltersToQuery(filter *ExecutionFilter, query *gorm.DB) *gorm.DB {
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+
+	if filter.StateMachineID != "" {
+		query = query.Where("state_machine_id = ?", filter.StateMachineID)
+	}
+
+	if filter.Name != "" {
+		query = query.Where("name ILIKE ?", "%"+filter.Name+"%")
+	}
+
+	if !filter.StartAfter.IsZero() {
+		query = query.Where("start_time >= ?", filter.StartAfter)
+	}
+
+	if !filter.StartBefore.IsZero() {
+		query = query.Where("start_time <= ?", filter.StartBefore)
+	}
+	return query
+}
+
 // CountExecutions returns the count of executions matching the filter
 func (r *GormStrategy) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {
 	query := r.db.WithContext(ctx).Model(&ExecutionModel{})
 
 	// Apply same filters as ListExecutions (without pagination)
 	if filter != nil {
-		if filter.Status != "" {
-			query = query.Where("status = ?", filter.Status)
-		}
-		if filter.StateMachineID != "" {
-			query = query.Where("state_machine_id = ?", filter.StateMachineID)
-		}
-		if filter.Name != "" {
-			query = query.Where("name ILIKE ?", "%"+filter.Name+"%")
-		}
-		if !filter.StartAfter.IsZero() {
-			query = query.Where("start_time >= ?", filter.StartAfter)
-		}
-		if !filter.StartBefore.IsZero() {
-			query = query.Where("start_time <= ?", filter.StartBefore)
-		}
+		addFiltersToQuery(filter, query)
 	}
 
 	var count int64
