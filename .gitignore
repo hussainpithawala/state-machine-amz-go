@@ -32,3 +32,4 @@ build
 # .idea/
 # .vscode/
 /api-docs/
+/docker-examples/postgres_14/data/

@@ -1,0 +1,20 @@
+Comment: "Simple workflow for testing"
+StartAt: ProcessOrder
+States:
+  ProcessOrder:
+    Type: Task
+    Resource: "arn:aws:lambda:::process:order"
+    ResultPath: "$.orderResult"
+    Next: ValidatePayment
+
+  ValidatePayment:
+    Type: Task
+    Resource: "arn:aws:lambda:::validate:payment"
+    ResultPath: "$.paymentResult"
+    Next: SendNotification
+
+  SendNotification:
+    Type: Task
+    Resource: "arn:aws:lambda:::send:notification"
+    ResultPath: "$.notificationResult"
+    End: true

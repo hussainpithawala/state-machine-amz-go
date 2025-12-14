@@ -9,24 +9,32 @@ import (
 
 // Execution represents a state machine execution instance
 type Execution struct {
-	ID           string
-	Name         string
-	Status       string
-	StartTime    time.Time
-	EndTime      time.Time
-	Input        interface{}
-	Output       interface{}
-	Error        error
-	CurrentState string
-	History      []StateHistory
+	StateMachineID string
+	ID             string
+	Name           string
+	Status         string
+	StartTime      time.Time
+	EndTime        time.Time
+	Input          interface{}
+	Output         interface{}
+	Error          error
+	CurrentState   string
+	History        []StateHistory
 }
 
 // StateHistory represents the history of a state execution
 type StateHistory struct {
-	StateName string
-	Input     interface{}
-	Output    interface{}
-	Timestamp time.Time
+	StateName      string
+	StateType      string
+	Status         string
+	Input          interface{}
+	Output         interface{}
+	Timestamp      time.Time
+	StartTime      time.Time
+	EndTime        time.Time
+	RetryCount     int
+	SequenceNumber int
+	Error          error
 }
 
 // NewContext creates a new execution context
@@ -62,6 +70,7 @@ func New(id, name string, input interface{}) *Execution {
 func (e *Execution) AddStateHistory(stateName string, input, output interface{}) {
 	e.History = append(e.History, StateHistory{
 		StateName: stateName,
+		Status:    "SUCCEEDED",
 		Input:     input,
 		Output:    output,
 		Timestamp: time.Now(),
@@ -80,9 +89,9 @@ func (e *Execution) GetLastState() (*StateHistory, error) {
 // GetStateHistory returns history for a specific state
 func (e *Execution) GetStateHistory(stateName string) []StateHistory {
 	var history []StateHistory
-	for _, h := range e.History {
-		if h.StateName == stateName {
-			history = append(history, h)
+	for i := range e.History {
+		if e.History[i].StateName == stateName {
+			history = append(history, e.History[i])
 		}
 	}
 	return history
@@ -135,10 +144,10 @@ func (e *Execution) ToMap() map[string]interface{} {
 	// Add history summary
 	if len(e.History) > 0 {
 		history := make([]map[string]interface{}, len(e.History))
-		for i, h := range e.History {
-			history[i] = map[string]interface{}{
-				"state":     h.StateName,
-				"timestamp": h.Timestamp.Format(time.RFC3339),
+		for index := range e.History {
+			history[index] = map[string]interface{}{
+				"state":     e.History[index].StateName,
+				"timestamp": e.History[index].Timestamp.Format(time.RFC3339),
 				// "input":     h.Input,
 				// "output":    h.Output,
 			}

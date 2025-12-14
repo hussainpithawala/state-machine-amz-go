@@ -7,11 +7,11 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
-	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
 )
 
@@ -22,9 +22,6 @@ type TestOrderData struct {
 }
 
 // OrderInput represents the structure of order data for testing
-type OrderInput struct {
-	Order map[string]interface{} `json:"order"`
-}
 
 func main() {
 	// Test cases with order data
@@ -136,48 +133,56 @@ func main() {
 	fmt.Printf("✓ Start state: %s\n", smDef.StartAt)
 	fmt.Printf("✓ Total states: %d\n\n", len(smDef.States))
 
-	// Initialize executor
-	exec := executor.NewBaseExecutor()
+	var wg sync.WaitGroup
 
 	// Run tests
 	for i, testCase := range testCases {
-		fmt.Printf("==================================================\n")
-		fmt.Printf("Test Case %d: %s\n", i+1, testCase.Name)
-		fmt.Printf("==================================================\n")
+		wg.Add(1)
+		go func(i int, tc TestOrderData) {
+			defer wg.Done()
+			fmt.Printf("==================================================\n")
+			fmt.Printf("Test Case %d: %s\n", i+1, testCase.Name)
+			fmt.Printf("==================================================\n")
 
-		// Create execution context using the correct constructor
-		execCtx := execution.New(
-			"", // Empty ID will auto-generate
-			uuid.New().String(),
-			testCase.Input,
-		)
+			// Create execution context using the correct constructor
+			execCtx := execution.New(
+				"", // Empty ID will auto-generate
+				uuid.New().String(),
+				testCase.Input,
+			)
 
-		// Print input data
-		fmt.Printf("\nInput Data:\n")
-		printJSON(testCase.Input)
+			// Print input data
+			fmt.Printf("\nInput Data:\n")
+			printJSON(testCase.Input)
 
-		// Create context with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+			// Create context with timeout
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 
-		// Execute the state machine
-		result, err := exec.Execute(ctx, smDef, execCtx)
-		if err != nil {
-			fmt.Printf("\n❌ Execution Error: %v\n", err)
-			execCtx.Status = "FAILED"
-			execCtx.Error = err
-			execCtx.EndTime = time.Now()
-		} else {
-			fmt.Printf("\n✓ Execution completed successfully\n")
-			execCtx = result
-		}
+			// Execute the state machine
+			result, err := smDef.RunExecution(ctx, execCtx)
+			if err != nil {
+				fmt.Printf("\n❌ Execution Error: %v\n", err)
+				execCtx.Status = "FAILED"
+				execCtx.Error = err
+				execCtx.EndTime = time.Now()
+			} else {
+				fmt.Printf("\n✓ Execution completed successfully\n")
+				execCtx = result
+			}
 
-		// Print execution results
-		printExecutionResults(execCtx)
+			// Print execution results
+			printExecutionResults(execCtx)
 
-		fmt.Printf("\n")
+			fmt.Printf("%d \n", i)
+		}(i, testCase)
 	}
 
+	fmt.Printf("\nWaiting for all go-routine-tests to complete...\n")
+	fmt.Printf("==================================================\n")
+	wg.Wait()
+	fmt.Printf("==================================================\n")
+	fmt.Printf("All go-routine-tests completed successfully!\n")
 	// Print summary
 	printTestSummary(len(testCases))
 }

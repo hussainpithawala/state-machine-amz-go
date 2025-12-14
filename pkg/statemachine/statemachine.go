@@ -126,7 +126,7 @@ func (sm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 	// Create execution context
 	execName := fmt.Sprintf("execution-%d", time.Now().Unix())
 	if len(opts) > 0 {
-		config := &executionConfig{}
+		config := &ExecutionConfig{}
 		for _, opt := range opts {
 			opt(config)
 		}
@@ -137,9 +137,13 @@ func (sm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 
 	execCtx := execution.NewContext(execName, sm.StartAt, input)
 
+	return sm.RunExecution(ctx, execCtx)
+}
+
+func (sm *StateMachine) RunExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
 	// Execute the state machine
 	currentStateName := sm.StartAt
-	currentInput := input
+	currentInput := execCtx.Input
 
 	for {
 		// Check for timeout
@@ -264,15 +268,15 @@ func (sm *StateMachine) MarshalJSON() ([]byte, error) {
 }
 
 // ExecutionOption configures execution options
-type ExecutionOption func(*executionConfig)
+type ExecutionOption func(*ExecutionConfig)
 
-type executionConfig struct {
+type ExecutionConfig struct {
 	Name string
 }
 
 // WithExecutionName sets the execution name
 func WithExecutionName(name string) ExecutionOption {
-	return func(c *executionConfig) {
+	return func(c *ExecutionConfig) {
 		c.Name = name
 	}
 }

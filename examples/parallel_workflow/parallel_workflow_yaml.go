@@ -236,15 +236,15 @@ func main() {
 
 	// Test 1: Parse and execute simple workflow
 	fmt.Println("\n--- Test 1: Simple Workflow ---")
-	testSimpleWorkflow(exec)
+	testSimpleWorkflow()
 
 	// Test 2: Parse and execute parallel workflow
 	fmt.Println("\n--- Test 2: Parallel Workflow ---")
-	testParallelWorkflow(exec)
+	testParallelWorkflow()
 
 	// Test 3: Parse and execute choice workflow
 	fmt.Println("\n--- Test 3: Choice Workflow ---")
-	testChoiceWorkflow(exec)
+	testChoiceWorkflow()
 }
 
 func registerTaskHandlers(exec *MockExecutor) {
@@ -419,7 +419,7 @@ func registerTaskHandlers(exec *MockExecutor) {
 	fmt.Println("✅ All task handlers registered")
 }
 
-func testSimpleWorkflow(exec *MockExecutor) {
+func testSimpleWorkflow() {
 	// Create state machine from definition
 	sm, err := statemachine.New([]byte(simpleWorkflowYAML), false)
 	if err != nil {
@@ -441,7 +441,7 @@ func testSimpleWorkflow(exec *MockExecutor) {
 	fmt.Println("Starting simple workflow execution...")
 	startTime := time.Now()
 
-	result, err := exec.Execute(ctx, sm, executionCtx)
+	result, err := sm.RunExecution(ctx, executionCtx)
 	if err != nil {
 		log.Printf("Workflow execution failed: %v", err)
 	} else {
@@ -451,7 +451,7 @@ func testSimpleWorkflow(exec *MockExecutor) {
 	}
 }
 
-func testParallelWorkflow(exec *MockExecutor) {
+func testParallelWorkflow() {
 	// Create state machine from definition
 	sm, err := statemachine.New([]byte(parallelWorkflowYAML), false)
 	if err != nil {
@@ -473,7 +473,7 @@ func testParallelWorkflow(exec *MockExecutor) {
 	fmt.Println("Starting parallel workflow execution...")
 	startTime := time.Now()
 
-	result, err := exec.Execute(ctx, sm, executionCtx)
+	result, err := sm.RunExecution(ctx, executionCtx)
 	if err != nil {
 		log.Printf("Workflow execution failed: %v", err)
 	} else {
@@ -489,7 +489,7 @@ func testParallelWorkflow(exec *MockExecutor) {
 	}
 }
 
-func testChoiceWorkflow(exec *MockExecutor) {
+func testChoiceWorkflow() {
 	// Create state machine from definition
 	sm, err := statemachine.New([]byte(choiceWorkflowYAML), false)
 	if err != nil {
@@ -539,7 +539,7 @@ func testChoiceWorkflow(exec *MockExecutor) {
 		}
 
 		ctx := context.Background()
-		result, err := exec.Execute(ctx, sm, executionCtx)
+		result, err := sm.RunExecution(ctx, executionCtx)
 
 		if err != nil {
 			log.Printf("  ❌ Choice workflow failed: %v", err)
