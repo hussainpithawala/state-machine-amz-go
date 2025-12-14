@@ -251,9 +251,7 @@ jobs:
           check-latest: true
 
       - name: Download artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: build-artifacts
+        uses: actions/download-artifact@v4.0.0
 
       - name: Get version
         id: version
