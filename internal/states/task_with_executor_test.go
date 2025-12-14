@@ -7,9 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
+	// Third-party imports
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	// Project-specific/Internal imports
+	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 )
 
 // MockExecutionContext implements states.ExecutionContext for testing

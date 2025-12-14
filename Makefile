@@ -17,11 +17,14 @@ build: ## Build the package
 test: ## Run tests
 	go test ./... -v -race -coverprofile=coverage.out
 
+static-check:
+	staticcheck ./...
+
 test-coverage: test ## Run tests and show coverage
 	go tool cover -html=coverage.out
 
 lint: ## Run linter
-	golangci-lint run
+	golangci-lint run --timeout=5m --config=.golangci.yml
 
 clean: ## Clean build artifacts
 	rm -rf coverage.out dist/ $(BINARY_NAME)

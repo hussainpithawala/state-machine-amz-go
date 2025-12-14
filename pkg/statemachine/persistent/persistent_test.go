@@ -7,10 +7,13 @@ import (
 	"time"
 	"unsafe"
 
+	// Third-party imports
+	"github.com/stretchr/testify/require"
+
+	// Project-specific/Internal imports
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
-	"github.com/stretchr/testify/require"
 )
 
 type fakeRepository struct {
@@ -30,14 +33,14 @@ type fakeRepository struct {
 	saveStateHistoryErr error
 }
 
-func (f *fakeRepository) Initialize(ctx context.Context) error  { return nil }
-func (f *fakeRepository) Close() error                          { return nil }
-func (f *fakeRepository) HealthCheck(ctx context.Context) error { return nil }
-func (f *fakeRepository) DeleteExecution(ctx context.Context, executionID string) error {
+func (f *fakeRepository) Initialize(_ context.Context) error  { return nil }
+func (f *fakeRepository) Close() error                        { return nil }
+func (f *fakeRepository) HealthCheck(_ context.Context) error { return nil }
+func (f *fakeRepository) DeleteExecution(_ context.Context, _ string) error {
 	return nil
 }
 
-func (f *fakeRepository) SaveExecution(ctx context.Context, record *repository.ExecutionRecord) error {
+func (f *fakeRepository) SaveExecution(_ context.Context, record *repository.ExecutionRecord) error {
 	f.saveExecutionCalls++
 	if record != nil {
 		f.lastExecutionID = record.ExecutionID
@@ -45,24 +48,24 @@ func (f *fakeRepository) SaveExecution(ctx context.Context, record *repository.E
 	return f.saveExecutionErr
 }
 
-func (f *fakeRepository) GetExecution(ctx context.Context, executionID string) (*repository.ExecutionRecord, error) {
+func (f *fakeRepository) GetExecution(_ context.Context, executionID string) (*repository.ExecutionRecord, error) {
 	f.getExecutionID = executionID
 	return &repository.ExecutionRecord{ExecutionID: executionID}, nil
 }
 
-func (f *fakeRepository) SaveStateHistory(ctx context.Context, record *repository.StateHistoryRecord) error {
+func (f *fakeRepository) SaveStateHistory(_ context.Context, _ *repository.StateHistoryRecord) error {
 	f.saveStateHistoryCalls++
 	return f.saveStateHistoryErr
 }
 
-func (f *fakeRepository) GetStateHistory(ctx context.Context, executionID string) ([]*repository.StateHistoryRecord, error) {
+func (f *fakeRepository) GetStateHistory(_ context.Context, executionID string) ([]*repository.StateHistoryRecord, error) {
 	f.getHistoryID = executionID
 	return []*repository.StateHistoryRecord{
 		{ExecutionID: executionID, StateName: "SomeState"},
 	}, nil
 }
 
-func (f *fakeRepository) ListExecutions(ctx context.Context, filter *repository.ExecutionFilter) ([]*repository.ExecutionRecord, error) {
+func (f *fakeRepository) ListExecutions(_ context.Context, filter *repository.ExecutionFilter) ([]*repository.ExecutionRecord, error) {
 	// store a copy so caller can't mutate after the call
 
 	f.lastListLimit = filter.Limit
@@ -73,7 +76,7 @@ func (f *fakeRepository) ListExecutions(ctx context.Context, filter *repository.
 	}, nil
 }
 
-func (f *fakeRepository) CountExecutions(ctx context.Context, filter *repository.ExecutionFilter) (int64, error) {
+func (f *fakeRepository) CountExecutions(_ context.Context, _ *repository.ExecutionFilter) (int64, error) {
 	return 1, nil
 }
 

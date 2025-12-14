@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
+	// Third-party imports
 	"github.com/stretchr/testify/require"
+
+	// Project-specific/Internal imports
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 )
 
 type fakeStrategy struct {
@@ -29,42 +32,42 @@ type fakeStrategy struct {
 	listOffset int
 }
 
-func (f *fakeStrategy) Initialize(ctx context.Context) error  { f.initializeCalls++; return nil }
-func (f *fakeStrategy) Close() error                          { f.closeCalls++; return nil }
-func (f *fakeStrategy) HealthCheck(ctx context.Context) error { return nil }
-func (f *fakeStrategy) DeleteExecution(ctx context.Context, executionID string) error {
+func (f *fakeStrategy) Initialize(_ context.Context) error  { f.initializeCalls++; return nil }
+func (f *fakeStrategy) Close() error                        { f.closeCalls++; return nil }
+func (f *fakeStrategy) HealthCheck(_ context.Context) error { return nil }
+func (f *fakeStrategy) DeleteExecution(_ context.Context, _ string) error {
 	return nil
 }
 
-func (f *fakeStrategy) SaveExecution(ctx context.Context, record *ExecutionRecord) error {
+func (f *fakeStrategy) SaveExecution(_ context.Context, record *ExecutionRecord) error {
 	f.saveExecutionCalls++
 	f.lastSavedExecution = record
 	return nil
 }
 
-func (f *fakeStrategy) GetExecution(ctx context.Context, executionID string) (*ExecutionRecord, error) {
+func (f *fakeStrategy) GetExecution(_ context.Context, executionID string) (*ExecutionRecord, error) {
 	f.getExecutionID = executionID
 	return &ExecutionRecord{ExecutionID: executionID}, nil
 }
 
-func (f *fakeStrategy) SaveStateHistory(ctx context.Context, record *StateHistoryRecord) error {
+func (f *fakeStrategy) SaveStateHistory(_ context.Context, record *StateHistoryRecord) error {
 	f.saveStateHistoryCalls++
 	f.lastSavedStateHistory = record
 	return nil
 }
 
-func (f *fakeStrategy) GetStateHistory(ctx context.Context, executionID string) ([]*StateHistoryRecord, error) {
+func (f *fakeStrategy) GetStateHistory(_ context.Context, executionID string) ([]*StateHistoryRecord, error) {
 	f.getHistoryID = executionID
 	return []*StateHistoryRecord{{ExecutionID: executionID, StateName: "Any"}}, nil
 }
 
-func (f *fakeStrategy) ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error) {
+func (f *fakeStrategy) ListExecutions(_ context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error) {
 	f.listLimit = filter.Limit
 	f.listOffset = filter.Offset
 	return []*ExecutionRecord{{ExecutionID: "exec-1"}}, nil
 }
 
-func (f *fakeStrategy) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {
+func (f *fakeStrategy) CountExecutions(_ context.Context, _ *ExecutionFilter) (int64, error) {
 	return 1, nil
 }
 

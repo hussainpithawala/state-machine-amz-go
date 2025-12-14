@@ -5,8 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
+	// Third-party imports
 	"github.com/stretchr/testify/require"
+
+	// Project-specific/Internal imports
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 )
 
 func TestStateRegistry_RegisterAndGetTaskHandler(t *testing.T) {
