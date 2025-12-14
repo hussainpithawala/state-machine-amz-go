@@ -44,19 +44,19 @@ func (j *JSONB) Scan(value interface{}) error {
 
 // ExecutionModel represents the executions table
 type ExecutionModel struct {
-	ExecutionID    string     `gorm:"primaryKey;size:255;not null"`
-	StateMachineID string     `gorm:"size:255;not null;index:idx_state_machine"`
-	Name           string     `gorm:"size:255;not null"`
-	Input          JSONB      `gorm:"type:jsonb"`
-	Output         JSONB      `gorm:"type:jsonb"`
-	Status         string     `gorm:"size:50;not null;index:idx_status"`
-	StartTime      time.Time  `gorm:"not null;index:idx_start_time"`
-	EndTime        *time.Time `gorm:"index:idx_end_time"`
-	CurrentState   string     `gorm:"size:255;not null"`
-	Error          string     `gorm:"type:text"`
-	Metadata       JSONB      `gorm:"type:jsonb;default:'{}'"`
-	CreatedAt      time.Time  `gorm:"autoCreateTime"`
-	UpdatedAt      time.Time  `gorm:"autoUpdateTime"`
+	ExecutionID    string    `gorm:"primaryKey;size:255;not null"`
+	StateMachineID string    `gorm:"size:255;not null;index:idx_state_machine"`
+	Name           string    `gorm:"size:255;not null"`
+	Input          JSONB     `gorm:"type:jsonb"`
+	Output         JSONB     `gorm:"type:jsonb"`
+	Status         string    `gorm:"size:50;not null;index:idx_status"`
+	StartTime      time.Time `gorm:"not null;index:idx_start_time"`
+	EndTime        time.Time `gorm:"index:idx_end_time"`
+	CurrentState   string    `gorm:"size:255;not null"`
+	Error          string    `gorm:"type:text"`
+	Metadata       JSONB     `gorm:"type:jsonb;default:'{}'"`
+	CreatedAt      time.Time `gorm:"autoCreateTime"`
+	UpdatedAt      time.Time `gorm:"autoUpdateTime"`
 }
 
 // TableName specifies the table name for ExecutionModel
@@ -77,20 +77,20 @@ func (e *ExecutionModel) BeforeCreate(tx *gorm.DB) error {
 
 // StateHistoryModel represents the state_history table
 type StateHistoryModel struct {
-	ID             string     `gorm:"primaryKey;size:255;not null"`
-	ExecutionID    string     `gorm:"size:255;not null;index:idx_execution_id"`
-	StateName      string     `gorm:"size:255;not null;index:idx_state_name"`
-	StateType      string     `gorm:"size:50;not null"`
-	Input          JSONB      `gorm:"type:jsonb"`
-	Output         JSONB      `gorm:"type:jsonb"`
-	Status         string     `gorm:"size:50;not null;index:idx_state_status"`
-	StartTime      time.Time  `gorm:"not null;index:idx_state_start_time"`
-	EndTime        *time.Time `gorm:"index:idx_state_end_time"`
-	Error          string     `gorm:"type:text"`
-	RetryCount     int        `gorm:"default:0;not null"`
-	SequenceNumber int        `gorm:"not null;index:idx_sequence"`
-	Metadata       JSONB      `gorm:"type:jsonb;default:'{}'"`
-	CreatedAt      time.Time  `gorm:"autoCreateTime"`
+	ID             string    `gorm:"primaryKey;size:255;not null"`
+	ExecutionID    string    `gorm:"size:255;not null;index:idx_execution_id"`
+	StateName      string    `gorm:"size:255;not null;index:idx_state_name"`
+	StateType      string    `gorm:"size:50;not null"`
+	Input          JSONB     `gorm:"type:jsonb"`
+	Output         JSONB     `gorm:"type:jsonb"`
+	Status         string    `gorm:"size:50;not null;index:idx_state_status"`
+	StartTime      time.Time `gorm:"not null;index:idx_state_start_time"`
+	EndTime        time.Time `gorm:"index:idx_state_end_time"`
+	Error          string    `gorm:"type:text"`
+	RetryCount     int       `gorm:"default:0;not null"`
+	SequenceNumber int       `gorm:"not null;index:idx_sequence"`
+	Metadata       JSONB     `gorm:"type:jsonb;default:'{}'"`
+	CreatedAt      time.Time `gorm:"autoCreateTime"`
 }
 
 // TableName specifies the table name for StateHistoryModel

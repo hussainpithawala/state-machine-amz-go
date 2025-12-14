@@ -132,7 +132,7 @@ type Config struct {
 func NewRepository(config *Config) (Repository, error) {
 	switch config.Strategy {
 	case "gorm":
-		return NewGormStrategy(config)
+		return NewGormPostgresRepository(config)
 	case "postgres":
 		return NewPostgresRepository(config)
 	case "memory":

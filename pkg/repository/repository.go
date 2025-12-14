@@ -57,7 +57,7 @@ func NewPersistenceManager(config *Config) (*Manager, error) {
 	case "postgres":
 		repository, err = NewPostgresRepository(config)
 	case "gorm-postgres":
-		repository, err = NewGormStrategy(config)
+		repository, err = NewGormPostgresRepository(config)
 	case "dynamodb":
 		return nil, fmt.Errorf("DynamoDB repository not yet implemented")
 	case "redis":

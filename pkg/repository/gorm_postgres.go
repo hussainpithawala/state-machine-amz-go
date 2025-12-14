@@ -1,4 +1,4 @@
-// pkg/repository/gorm_repository.go
+// pkg/repository/gorm_postgres.go
 package repository
 
 import (
@@ -11,14 +11,14 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// GormStrategy implements Repository using GORM
-type GormStrategy struct {
+// GormPostgresRepository implements Repository using GORM
+type GormPostgresRepository struct {
 	db     *gorm.DB
 	config *Config
 }
 
-// NewGormStrategy creates a new GORM-based repository
-func NewGormStrategy(config *Config) (*GormStrategy, error) {
+// NewGormPostgresRepository creates a new GORM-based repository
+func NewGormPostgresRepository(config *Config) (*GormPostgresRepository, error) {
 	if config.ConnectionURL == "" {
 		return nil, fmt.Errorf("connection URL is required")
 	}
@@ -51,7 +51,7 @@ func NewGormStrategy(config *Config) (*GormStrategy, error) {
 	sqlDB.SetConnMaxLifetime(gormCfg.ConnMaxLifetime)
 	sqlDB.SetConnMaxIdleTime(gormCfg.ConnMaxIdleTime)
 
-	return &GormStrategy{
+	return &GormPostgresRepository{
 		db:     db,
 		config: config,
 	}, nil
@@ -113,7 +113,7 @@ func parseGormConfig(options map[string]interface{}) *GormConfig {
 }
 
 // Initialize creates tables and indexes using GORM AutoMigrate
-func (r *GormStrategy) Initialize(ctx context.Context) error {
+func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 	// Migrate tables in correct order (parent tables first)
 
 	// Step 1: Migrate executions table first (no dependencies)
@@ -150,7 +150,7 @@ func (r *GormStrategy) Initialize(ctx context.Context) error {
 }
 
 // addForeignKeyConstraints adds foreign key constraints after tables are created
-func (r *GormStrategy) addForeignKeyConstraints(ctx context.Context) error {
+func (r *GormPostgresRepository) addForeignKeyConstraints(ctx context.Context) error {
 	// Add foreign key from state_history to executions
 	constraint_state_history := `
 		ALTER TABLE state_history 
@@ -175,7 +175,7 @@ func (r *GormStrategy) addForeignKeyConstraints(ctx context.Context) error {
 }
 
 // createAdditionalIndexes creates composite and specialized indexes
-func (r *GormStrategy) createAdditionalIndexes(ctx context.Context) error {
+func (r *GormPostgresRepository) createAdditionalIndexes(ctx context.Context) error {
 	indexes := []string{
 		// Composite index for common query patterns
 		`CREATE INDEX IF NOT EXISTS idx_executions_sm_status_time 
@@ -208,7 +208,7 @@ func (r *GormStrategy) createAdditionalIndexes(ctx context.Context) error {
 }
 
 // Close closes the database connection
-func (r *GormStrategy) Close() error {
+func (r *GormPostgresRepository) Close() error {
 	sqlDB, err := r.db.DB()
 	if err != nil {
 		return err
@@ -217,7 +217,7 @@ func (r *GormStrategy) Close() error {
 }
 
 // SaveExecution saves or updates an execution using GORM
-func (r *GormStrategy) SaveExecution(ctx context.Context, exec *ExecutionRecord) error {
+func (r *GormPostgresRepository) SaveExecution(ctx context.Context, exec *ExecutionRecord) error {
 	model := toExecutionModel(exec)
 
 	// GORM's Save handles both INSERT and UPDATE
@@ -230,7 +230,7 @@ func (r *GormStrategy) SaveExecution(ctx context.Context, exec *ExecutionRecord)
 }
 
 // GetExecution retrieves an execution by ID
-func (r *GormStrategy) GetExecution(ctx context.Context, executionID string) (*ExecutionRecord, error) {
+func (r *GormPostgresRepository) GetExecution(ctx context.Context, executionID string) (*ExecutionRecord, error) {
 	var model ExecutionModel
 
 	result := r.db.WithContext(ctx).
@@ -248,7 +248,7 @@ func (r *GormStrategy) GetExecution(ctx context.Context, executionID string) (*E
 }
 
 // SaveStateHistory saves a state history entry
-func (r *GormStrategy) SaveStateHistory(ctx context.Context, history *StateHistoryRecord) error {
+func (r *GormPostgresRepository) SaveStateHistory(ctx context.Context, history *StateHistoryRecord) error {
 	model := toStateHistoryModel(history)
 
 	result := r.db.WithContext(ctx).Save(model)
@@ -260,7 +260,7 @@ func (r *GormStrategy) SaveStateHistory(ctx context.Context, history *StateHisto
 }
 
 // GetStateHistory retrieves all state history for an execution
-func (r *GormStrategy) GetStateHistory(ctx context.Context, executionID string) ([]*StateHistoryRecord, error) {
+func (r *GormPostgresRepository) GetStateHistory(ctx context.Context, executionID string) ([]*StateHistoryRecord, error) {
 	var models []StateHistoryModel
 
 	result := r.db.WithContext(ctx).
@@ -282,7 +282,7 @@ func (r *GormStrategy) GetStateHistory(ctx context.Context, executionID string) 
 }
 
 // ListExecutions lists executions with filtering and pagination
-func (r *GormStrategy) ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error) {
+func (r *GormPostgresRepository) ListExecutions(ctx context.Context, filter *ExecutionFilter) ([]*ExecutionRecord, error) {
 	query := r.db.WithContext(ctx).Model(&ExecutionModel{})
 
 	// Apply filters
@@ -340,7 +340,7 @@ func addFiltersToQuery(filter *ExecutionFilter, query *gorm.DB) *gorm.DB {
 }
 
 // CountExecutions returns the count of executions matching the filter
-func (r *GormStrategy) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {
+func (r *GormPostgresRepository) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {
 	query := r.db.WithContext(ctx).Model(&ExecutionModel{})
 
 	// Apply same filters as ListExecutions (without pagination)
@@ -357,7 +357,7 @@ func (r *GormStrategy) CountExecutions(ctx context.Context, filter *ExecutionFil
 }
 
 // DeleteExecution removes an execution and its history (cascade handled by FK)
-func (r *GormStrategy) DeleteExecution(ctx context.Context, executionID string) error {
+func (r *GormPostgresRepository) DeleteExecution(ctx context.Context, executionID string) error {
 	result := r.db.WithContext(ctx).
 		Where("execution_id = ?", executionID).
 		Delete(&ExecutionModel{})
@@ -374,7 +374,7 @@ func (r *GormStrategy) DeleteExecution(ctx context.Context, executionID string) 
 }
 
 // GetExecutionWithHistory retrieves an execution with its full state history using eager loading
-func (r *GormStrategy) GetExecutionWithHistory(ctx context.Context, executionID string) (*ExecutionRecord, []*StateHistoryRecord, error) {
+func (r *GormPostgresRepository) GetExecutionWithHistory(ctx context.Context, executionID string) (*ExecutionRecord, []*StateHistoryRecord, error) {
 	// Get execution
 	var execModel ExecutionModel
 	result := r.db.WithContext(ctx).
@@ -411,7 +411,7 @@ func (r *GormStrategy) GetExecutionWithHistory(ctx context.Context, executionID 
 }
 
 // GetStatistics returns aggregated statistics for a state machine
-func (r *GormStrategy) GetStatistics(ctx context.Context, stateMachineID string) (*Statistics, error) {
+func (r *GormPostgresRepository) GetStatistics(ctx context.Context, stateMachineID string) (*Statistics, error) {
 	type StatsResult struct {
 		Status             string
 		Count              int64
@@ -466,7 +466,7 @@ func (r *GormStrategy) GetStatistics(ctx context.Context, stateMachineID string)
 }
 
 // UpdateStatistics refreshes the execution statistics table
-func (r *GormStrategy) UpdateStatistics(ctx context.Context) error {
+func (r *GormPostgresRepository) UpdateStatistics(ctx context.Context) error {
 	// Delete old statistics
 	if err := r.db.WithContext(ctx).Exec("DELETE FROM execution_statistics").Error; err != nil {
 		return fmt.Errorf("failed to delete old statistics: %w", err)
@@ -501,7 +501,7 @@ func (r *GormStrategy) UpdateStatistics(ctx context.Context) error {
 }
 
 // HealthCheck verifies database connectivity
-func (r *GormStrategy) HealthCheck(ctx context.Context) error {
+func (r *GormPostgresRepository) HealthCheck(ctx context.Context) error {
 	sqlDB, err := r.db.DB()
 	if err != nil {
 		return fmt.Errorf("failed to get database instance: %w", err)
@@ -522,7 +522,6 @@ func toExecutionModel(exec *ExecutionRecord) *ExecutionModel {
 		StateMachineID: exec.StateMachineID,
 		Name:           exec.Name,
 		Status:         exec.Status,
-		StartTime:      *exec.StartTime,
 		CurrentState:   exec.CurrentState,
 	}
 
@@ -536,7 +535,7 @@ func toExecutionModel(exec *ExecutionRecord) *ExecutionModel {
 		model.StartTime = *exec.StartTime
 	}
 	if exec.EndTime != nil && !exec.EndTime.IsZero() {
-		model.EndTime = exec.EndTime
+		model.EndTime = *exec.EndTime
 	}
 	if exec.Error != NULL {
 		model.Error = exec.Error
@@ -564,8 +563,11 @@ func fromExecutionModel(model *ExecutionModel) *ExecutionRecord {
 	if model.Output != nil {
 		exec.Output = fromJSONB(model.Output)
 	}
-	if model.EndTime != nil {
-		exec.EndTime = model.EndTime
+	if !model.StartTime.IsZero() {
+		exec.StartTime = &model.StartTime
+	}
+	if !model.EndTime.IsZero() {
+		exec.EndTime = &model.EndTime
 	}
 	if model.Error != "" {
 		exec.Error = model.Error
@@ -595,8 +597,11 @@ func toStateHistoryModel(history *StateHistoryRecord) *StateHistoryModel {
 	if history.Output != nil {
 		model.Output = toJSONB(history.Output)
 	}
-	if !history.EndTime.IsZero() {
-		model.EndTime = history.EndTime
+	if history.StartTime != nil && history.StartTime.IsZero() {
+		model.StartTime = *history.StartTime
+	}
+	if history.EndTime != nil && history.EndTime.IsZero() {
+		model.EndTime = *history.EndTime
 	}
 	if history.Error != NULL {
 		model.Error = history.Error
@@ -616,6 +621,7 @@ func fromStateHistoryModel(model *StateHistoryModel) *StateHistoryRecord {
 		StateType:      model.StateType,
 		Status:         model.Status,
 		StartTime:      &model.StartTime,
+		EndTime:        &model.EndTime,
 		RetryCount:     model.RetryCount,
 		SequenceNumber: model.SequenceNumber,
 	}
@@ -626,8 +632,13 @@ func fromStateHistoryModel(model *StateHistoryModel) *StateHistoryRecord {
 	if model.Output != nil {
 		history.Output = fromJSONB(model.Output)
 	}
-	if model.EndTime != nil {
-		history.EndTime = model.EndTime
+
+	if !model.StartTime.IsZero() {
+		history.StartTime = &model.StartTime
+	}
+
+	if !model.EndTime.IsZero() {
+		history.EndTime = &model.EndTime
 	}
 	if model.Error != "" {
 		history.Error = model.Error
