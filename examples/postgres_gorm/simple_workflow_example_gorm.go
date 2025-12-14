@@ -162,6 +162,9 @@ States:
 	}
 	fmt.Println("\nExecution Records:")
 	err = json.NewEncoder(os.Stdout).Encode(executionRecords)
+	if err != nil {
+		return fmt.Errorf("failed to marshal execution records: %w", err)
+	}
 
 	// count the number of executions
 	executionCount, err := pm.CountExecutions(ctx, nil)
