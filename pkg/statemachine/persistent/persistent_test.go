@@ -90,7 +90,10 @@ func (f *fakeRepository) SaveStateMachine(_ context.Context, record *repository.
 }
 
 func (f *fakeRepository) GetStateMachine(_ context.Context, stateMachineID string) (*repository.StateMachineRecord, error) {
-	return &repository.StateMachineRecord{ID: stateMachineID}, nil
+	return &repository.StateMachineRecord{
+		ID:         stateMachineID,
+		Definition: `{"StartAt": "FirstState", "States": {"FirstState": {"Type": "Pass", "End": true}}}`,
+	}, nil
 }
 
 // setUnexportedField sets an unexported struct field via unsafe reflection (test-only helper).
@@ -326,6 +329,21 @@ func TestGetDefinition_DelegatesToRepositoryManager(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	require.Equal(t, "sm-123", rec.ID)
+}
+
+func TestNewFromDefnId_Success(t *testing.T) {
+	testStrategy := &fakeRepository{}
+	manager := newTestRepoManager(t, testStrategy)
+
+	ctx := context.Background()
+	smId := "test-sm-id"
+
+	pm, err := NewFromDefnId(ctx, smId, manager)
+	require.NoError(t, err)
+	require.NotNil(t, pm)
+	require.Equal(t, smId, pm.stateMachineID)
+	require.NotNil(t, pm.statemachine)
+	require.Equal(t, manager, pm.repositoryManager)
 }
 
 // executionContextForTest creates an execution context by calling pm.Execute-equivalent logic

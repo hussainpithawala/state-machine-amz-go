@@ -45,6 +45,16 @@ func New(definition []byte, isJson bool, stateMachineId string, manager *reposit
 	}, nil
 }
 
+// NewFromDefnId creates a new state machine by fetching its definition from the repository
+func NewFromDefnId(ctx context.Context, stateMachineID string, manager *repository.Manager) (*StateMachine, error) {
+	record, err := manager.GetStateMachine(ctx, stateMachineID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch state machine definition: %w", err)
+	}
+
+	return New([]byte(record.Definition), true, record.ID, manager)
+}
+
 // Execute runs an execution of the state machine with repositoryManager
 func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...statemachine2.ExecutionOption) (*execution.Execution, error) {
 	// Create execution context
