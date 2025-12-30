@@ -86,6 +86,7 @@ func (f *StateFactory) getStateConstructor(stateType string) (states.State, erro
 		"Choice":   func() states.State { return &states.ChoiceState{} },
 		"Parallel": func() states.State { return &states.ParallelState{} },
 		"Task":     func() states.State { return &states.TaskState{} },
+		"Message":  func() states.State { return &states.MessageState{} },
 	}
 
 	constructor, exists := stateConstructors[stateType]

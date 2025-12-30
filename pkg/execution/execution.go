@@ -20,6 +20,7 @@ type Execution struct {
 	Error          error
 	CurrentState   string
 	History        []StateHistory
+	Metadata       map[string]interface{}
 }
 
 // StateHistory represents the history of a state execution

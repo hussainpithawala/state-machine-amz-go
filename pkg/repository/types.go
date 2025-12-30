@@ -116,7 +116,7 @@ type Repository interface {
 // ExtendedRepository defines additional repository capabilities
 type ExtendedRepository interface {
 	Repository
-
+	MessageRepository
 	// GetExecutionWithHistory retrieves an execution with its full state history
 	GetExecutionWithHistory(ctx context.Context, executionID string) (*ExecutionRecord, []*StateHistoryRecord, error)
 
