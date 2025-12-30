@@ -187,6 +187,11 @@ func (pm *StateMachine) GetExecution(ctx context.Context, executionID string) (*
 	return pm.repositoryManager.GetExecution(ctx, executionID)
 }
 
+// GetDefinition retrieves a state machine definition from repositoryManager
+func (pm *StateMachine) GetDefinition(ctx context.Context, stateMachineID string) (*repository.StateMachineRecord, error) {
+	return pm.repositoryManager.GetStateMachine(ctx, stateMachineID)
+}
+
 // ListExecutions lists executions from repositoryManager
 func (pm *StateMachine) ListExecutions(ctx context.Context, filter *repository.ExecutionFilter) ([]*repository.ExecutionRecord, error) {
 	if filter != nil {
@@ -201,4 +206,15 @@ func (pm *StateMachine) CountExecutions(ctx context.Context, filter *repository.
 		filter.StateMachineID = pm.stateMachineID
 	}
 	return pm.repositoryManager.CountExecutions(ctx, filter)
+}
+
+// SaveDefinition persists the state machine definition to the repository
+func (pm *StateMachine) SaveDefinition(ctx context.Context) error {
+	record, err := pm.statemachine.ToRecord()
+	if err != nil {
+		return err
+	}
+	// Use the explicit stateMachineID if it was provided to New
+	record.ID = pm.stateMachineID
+	return pm.repositoryManager.SaveStateMachine(ctx, record)
 }

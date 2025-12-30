@@ -20,12 +20,15 @@ type fakeStrategy struct {
 
 	saveExecutionCalls    int
 	saveStateHistoryCalls int
+	saveStateMachineCalls int
 
 	lastSavedExecution    *ExecutionRecord
 	lastSavedStateHistory *StateHistoryRecord
+	lastSavedStateMachine *StateMachineRecord
 
-	getExecutionID string
-	getHistoryID   string
+	getExecutionID    string
+	getHistoryID      string
+	getStateMachineID string
 
 	//	listFilters map[string]interface{}
 	listLimit  int
@@ -69,6 +72,17 @@ func (f *fakeStrategy) ListExecutions(_ context.Context, filter *ExecutionFilter
 
 func (f *fakeStrategy) CountExecutions(_ context.Context, _ *ExecutionFilter) (int64, error) {
 	return 1, nil
+}
+
+func (f *fakeStrategy) SaveStateMachine(_ context.Context, record *StateMachineRecord) error {
+	f.saveStateMachineCalls++
+	f.lastSavedStateMachine = record
+	return nil
+}
+
+func (f *fakeStrategy) GetStateMachine(_ context.Context, stateMachineID string) (*StateMachineRecord, error) {
+	f.getStateMachineID = stateMachineID
+	return &StateMachineRecord{ID: stateMachineID}, nil
 }
 
 func TestNewPersistenceManager_UnsupportedStrategy(t *testing.T) {
@@ -237,6 +251,36 @@ func TestManager_GetExecution_GetStateHistory_ListExecutions_Delegates(t *testin
 	require.NoError(t, err)
 	require.Equal(t, 10, fs.listLimit)
 	require.Equal(t, 20, fs.listOffset)
+}
+
+func TestManager_SaveStateMachine_Delegates(t *testing.T) {
+	fs := &fakeStrategy{}
+	pm := &Manager{repository: fs, config: &Config{Strategy: "fake"}}
+
+	sm := &StateMachineRecord{
+		ID:         "sm-123",
+		Name:       "test-sm",
+		Definition: "{}",
+		Version:    "1.0",
+	}
+
+	err := pm.SaveStateMachine(context.Background(), sm)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, fs.saveStateMachineCalls)
+	require.NotNil(t, fs.lastSavedStateMachine)
+	require.Equal(t, "sm-123", fs.lastSavedStateMachine.ID)
+	require.False(t, fs.lastSavedStateMachine.CreatedAt.IsZero())
+	require.False(t, fs.lastSavedStateMachine.UpdatedAt.IsZero())
+}
+
+func TestManager_GetStateMachine_Delegates(t *testing.T) {
+	fs := &fakeStrategy{}
+	pm := &Manager{repository: fs, config: &Config{Strategy: "fake"}}
+
+	_, err := pm.GetStateMachine(context.Background(), "sm-123")
+	require.NoError(t, err)
+	require.Equal(t, "sm-123", fs.getStateMachineID)
 }
 
 func TestGenerateHistoryID_UniqueForDifferentTimestamps(t *testing.T) {

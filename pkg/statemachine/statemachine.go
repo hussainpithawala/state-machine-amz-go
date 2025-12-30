@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	// Third-party imports
 	"sigs.k8s.io/yaml"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/errors"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/factory"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 )
 
 // StateMachine represents an Amazon States Language state machine
@@ -26,6 +29,7 @@ type StateMachine struct {
 	Version        string                  `json:"Version,omitempty"`
 
 	// Internal fields
+	ID        string
 	validator validator.Validator
 	createdAt time.Time
 }
@@ -96,6 +100,7 @@ func New(definition []byte, isJson bool) (*StateMachine, error) {
 		return nil, fmt.Errorf("state machine validation failed: %w", err)
 	}
 
+	sm.ID = uuid.New().String()
 	sm.createdAt = time.Now()
 
 	return sm, nil
@@ -268,6 +273,24 @@ func (sm *StateMachine) MarshalJSON() ([]byte, error) {
 	delete(result, "createdAt")
 
 	return json.Marshal(result)
+}
+
+// ToRecord converts the state machine to a repository record
+func (sm *StateMachine) ToRecord() (*repository.StateMachineRecord, error) {
+	definition, err := json.Marshal(sm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal state machine definition: %w", err)
+	}
+
+	return &repository.StateMachineRecord{
+		ID:          sm.ID,
+		Name:        sm.ID, // Using ID as name if not otherwise specified
+		Description: sm.Comment,
+		Definition:  string(definition),
+		Version:     sm.Version,
+		CreatedAt:   sm.createdAt,
+		UpdatedAt:   time.Now(),
+	}, nil
 }
 
 // ExecutionOption configures execution options

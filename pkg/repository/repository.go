@@ -42,6 +42,19 @@ type StateHistoryRecord struct {
 	Metadata           map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// StateMachineRecord represents a state machine definition to be persisted
+type StateMachineRecord struct {
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Definition  string                 `json:"definition"` // JSON representation of the state machine
+	Type        string                 `json:"type,omitempty"`
+	Version     string                 `json:"version"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
 // Manager manages the persistence repository
 type Manager struct {
 	repository Repository
@@ -91,13 +104,14 @@ func (pm *Manager) Close() error {
 // SaveExecution saves an execution record
 func (pm *Manager) SaveExecution(ctx context.Context, exec *execution.Execution) error {
 	record := &ExecutionRecord{
-		ExecutionID:  exec.ID,
-		Name:         exec.Name,
-		Input:        exec.Input,
-		Output:       exec.Output,
-		Status:       exec.Status,
-		StartTime:    &exec.StartTime,
-		CurrentState: exec.CurrentState,
+		ExecutionID:    exec.ID,
+		StateMachineID: exec.StateMachineID,
+		Name:           exec.Name,
+		Input:          exec.Input,
+		Output:         exec.Output,
+		Status:         exec.Status,
+		StartTime:      &exec.StartTime,
+		CurrentState:   exec.CurrentState,
 	}
 
 	if !exec.EndTime.IsZero() {
@@ -109,6 +123,22 @@ func (pm *Manager) SaveExecution(ctx context.Context, exec *execution.Execution)
 	}
 
 	return pm.repository.SaveExecution(ctx, record)
+}
+
+// SaveStateMachine saves a state machine definition
+func (pm *Manager) SaveStateMachine(ctx context.Context, sm *StateMachineRecord) error {
+	if sm.CreatedAt.IsZero() {
+		sm.CreatedAt = time.Now()
+	}
+	if sm.UpdatedAt.IsZero() {
+		sm.UpdatedAt = time.Now()
+	}
+	return pm.repository.SaveStateMachine(ctx, sm)
+}
+
+// GetStateMachine retrieves a state machine by ID
+func (pm *Manager) GetStateMachine(ctx context.Context, stateMachineID string) (*StateMachineRecord, error) {
+	return pm.repository.GetStateMachine(ctx, stateMachineID)
 }
 
 // SaveStateHistory saves a state history entry

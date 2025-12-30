@@ -75,12 +75,16 @@ func (suite *PostgresIntegrationTestSuite) SetupTest() {
 // cleanupTestData removes all test data
 func (suite *PostgresIntegrationTestSuite) cleanupTestData() {
 	// This is safe because we're using a test database
-	_, err := suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE state_history CASCADE")
+	_, err := suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE state_machines CASCADE")
 	if err != nil {
 		return
 	}
-	_, err2 := suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE executions CASCADE")
-	if err2 != nil {
+	_, err = suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE state_history CASCADE")
+	if err != nil {
+		return
+	}
+	_, err = suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE executions CASCADE")
+	if err != nil {
 		return
 	}
 }
@@ -120,6 +124,45 @@ func (suite *PostgresIntegrationTestSuite) TestSaveAndGetExecution() {
 	assert.NotNil(suite.T(), retrieved.Input)
 	inputMap := retrieved.Input.(map[string]interface{})
 	assert.Equal(suite.T(), "12345", inputMap["orderId"])
+}
+
+func (suite *PostgresIntegrationTestSuite) TestSaveAndGetStateMachine() {
+	record := &StateMachineRecord{
+		ID:          "sm-test-001",
+		Name:        "test-sm",
+		Description: "test description",
+		Definition:  `{"StartAt": "State1", "States": {"State1": {"Type": "Pass", "End": true}}}`,
+		Version:     "1.0",
+		Metadata: map[string]interface{}{
+			"owner": "team-a",
+		},
+		CreatedAt: time.Now().UTC().Truncate(time.Second),
+		UpdatedAt: time.Now().UTC().Truncate(time.Second),
+	}
+
+	// Save
+	err := suite.repository.SaveStateMachine(suite.ctx, record)
+	require.NoError(suite.T(), err)
+
+	// Get
+	retrieved, err := suite.repository.GetStateMachine(suite.ctx, record.ID)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), record.ID, retrieved.ID)
+	assert.Equal(suite.T(), record.Name, retrieved.Name)
+	assert.Equal(suite.T(), record.Description, retrieved.Description)
+	assert.Equal(suite.T(), record.Definition, retrieved.Definition)
+	assert.Equal(suite.T(), record.Version, retrieved.Version)
+	assert.Equal(suite.T(), record.Metadata["owner"], retrieved.Metadata["owner"])
+	assert.WithinDuration(suite.T(), record.CreatedAt, retrieved.CreatedAt, time.Second)
+
+	// Update
+	record.Description = "updated description"
+	err = suite.repository.SaveStateMachine(suite.ctx, record)
+	require.NoError(suite.T(), err)
+
+	retrieved, err = suite.repository.GetStateMachine(suite.ctx, record.ID)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "updated description", retrieved.Description)
 }
 
 // TestUpdateExecution tests updating an existing execution

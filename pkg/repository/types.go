@@ -105,6 +105,12 @@ type Repository interface {
 
 	// HealthCheck verifies the repository is accessible
 	HealthCheck(ctx context.Context) error
+
+	// SaveStateMachine saves a state machine definition
+	SaveStateMachine(ctx context.Context, stateMachine *StateMachineRecord) error
+
+	// GetStateMachine retrieves a state machine by ID
+	GetStateMachine(ctx context.Context, stateMachineID string) (*StateMachineRecord, error)
 }
 
 // ExtendedRepository defines additional repository capabilities

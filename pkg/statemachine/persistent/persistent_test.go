@@ -19,8 +19,10 @@ import (
 type fakeRepository struct {
 	saveExecutionCalls    int
 	saveStateHistoryCalls int
+	saveStateMachineCalls int
 
-	lastExecutionID string
+	lastExecutionID    string
+	lastStateMachineID string
 
 	//	lastListFilters map[string]interface{}
 	lastListLimit  int
@@ -67,7 +69,6 @@ func (f *fakeRepository) GetStateHistory(_ context.Context, executionID string) 
 
 func (f *fakeRepository) ListExecutions(_ context.Context, filter *repository.ExecutionFilter) ([]*repository.ExecutionRecord, error) {
 	// store a copy so caller can't mutate after the call
-
 	f.lastListLimit = filter.Limit
 	f.lastListOffset = filter.Offset
 
@@ -78,6 +79,18 @@ func (f *fakeRepository) ListExecutions(_ context.Context, filter *repository.Ex
 
 func (f *fakeRepository) CountExecutions(_ context.Context, _ *repository.ExecutionFilter) (int64, error) {
 	return 1, nil
+}
+
+func (f *fakeRepository) SaveStateMachine(_ context.Context, record *repository.StateMachineRecord) error {
+	f.saveStateMachineCalls++
+	if record != nil {
+		f.lastStateMachineID = record.ID
+	}
+	return nil
+}
+
+func (f *fakeRepository) GetStateMachine(_ context.Context, stateMachineID string) (*repository.StateMachineRecord, error) {
+	return &repository.StateMachineRecord{ID: stateMachineID}, nil
 }
 
 // setUnexportedField sets an unexported struct field via unsafe reflection (test-only helper).
@@ -276,6 +289,43 @@ func TestGetExecutionHistory_DelegatesToRepositoryManager(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, h)
 	require.Equal(t, "exec-777", testStrategy.getHistoryID)
+}
+
+func TestSaveDefinition_DelegatesToRepositoryManager(t *testing.T) {
+	definition := []byte(`{
+		"StartAt": "FirstState",
+		"States": {
+			"FirstState": { "Type": "Pass", "End": true }
+		}
+	}`)
+
+	testStrategy := &fakeRepository{}
+	pm, err := New(definition, true, "sm-save-def", newTestRepoManager(t, testStrategy))
+	require.NoError(t, err)
+
+	err = pm.SaveDefinition(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, 1, testStrategy.saveStateMachineCalls)
+	require.Equal(t, "sm-save-def", testStrategy.lastStateMachineID)
+}
+
+func TestGetDefinition_DelegatesToRepositoryManager(t *testing.T) {
+	definition := []byte(`{
+		"StartAt": "FirstState",
+		"States": {
+			"FirstState": { "Type": "Pass", "End": true }
+		}
+	}`)
+
+	testStrategy := &fakeRepository{}
+	pm, err := New(definition, true, "sm-x", newTestRepoManager(t, testStrategy))
+	require.NoError(t, err)
+
+	rec, err := pm.GetDefinition(context.Background(), "sm-123")
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	require.Equal(t, "sm-123", rec.ID)
 }
 
 // executionContextForTest creates an execution context by calling pm.Execute-equivalent logic

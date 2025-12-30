@@ -42,6 +42,24 @@ func (j *JSONB) Scan(value interface{}) error {
 	return nil
 }
 
+// StateMachineModel represents the state_machines table
+type StateMachineModel struct {
+	ID          string    `gorm:"primaryKey;size:255;not null"`
+	Name        string    `gorm:"size:255;not null"`
+	Description string    `gorm:"type:text"`
+	Definition  string    `gorm:"type:text;not null"`
+	Type        string    `gorm:"size:50"`
+	Version     string    `gorm:"size:50;not null"`
+	Metadata    JSONB     `gorm:"type:jsonb;default:'{}'"`
+	CreatedAt   time.Time `gorm:"autoCreateTime"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime"`
+}
+
+// TableName specifies the table name for StateMachineModel
+func (StateMachineModel) TableName() string {
+	return "state_machines"
+}
+
 // ExecutionModel represents the executions table
 type ExecutionModel struct {
 	ExecutionID    string    `gorm:"primaryKey;size:255;not null"`

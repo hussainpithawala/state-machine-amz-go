@@ -3,6 +3,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -116,8 +117,14 @@ func parseGormConfig(options map[string]interface{}) *GormConfig {
 func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 	// Migrate tables in correct order (parent tables first)
 
+	// Step 0: Migrate state_machines table
+	err := r.db.WithContext(ctx).AutoMigrate(&StateMachineModel{})
+	if err != nil {
+		return fmt.Errorf("failed to migrate state_machines table: %w", err)
+	}
+
 	// Step 1: Migrate executions table first (no dependencies)
-	err := r.db.WithContext(ctx).AutoMigrate(&ExecutionModel{})
+	err = r.db.WithContext(ctx).AutoMigrate(&ExecutionModel{})
 	if err != nil {
 		return fmt.Errorf("failed to migrate executions table: %w", err)
 	}
@@ -207,7 +214,25 @@ func (r *GormPostgresRepository) createAdditionalIndexes(ctx context.Context) er
 	return nil
 }
 
-// Close closes the database connection
+// SaveStateMachine saves a state machine definition
+func (r *GormPostgresRepository) SaveStateMachine(ctx context.Context, sm *StateMachineRecord) error {
+	model := toStateMachineModel(sm)
+	return r.db.WithContext(ctx).Save(model).Error
+}
+
+// GetStateMachine retrieves a state machine by ID
+func (r *GormPostgresRepository) GetStateMachine(ctx context.Context, stateMachineID string) (*StateMachineRecord, error) {
+	var model StateMachineModel
+	err := r.db.WithContext(ctx).First(&model, "id = ?", stateMachineID).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("state machine '%s' not found", stateMachineID)
+		}
+		return nil, err
+	}
+	return fromStateMachineModel(&model), nil
+}
+
 func (r *GormPostgresRepository) Close() error {
 	sqlDB, err := r.db.DB()
 	if err != nil {
@@ -662,4 +687,32 @@ func fromJSONB(jsonb JSONB) map[string]interface{} {
 		return nil
 	}
 	return map[string]interface{}(jsonb)
+}
+
+func toStateMachineModel(sm *StateMachineRecord) *StateMachineModel {
+	return &StateMachineModel{
+		ID:          sm.ID,
+		Name:        sm.Name,
+		Description: sm.Description,
+		Definition:  sm.Definition,
+		Type:        sm.Type,
+		Version:     sm.Version,
+		Metadata:    toJSONB(sm.Metadata),
+		CreatedAt:   sm.CreatedAt,
+		UpdatedAt:   sm.UpdatedAt,
+	}
+}
+
+func fromStateMachineModel(model *StateMachineModel) *StateMachineRecord {
+	return &StateMachineRecord{
+		ID:          model.ID,
+		Name:        model.Name,
+		Description: model.Description,
+		Definition:  model.Definition,
+		Type:        model.Type,
+		Version:     model.Version,
+		Metadata:    fromJSONB(model.Metadata),
+		CreatedAt:   model.CreatedAt,
+		UpdatedAt:   model.UpdatedAt,
+	}
 }
