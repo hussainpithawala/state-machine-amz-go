@@ -7,6 +7,7 @@ import (
 
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 )
 
 // StateMachineInterface defines the minimal interface needed by executor
@@ -15,6 +16,8 @@ type StateMachineInterface interface {
 	GetState(name string) (states.State, error)
 	IsTimeout(startTime time.Time) bool
 	RunExecution(ctx context.Context, input interface{}, execCtx *execution.Execution) (*execution.Execution, error)
+	ResumeExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error)
+	FindWaitingExecutionsByCorrelation(ctx context.Context, correlationKey string, correlationValue interface{}) ([]*repository.ExecutionRecord, error)
 }
 
 // Executor defines the interface for executing state machines

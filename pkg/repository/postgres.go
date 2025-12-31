@@ -149,7 +149,7 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		state_type VARCHAR(50) NOT NULL,
 		input JSONB,
 		output JSONB,
-		status VARCHAR(50) NOT NULL CHECK (status IN ('SUCCEEDED', 'FAILED', 'RUNNING', 'CANCELLED', 'TIMED_OUT', 'RETRYING')),
+		status VARCHAR(50) NOT NULL CHECK (status IN ('SUCCEEDED', 'FAILED', 'RUNNING', 'CANCELLED', 'TIMED_OUT', 'RETRYING', 'WAITING')),
 		start_time TIMESTAMP NOT NULL,
 		end_time TIMESTAMP,
 		error TEXT,
@@ -182,7 +182,7 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		name VARCHAR(255) NOT NULL,
 		input JSONB,
 		output JSONB,
-		status VARCHAR(50) NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'ABORTED')),
+		status VARCHAR(50) NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'ABORTED', 'PAUSED')),
 		start_time TIMESTAMP NOT NULL,
 		end_time TIMESTAMP,
 		current_state VARCHAR(255) NOT NULL,
@@ -271,6 +271,31 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 	for i, schema := range schemas {
 		if _, err := ps.db.ExecContext(ctx, schema); err != nil {
 			return fmt.Errorf("failed to execute schema statement %d: %w", i+1, err)
+		}
+	}
+
+	// Migrate existing tables to include new statuses if they exist
+	migrationQueries := []string{
+		`DO $$ 
+		BEGIN 
+			BEGIN
+				ALTER TABLE executions DROP CONSTRAINT IF EXISTS executions_status_check;
+				ALTER TABLE executions ADD CONSTRAINT executions_status_check CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'ABORTED', 'PAUSED'));
+			EXCEPTION WHEN OTHERS THEN 
+				-- Ignore errors if table doesn't exist yet (though it should after the above loop)
+			END;
+			BEGIN
+				ALTER TABLE state_history DROP CONSTRAINT IF EXISTS state_history_status_check;
+				ALTER TABLE state_history ADD CONSTRAINT state_history_status_check CHECK (status IN ('SUCCEEDED', 'FAILED', 'RUNNING', 'CANCELLED', 'TIMED_OUT', 'RETRYING', 'WAITING'));
+			EXCEPTION WHEN OTHERS THEN 
+				-- Ignore errors
+			END;
+		END $$;`,
+	}
+
+	for _, query := range migrationQueries {
+		if _, err := ps.db.ExecContext(ctx, query); err != nil {
+			fmt.Printf("Warning: failed to run migration query: %v\n", err)
 		}
 	}
 

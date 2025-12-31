@@ -126,6 +126,8 @@ func (f *StateFactory) setStateName(state states.State, name string) error {
 		s.Name = name
 	case *states.TaskState:
 		s.Name = name
+	case *states.MessageState:
+		s.Name = name
 	default:
 		return fmt.Errorf("unsupported state type for name setting: %T", state)
 	}

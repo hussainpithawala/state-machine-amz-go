@@ -17,12 +17,16 @@ import (
 )
 
 type fakeRepository struct {
-	saveExecutionCalls    int
-	saveStateHistoryCalls int
-	saveStateMachineCalls int
+	saveExecutionCalls          int
+	saveStateHistoryCalls       int
+	saveStateMachineCalls       int
+	saveMessageCorrelationCalls int
 
-	lastExecutionID    string
-	lastStateMachineID string
+	lastExecutionID           string
+	lastStateMachineID        string
+	lastCorrelationRecord     *repository.MessageCorrelationRecord
+	lastUpdateCorrelationID   string
+	lastUpdateCorrelationStat string
 
 	//	lastListFilters map[string]interface{}
 	lastListLimit  int
@@ -33,6 +37,34 @@ type fakeRepository struct {
 
 	saveExecutionErr    error
 	saveStateHistoryErr error
+}
+
+func (f *fakeRepository) SaveMessageCorrelation(ctx context.Context, record *repository.MessageCorrelationRecord) error {
+	f.saveMessageCorrelationCalls++
+	f.lastCorrelationRecord = record
+	return nil
+}
+
+func (f *fakeRepository) GetMessageCorrelation(ctx context.Context, id string) (*repository.MessageCorrelationRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) FindWaitingCorrelations(ctx context.Context, filter *repository.MessageCorrelationFilter) ([]*repository.MessageCorrelationRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) UpdateCorrelationStatus(ctx context.Context, id string, status string) error {
+	f.lastUpdateCorrelationID = id
+	f.lastUpdateCorrelationStat = status
+	return nil
+}
+
+func (f *fakeRepository) DeleteMessageCorrelation(ctx context.Context, id string) error {
+	return nil
+}
+
+func (f *fakeRepository) ListTimedOutCorrelations(ctx context.Context, currentTimestamp int64) ([]*repository.MessageCorrelationRecord, error) {
+	return nil, nil
 }
 
 func (f *fakeRepository) Initialize(_ context.Context) error  { return nil }
@@ -204,7 +236,7 @@ func TestRunExecution_ContextCancelled_PersistsCancelledAndReturnsError(t *testi
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	exec, runErr := pm.RunExecution(ctx, execCtx)
+	exec, runErr := pm.RunExecution(ctx, execCtx.Input, execCtx)
 	require.Error(t, runErr)
 	require.NotNil(t, exec)
 
@@ -229,7 +261,7 @@ func TestRunExecution_StateNotFound_PersistsFailedAndReturnsError(t *testing.T) 
 	require.NoError(t, err)
 
 	execCtx := executionContextForTest(t, pm, "exec-1", "DOES_NOT_EXIST", "input")
-	exec, runErr := pm.RunExecution(context.Background(), execCtx)
+	exec, runErr := pm.RunExecution(context.Background(), execCtx.Input, execCtx)
 
 	require.Error(t, runErr)
 	require.NotNil(t, exec)
@@ -331,6 +363,31 @@ func TestGetDefinition_DelegatesToRepositoryManager(t *testing.T) {
 	require.Equal(t, "sm-123", rec.ID)
 }
 
+func TestExecute_WithExistingContext(t *testing.T) {
+	definition := []byte(`{
+		"StartAt": "PassState",
+		"States": {
+			"PassState": { "Type": "Pass", "End": true }
+		}
+	}`)
+
+	testStrategy := &fakeRepository{}
+	pm, err := New(definition, true, "sm-existing", newTestRepoManager(t, testStrategy))
+	require.NoError(t, err)
+
+	inputData := map[string]interface{}{"key": "value"}
+	execCtx := &execution.Execution{
+		ID:    "custom-id",
+		Input: inputData,
+	}
+
+	exec, err := pm.Execute(context.Background(), execCtx)
+	require.NoError(t, err)
+	require.Equal(t, "custom-id", exec.ID)
+	require.Equal(t, inputData, exec.Input)
+	require.Equal(t, "SUCCEEDED", exec.Status)
+}
+
 func TestNewFromDefnId_Success(t *testing.T) {
 	testStrategy := &fakeRepository{}
 	manager := newTestRepoManager(t, testStrategy)
@@ -344,6 +401,82 @@ func TestNewFromDefnId_Success(t *testing.T) {
 	require.Equal(t, smId, pm.stateMachineID)
 	require.NotNil(t, pm.statemachine)
 	require.Equal(t, manager, pm.repositoryManager)
+}
+
+func TestRunExecution_MessageState_PausesAndResumes(t *testing.T) {
+	ctx := context.Background()
+	repo := &fakeRepository{}
+	manager := newTestRepoManager(t, repo)
+
+	// Define a state machine with a Message state
+	definition := `{
+		"StartAt": "WaitForMessage",
+		"States": {
+			"WaitForMessage": {
+				"Type": "Message",
+				"CorrelationKey": "orderId",
+				"Next": "FinalState"
+			},
+			"FinalState": {
+				"Type": "Pass",
+				"End": true
+			}
+		}
+	}`
+
+	pm, err := New([]byte(definition), true, "test-sm", manager)
+	require.NoError(t, err)
+
+	input := map[string]interface{}{"orderId": "123"}
+	execCtx := execution.NewContext("test-exec", "WaitForMessage", input)
+	execCtx.ID = "test-exec-id"
+
+	// 1. Run Execution - should pause at WaitForMessage
+	result, err := pm.RunExecution(ctx, execCtx.Input, execCtx)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "PAUSED", result.Status)
+	require.Equal(t, "WaitForMessage", result.CurrentState)
+
+	// Verify correlation was saved
+	require.Equal(t, 1, repo.saveMessageCorrelationCalls)
+	require.NotNil(t, repo.lastCorrelationRecord)
+	require.Equal(t, "orderId", repo.lastCorrelationRecord.CorrelationKey)
+	// correlationValue should be equal to the input map because CorrelationValuePath is nil
+	require.Equal(t, input, repo.lastCorrelationRecord.CorrelationValue)
+	require.Equal(t, "WAITING", repo.lastCorrelationRecord.Status)
+
+	// Verify history has WAITING status
+	require.Len(t, result.History, 1)
+	require.Equal(t, "WAITING", result.History[0].Status)
+
+	// 2. Resume Execution with message data
+	resumeInput := map[string]interface{}{
+		"orderId": "123",
+		"__received_message__": map[string]interface{}{
+			"correlation_key":   "orderId",
+			"correlation_value": "123",
+			"data":              map[string]interface{}{"status": "shipped"},
+		},
+	}
+	execCtx.Input = resumeInput
+
+	result, err = pm.ResumeExecution(ctx, execCtx)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "SUCCEEDED", result.Status)
+	require.Equal(t, "FinalState", result.CurrentState)
+
+	// Verify history has SUCCEEDED status for WaitForMessage after resumption
+	// It should have 2 history entries for WaitForMessage (one WAITING, one SUCCEEDED)
+	// plus one for FinalState
+	require.Len(t, result.History, 3)
+	require.Equal(t, "WaitForMessage", result.History[0].StateName)
+	require.Equal(t, "WAITING", result.History[0].Status)
+	require.Equal(t, "WaitForMessage", result.History[1].StateName)
+	require.Equal(t, "SUCCEEDED", result.History[1].Status)
+	require.Equal(t, "FinalState", result.History[2].StateName)
+	require.Equal(t, "SUCCEEDED", result.History[2].Status)
 }
 
 // executionContextForTest creates an execution context by calling pm.Execute-equivalent logic

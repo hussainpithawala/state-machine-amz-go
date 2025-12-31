@@ -27,7 +27,7 @@ type MessageResponse struct {
 
 // Message processes an incoming message and resumes paused executions
 // This is the main API for handling external messages that trigger state transitions
-func (e *BaseExecutor) Message(ctx context.Context, request *MessageRequest) (*MessageResponse, error) {
+func (e *BaseExecutor) Message(ctx context.Context, sm StateMachineInterface, request *MessageRequest) (*MessageResponse, error) {
 	if request == nil {
 		return nil, fmt.Errorf("message request cannot be nil")
 	}
@@ -37,10 +37,42 @@ func (e *BaseExecutor) Message(ctx context.Context, request *MessageRequest) (*M
 	}
 
 	// Find paused executions waiting for this message
-	// This requires the persistence layer to support querying by correlation data
-	executions, err := e.findWaitingExecutions(ctx, request.CorrelationKey, request.CorrelationValue)
+	var executions []*execution.Execution
+	var err error
+
+	// Try to find in-memory first (for backward compatibility/simple use cases)
+	executions, err = e.findWaitingExecutions(ctx, request.CorrelationKey, request.CorrelationValue)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find waiting executions: %w", err)
+		return nil, fmt.Errorf("failed to find waiting executions in-memory: %w", err)
+	}
+
+	// If not found in-memory and we have a persistent state machine, try the repository
+	if len(executions) == 0 && sm != nil {
+		execRecords, err := sm.FindWaitingExecutionsByCorrelation(ctx, request.CorrelationKey, request.CorrelationValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find waiting executions in repository: %w", err)
+		}
+
+		for _, rec := range execRecords {
+			// Convert repository.ExecutionRecord to execution.Execution
+			exec := &execution.Execution{
+				ID:             rec.ExecutionID,
+				StateMachineID: rec.StateMachineID,
+				Name:           rec.Name,
+				Status:         rec.Status,
+				Input:          rec.Input,
+				Output:         rec.Output,
+				CurrentState:   rec.CurrentState,
+				Metadata:       rec.Metadata,
+			}
+			if rec.StartTime != nil {
+				exec.StartTime = *rec.StartTime
+			}
+			if rec.EndTime != nil {
+				exec.EndTime = *rec.EndTime
+			}
+			executions = append(executions, exec)
+		}
 	}
 
 	if len(executions) == 0 {
@@ -52,11 +84,10 @@ func (e *BaseExecutor) Message(ctx context.Context, request *MessageRequest) (*M
 	}
 
 	// Process the first matching execution
-	// In a production system, you might want to handle multiple matches differently
 	exec := executions[0]
 
 	// Resume the execution with the message data
-	response, err := e.resumeExecutionWithMessage(ctx, exec, request)
+	response, err := e.resumeExecutionWithMessage(ctx, sm, exec, request)
 	if err != nil {
 		return &MessageResponse{
 			ExecutionID:     exec.ID,
@@ -128,7 +159,7 @@ func compareCorrelationValues(stored, incoming interface{}) bool {
 }
 
 // resumeExecutionWithMessage resumes a paused execution with the received message
-func (e *BaseExecutor) resumeExecutionWithMessage(ctx context.Context, exec *execution.Execution, request *MessageRequest) (*MessageResponse, error) {
+func (e *BaseExecutor) resumeExecutionWithMessage(ctx context.Context, sm StateMachineInterface, exec *execution.Execution, request *MessageRequest) (*MessageResponse, error) {
 	// Create input for resumption that includes the message data
 	resumeInput := map[string]interface{}{
 		"__received_message__": map[string]interface{}{
@@ -149,13 +180,14 @@ func (e *BaseExecutor) resumeExecutionWithMessage(ctx context.Context, exec *exe
 		}
 	}
 
-	// Update execution status
-	exec.Status = "RUNNING"
+	// Update execution status and input
 	exec.Input = resumeInput
 
-	// Get the state machine to resume execution
-	// You'll need to have access to the state machine here
-	// This might require storing a reference or retrieving it from a registry
+	// Use the state machine to resume execution
+	_, err := sm.ResumeExecution(ctx, exec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resume execution: %w", err)
+	}
 
 	response := &MessageResponse{
 		ExecutionID:     exec.ID,

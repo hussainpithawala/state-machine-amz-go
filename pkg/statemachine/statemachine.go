@@ -214,6 +214,14 @@ func (sm *StateMachine) RunExecution(ctx context.Context, execCtx *execution.Exe
 }
 
 // GetExecutionSummary returns a summary of the state machine
+func (sm *StateMachine) FindWaitingExecutionsByCorrelation(ctx context.Context, correlationKey string, correlationValue interface{}) ([]*repository.ExecutionRecord, error) {
+	return nil, fmt.Errorf("in-memory state machine does not support repository-based correlation search")
+}
+
+func (sm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
+	return sm.RunExecution(ctx, execCtx)
+}
+
 func (sm *StateMachine) GetExecutionSummary() map[string]interface{} {
 	summary := map[string]interface{}{
 		"startAt":        sm.StartAt,
