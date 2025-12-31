@@ -4,7 +4,6 @@ package states
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -510,13 +509,22 @@ func (t *TaskState) errorMatches(err error, errorPatterns []string) bool {
 
 // MarshalJSON implements custom JSON marshaling
 func (t *TaskState) MarshalJSON() ([]byte, error) {
-	type Alias TaskState
-	return json.Marshal(&struct {
-		Type string `json:"Type"`
-		*Alias
+	return MarshalStateWithBase(t.BaseState, struct {
+		Resource         string                 `json:"Resource"`
+		Parameters       map[string]interface{} `json:"Parameters,omitempty"`
+		TimeoutSeconds   *int                   `json:"TimeoutSeconds,omitempty"`
+		HeartbeatSeconds *int                   `json:"HeartbeatSeconds,omitempty"`
+		Retry            []RetryPolicy          `json:"Retry,omitempty"`
+		Catch            []CatchPolicy          `json:"Catch,omitempty"`
+		ResultSelector   map[string]interface{} `json:"ResultSelector,omitempty"`
 	}{
-		Type:  "Task",
-		Alias: (*Alias)(t),
+		Resource:         t.Resource,
+		Parameters:       t.Parameters,
+		TimeoutSeconds:   t.TimeoutSeconds,
+		HeartbeatSeconds: t.HeartbeatSeconds,
+		Retry:            t.Retry,
+		Catch:            t.Catch,
+		ResultSelector:   t.ResultSelector,
 	})
 }
 

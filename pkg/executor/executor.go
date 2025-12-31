@@ -7,6 +7,7 @@ import (
 
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 )
 
 // StateMachineInterface defines the minimal interface needed by executor
@@ -15,6 +16,9 @@ type StateMachineInterface interface {
 	GetState(name string) (states.State, error)
 	IsTimeout(startTime time.Time) bool
 	RunExecution(ctx context.Context, input interface{}, execCtx *execution.Execution) (*execution.Execution, error)
+	ResumeExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error)
+	FindWaitingExecutionsByCorrelation(ctx context.Context, correlationKey string, correlationValue interface{}) ([]*repository.ExecutionRecord, error)
+	GetID() string
 }
 
 // Executor defines the interface for executing state machines
@@ -34,14 +38,19 @@ type Executor interface {
 
 // BaseExecutor provides common executor functionality
 type BaseExecutor struct {
-	executions map[string]*execution.Execution
-	registry   *StateRegistry
+	executions        map[string]*execution.Execution
+	stateMachines     map[string]StateMachineInterface
+	registry          *StateRegistry
+	registries        RegistryMap
+	repositoryManager *repository.Manager
 }
 
 // StateRegistry registers and manages state handlers
 type StateRegistry struct {
 	taskHandlers map[string]func(context.Context, interface{}) (interface{}, error)
 }
+
+type RegistryMap map[string]*StateRegistry
 
 // NewStateRegistry creates a new state registry
 func NewStateRegistry() *StateRegistry {
@@ -64,9 +73,31 @@ func (r *StateRegistry) GetTaskHandler(resourceURI string) (func(context.Context
 // NewBaseExecutor creates a new BaseExecutor
 func NewBaseExecutor() *BaseExecutor {
 	return &BaseExecutor{
-		executions: make(map[string]*execution.Execution),
-		registry:   NewStateRegistry(),
+		executions:    make(map[string]*execution.Execution),
+		stateMachines: make(map[string]StateMachineInterface),
+		registry:      NewStateRegistry(),
+		registries:    make(RegistryMap),
 	}
+}
+
+// AddStateMachine adds a state machine to the executor's cache
+func (e *BaseExecutor) AddStateMachine(sm StateMachineInterface) {
+	if sm != nil && sm.GetID() != "" {
+		e.stateMachines[sm.GetID()] = sm
+	}
+}
+
+// AddRegistry adds a state registry for a specific state machine
+func (e *BaseExecutor) AddRegistry(stateMachineID string, registry *StateRegistry) {
+	if e.registries == nil {
+		e.registries = make(RegistryMap)
+	}
+	e.registries[stateMachineID] = registry
+}
+
+// SetRepositoryManager sets the repository manager for the executor
+func (e *BaseExecutor) SetRepositoryManager(manager *repository.Manager) {
+	e.repositoryManager = manager
 }
 
 // GetStatus returns the status of an execution

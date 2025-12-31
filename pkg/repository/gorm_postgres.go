@@ -116,8 +116,14 @@ func parseGormConfig(options map[string]interface{}) *GormConfig {
 func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 	// Migrate tables in correct order (parent tables first)
 
+	// Step 0: Migrate state_machines table
+	err := r.db.WithContext(ctx).AutoMigrate(&StateMachineModel{})
+	if err != nil {
+		return fmt.Errorf("failed to migrate state_machines table: %w", err)
+	}
+
 	// Step 1: Migrate executions table first (no dependencies)
-	err := r.db.WithContext(ctx).AutoMigrate(&ExecutionModel{})
+	err = r.db.WithContext(ctx).AutoMigrate(&ExecutionModel{})
 	if err != nil {
 		return fmt.Errorf("failed to migrate executions table: %w", err)
 	}
@@ -141,7 +147,13 @@ func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to migrate statistics table: %w", err)
 	}
 
-	// Step 5: Create additional indexes for better performance
+	// Step 5: Migrate message_correlations table
+	err = r.db.WithContext(ctx).AutoMigrate(&MessageCorrelationModel{})
+	if err != nil {
+		return fmt.Errorf("failed to migrate message_correlations table: %w", err)
+	}
+
+	// Step 6: Create additional indexes for better performance
 	if err := r.createAdditionalIndexes(ctx); err != nil {
 		return fmt.Errorf("failed to create additional indexes: %w", err)
 	}
@@ -207,7 +219,25 @@ func (r *GormPostgresRepository) createAdditionalIndexes(ctx context.Context) er
 	return nil
 }
 
-// Close closes the database connection
+// SaveStateMachine saves a state machine definition
+func (r *GormPostgresRepository) SaveStateMachine(ctx context.Context, sm *StateMachineRecord) error {
+	model := toStateMachineModel(sm)
+	return r.db.WithContext(ctx).Save(model).Error
+}
+
+// GetStateMachine retrieves a state machine by ID
+func (r *GormPostgresRepository) GetStateMachine(ctx context.Context, stateMachineID string) (*StateMachineRecord, error) {
+	var model StateMachineModel
+	result := r.db.WithContext(ctx).Limit(1).Find(&model, "id = ?", stateMachineID)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("state machine '%s' not found", stateMachineID)
+	}
+	return fromStateMachineModel(&model), nil
+}
+
 func (r *GormPostgresRepository) Close() error {
 	sqlDB, err := r.db.DB()
 	if err != nil {
@@ -235,13 +265,15 @@ func (r *GormPostgresRepository) GetExecution(ctx context.Context, executionID s
 
 	result := r.db.WithContext(ctx).
 		Where("execution_id = ?", executionID).
-		First(&model)
+		Limit(1).
+		Find(&model)
 
 	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("execution not found: %s", executionID)
-		}
 		return nil, fmt.Errorf("failed to get execution: %w", result.Error)
+	}
+
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("execution not found: %s", executionID)
 	}
 
 	return fromExecutionModel(&model), nil
@@ -531,13 +563,13 @@ func toExecutionModel(exec *ExecutionRecord) *ExecutionModel {
 	if exec.Output != nil {
 		model.Output = toJSONB(exec.Output)
 	}
-	if exec.StartTime != nil && exec.StartTime.IsZero() {
+	if exec.StartTime != nil && !exec.StartTime.IsZero() {
 		model.StartTime = *exec.StartTime
 	}
 	if exec.EndTime != nil && !exec.EndTime.IsZero() {
 		model.EndTime = *exec.EndTime
 	}
-	if exec.Error != NULL {
+	if exec.Error != "" {
 		model.Error = exec.Error
 	}
 	if exec.Metadata != nil {
@@ -597,13 +629,13 @@ func toStateHistoryModel(history *StateHistoryRecord) *StateHistoryModel {
 	if history.Output != nil {
 		model.Output = toJSONB(history.Output)
 	}
-	if history.StartTime != nil && history.StartTime.IsZero() {
+	if history.StartTime != nil && !history.StartTime.IsZero() {
 		model.StartTime = *history.StartTime
 	}
-	if history.EndTime != nil && history.EndTime.IsZero() {
+	if history.EndTime != nil && !history.EndTime.IsZero() {
 		model.EndTime = *history.EndTime
 	}
-	if history.Error != NULL {
+	if history.Error != "" {
 		model.Error = history.Error
 	}
 	if history.Metadata != nil {
@@ -651,10 +683,17 @@ func fromStateHistoryModel(model *StateHistoryModel) *StateHistoryRecord {
 }
 
 func toJSONB(data interface{}) JSONB {
+	if data == nil {
+		return nil
+	}
 	if m, ok := data.(map[string]interface{}); ok {
 		return JSONB(m)
 	}
-	return nil
+	// If it's not a map, we still want to store it, but JSONB type expects a map.
+	// However, GORM with our JSONB type (which is a map) might struggle with non-map types.
+	// But correlation values can be strings or numbers.
+	// Let's check how JSONB is defined.
+	return JSONB{"$": data}
 }
 
 func fromJSONB(jsonb JSONB) map[string]interface{} {
@@ -662,4 +701,171 @@ func fromJSONB(jsonb JSONB) map[string]interface{} {
 		return nil
 	}
 	return map[string]interface{}(jsonb)
+}
+
+func toStateMachineModel(sm *StateMachineRecord) *StateMachineModel {
+	return &StateMachineModel{
+		ID:          sm.ID,
+		Name:        sm.Name,
+		Description: sm.Description,
+		Definition:  sm.Definition,
+		Type:        sm.Type,
+		Version:     sm.Version,
+		Metadata:    toJSONB(sm.Metadata),
+		CreatedAt:   sm.CreatedAt,
+		UpdatedAt:   sm.UpdatedAt,
+	}
+}
+
+func fromStateMachineModel(model *StateMachineModel) *StateMachineRecord {
+	return &StateMachineRecord{
+		ID:          model.ID,
+		Name:        model.Name,
+		Description: model.Description,
+		Definition:  model.Definition,
+		Type:        model.Type,
+		Version:     model.Version,
+		Metadata:    fromJSONB(model.Metadata),
+		CreatedAt:   model.CreatedAt,
+		UpdatedAt:   model.UpdatedAt,
+	}
+}
+
+// SaveMessageCorrelation saves a message correlation record
+func (r *GormPostgresRepository) SaveMessageCorrelation(ctx context.Context, record *MessageCorrelationRecord) error {
+	model := toMessageCorrelationModel(record)
+	return r.db.WithContext(ctx).Save(model).Error
+}
+
+// GetMessageCorrelation retrieves a correlation record by ID
+func (r *GormPostgresRepository) GetMessageCorrelation(ctx context.Context, id string) (*MessageCorrelationRecord, error) {
+	var model MessageCorrelationModel
+	result := r.db.WithContext(ctx).Limit(1).Find(&model, "id = ?", id)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("correlation record not found: %s", id)
+	}
+	return fromMessageCorrelationModel(&model), nil
+}
+
+// FindWaitingCorrelations finds correlation records waiting for messages
+func (r *GormPostgresRepository) FindWaitingCorrelations(ctx context.Context, filter *MessageCorrelationFilter) ([]*MessageCorrelationRecord, error) {
+	query := r.db.WithContext(ctx).Model(&MessageCorrelationModel{})
+
+	if filter != nil {
+		if filter.CorrelationKey != "" {
+			query = query.Where("correlation_key = ?", filter.CorrelationKey)
+		}
+		if filter.CorrelationValue != nil {
+			query = query.Where("correlation_value = ?", toJSONB(filter.CorrelationValue))
+		}
+		if filter.Status != "" {
+			query = query.Where("status = ?", filter.Status)
+		}
+		if filter.StateMachineID != "" {
+			query = query.Where("state_machine_id = ?", filter.StateMachineID)
+		}
+
+		query = query.Order("created_at ASC")
+
+		if filter.Limit > 0 {
+			query = query.Limit(filter.Limit)
+		}
+		if filter.Offset > 0 {
+			query = query.Offset(filter.Offset)
+		}
+	}
+
+	var models []MessageCorrelationModel
+	err := query.Find(&models).Error
+	if err != nil {
+		return nil, err
+	}
+
+	records := make([]*MessageCorrelationRecord, len(models))
+	for i := range models {
+		records[i] = fromMessageCorrelationModel(&models[i])
+	}
+	return records, nil
+}
+
+// UpdateCorrelationStatus updates the status of a correlation record
+func (r *GormPostgresRepository) UpdateCorrelationStatus(ctx context.Context, id, status string) error {
+	result := r.db.WithContext(ctx).Model(&MessageCorrelationModel{}).
+		Where("id = ?", id).
+		Update("status", status)
+
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("correlation record not found: %s", id)
+	}
+	return nil
+}
+
+// DeleteMessageCorrelation deletes a correlation record
+func (r *GormPostgresRepository) DeleteMessageCorrelation(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).Delete(&MessageCorrelationModel{}, "id = ?", id)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("correlation record not found: %s", id)
+	}
+	return nil
+}
+
+// ListTimedOutCorrelations finds correlations that have exceeded their timeout
+func (r *GormPostgresRepository) ListTimedOutCorrelations(ctx context.Context, currentTimestamp int64) ([]*MessageCorrelationRecord, error) {
+	var models []MessageCorrelationModel
+	err := r.db.WithContext(ctx).
+		Where("status = 'WAITING' AND timeout_at IS NOT NULL AND timeout_at <= ?", currentTimestamp).
+		Find(&models).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	records := make([]*MessageCorrelationRecord, len(models))
+	for i := range models {
+		records[i] = fromMessageCorrelationModel(&models[i])
+	}
+	return records, nil
+}
+
+func toMessageCorrelationModel(record *MessageCorrelationRecord) *MessageCorrelationModel {
+	model := &MessageCorrelationModel{
+		ID:               record.ID,
+		ExecutionID:      record.ExecutionID,
+		StateMachineID:   record.StateMachineID,
+		StateName:        record.StateName,
+		CorrelationKey:   record.CorrelationKey,
+		CorrelationValue: toJSONB(record.CorrelationValue),
+		CreatedAt:        record.CreatedAt,
+		TimeoutAt:        record.TimeoutAt,
+		Status:           record.Status,
+	}
+	if record.ExecutionStartTime != nil {
+		model.ExecutionStartTime = *record.ExecutionStartTime
+	}
+	return model
+}
+
+func fromMessageCorrelationModel(model *MessageCorrelationModel) *MessageCorrelationRecord {
+	record := &MessageCorrelationRecord{
+		ID:                 model.ID,
+		ExecutionID:        model.ExecutionID,
+		ExecutionStartTime: &model.ExecutionStartTime,
+		StateMachineID:     model.StateMachineID,
+		StateName:          model.StateName,
+		CorrelationKey:     model.CorrelationKey,
+		CorrelationValue:   fromJSONB(model.CorrelationValue),
+		CreatedAt:          model.CreatedAt,
+		TimeoutAt:          model.TimeoutAt,
+		Status:             model.Status,
+	}
+	return record
 }

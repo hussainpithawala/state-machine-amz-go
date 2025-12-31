@@ -110,7 +110,7 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to set statement timeout: %w", err)
 	}
 
-	// Create schema if specified and not 'public'
+	// Create search path if specified
 	if pgConfig.SearchPath != "public" && pgConfig.SearchPath != "" {
 		schemaQuery := fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pgConfig.SearchPath)
 		if _, err := ps.db.ExecContext(ctx, schemaQuery); err != nil {
@@ -124,6 +124,22 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		}
 	}
 
+	stateMachinesSchema := `
+	CREATE TABLE IF NOT EXISTS state_machines (
+		id VARCHAR(255) PRIMARY KEY,
+		name VARCHAR(255) NOT NULL,
+		description TEXT,
+		definition TEXT NOT NULL,
+		type VARCHAR(50),
+		version VARCHAR(50) NOT NULL,
+		metadata JSONB DEFAULT '{}'::jsonb,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_state_machines_name ON state_machines(name);
+	`
+
 	historySchema := `
 	CREATE TABLE IF NOT EXISTS state_history (
 		id VARCHAR(255) NOT NULL,
@@ -133,7 +149,7 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		state_type VARCHAR(50) NOT NULL,
 		input JSONB,
 		output JSONB,
-		status VARCHAR(50) NOT NULL CHECK (status IN ('SUCCEEDED', 'FAILED', 'RUNNING', 'CANCELLED', 'TIMED_OUT', 'RETRYING')),
+		status VARCHAR(50) NOT NULL CHECK (status IN ('SUCCEEDED', 'FAILED', 'RUNNING', 'CANCELLED', 'TIMED_OUT', 'RETRYING', 'WAITING')),
 		start_time TIMESTAMP NOT NULL,
 		end_time TIMESTAMP,
 		error TEXT,
@@ -166,7 +182,7 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		name VARCHAR(255) NOT NULL,
 		input JSONB,
 		output JSONB,
-		status VARCHAR(50) NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'ABORTED')),
+		status VARCHAR(50) NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'ABORTED', 'PAUSED')),
 		start_time TIMESTAMP NOT NULL,
 		end_time TIMESTAMP,
 		current_state VARCHAR(255) NOT NULL,
@@ -243,6 +259,7 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 
 	// Execute all schema creation statements
 	schemas := []string{
+		stateMachinesSchema,
 		executionsSchema,
 		historySchema,
 		triggerFunction,
@@ -257,6 +274,36 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		}
 	}
 
+	// Migrate existing tables to include new statuses if they exist
+	migrationQueries := []string{
+		`DO $$ 
+		BEGIN 
+			BEGIN
+				ALTER TABLE executions DROP CONSTRAINT IF EXISTS executions_status_check;
+				ALTER TABLE executions ADD CONSTRAINT executions_status_check CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'ABORTED', 'PAUSED'));
+			EXCEPTION WHEN OTHERS THEN 
+				-- Ignore errors if table doesn't exist yet (though it should after the above loop)
+			END;
+			BEGIN
+				ALTER TABLE state_history DROP CONSTRAINT IF EXISTS state_history_status_check;
+				ALTER TABLE state_history ADD CONSTRAINT state_history_status_check CHECK (status IN ('SUCCEEDED', 'FAILED', 'RUNNING', 'CANCELLED', 'TIMED_OUT', 'RETRYING', 'WAITING'));
+			EXCEPTION WHEN OTHERS THEN 
+				-- Ignore errors
+			END;
+		END $$;`,
+	}
+
+	for _, query := range migrationQueries {
+		if _, err := ps.db.ExecContext(ctx, query); err != nil {
+			fmt.Printf("Warning: failed to run migration query: %v\n", err)
+		}
+	}
+
+	// Initialize message correlation table
+	if err := ps.InitializeMessageCorrelationTable(ctx); err != nil {
+		return fmt.Errorf("failed to initialize message correlation table: %w", err)
+	}
+
 	return nil
 }
 
@@ -266,6 +313,89 @@ func (ps *PostgresRepository) Close() error {
 		return ps.db.Close()
 	}
 	return nil
+}
+
+// SaveStateMachine saves a state machine definition
+func (ps *PostgresRepository) SaveStateMachine(ctx context.Context, record *StateMachineRecord) error {
+	if record.ID == "" {
+		return errors.New("state machine id is required")
+	}
+
+	metadataJSON, err := json.Marshal(record.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	query := `
+		INSERT INTO state_machines (
+			id, name, description, definition, type, version, metadata, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (id) DO UPDATE SET
+			name = EXCLUDED.name,
+			description = EXCLUDED.description,
+			definition = EXCLUDED.definition,
+			type = EXCLUDED.type,
+			version = EXCLUDED.version,
+			metadata = EXCLUDED.metadata,
+			updated_at = CURRENT_TIMESTAMP
+	`
+
+	_, err = ps.db.ExecContext(ctx, query,
+		record.ID,
+		record.Name,
+		record.Description,
+		record.Definition,
+		record.Type,
+		record.Version,
+		metadataJSON,
+		record.CreatedAt,
+		record.UpdatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to save state machine: %w", err)
+	}
+
+	return nil
+}
+
+// GetStateMachine retrieves a state machine by ID
+func (ps *PostgresRepository) GetStateMachine(ctx context.Context, stateMachineID string) (*StateMachineRecord, error) {
+	query := `
+		SELECT id, name, description, definition, type, version, metadata, created_at, updated_at
+		FROM state_machines
+		WHERE id = $1
+	`
+
+	var record StateMachineRecord
+	var metadataJSON []byte
+
+	err := ps.db.QueryRowContext(ctx, query, stateMachineID).Scan(
+		&record.ID,
+		&record.Name,
+		&record.Description,
+		&record.Definition,
+		&record.Type,
+		&record.Version,
+		&metadataJSON,
+		&record.CreatedAt,
+		&record.UpdatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("state machine '%s' not found", stateMachineID)
+		}
+		return nil, fmt.Errorf("failed to get state machine: %w", err)
+	}
+
+	if len(metadataJSON) > 0 {
+		if err := json.Unmarshal(metadataJSON, &record.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+	}
+
+	return &record, nil
 }
 
 // SaveExecution saves or updates an execution record with UPSERT

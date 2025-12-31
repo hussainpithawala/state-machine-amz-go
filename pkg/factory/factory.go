@@ -86,6 +86,7 @@ func (f *StateFactory) getStateConstructor(stateType string) (states.State, erro
 		"Choice":   func() states.State { return &states.ChoiceState{} },
 		"Parallel": func() states.State { return &states.ParallelState{} },
 		"Task":     func() states.State { return &states.TaskState{} },
+		"Message":  func() states.State { return &states.MessageState{} },
 	}
 
 	constructor, exists := stateConstructors[stateType]
@@ -124,6 +125,8 @@ func (f *StateFactory) setStateName(state states.State, name string) error {
 	case *states.ParallelState:
 		s.Name = name
 	case *states.TaskState:
+		s.Name = name
+	case *states.MessageState:
 		s.Name = name
 	default:
 		return fmt.Errorf("unsupported state type for name setting: %T", state)

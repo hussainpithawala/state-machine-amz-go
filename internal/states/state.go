@@ -91,6 +91,40 @@ func (s *BaseState) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
+// MarshalStateWithBase helps custom state types marshal themselves
+// by combining BaseState fields and custom fields.
+func MarshalStateWithBase[T any](base BaseState, extra T) ([]byte, error) {
+	// Marshal base to map
+	baseBytes, err := json.Marshal(base)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal base fields: %w", err)
+	}
+
+	var baseMap map[string]interface{}
+	if err := json.Unmarshal(baseBytes, &baseMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal base fields: %w", err)
+	}
+
+	// Marshal extra to map
+	extraBytes, err := json.Marshal(extra)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal extra fields: %w", err)
+	}
+
+	var extraMap map[string]interface{}
+	if err := json.Unmarshal(extraBytes, &extraMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal extra fields: %w", err)
+	}
+
+	// Merge extra into base (extra wins on conflict)
+	for k, v := range extraMap {
+		baseMap[k] = v
+	}
+
+	// Final marshal
+	return json.Marshal(baseMap)
+}
+
 // GetNextStates returns all possible next state names for graph validation
 // For most states, this is just the single Next state
 // For Choice states, this includes all choice destinations and the default

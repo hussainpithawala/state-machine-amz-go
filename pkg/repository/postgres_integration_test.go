@@ -75,12 +75,20 @@ func (suite *PostgresIntegrationTestSuite) SetupTest() {
 // cleanupTestData removes all test data
 func (suite *PostgresIntegrationTestSuite) cleanupTestData() {
 	// This is safe because we're using a test database
-	_, err := suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE state_history CASCADE")
+	_, err := suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE state_machines CASCADE")
 	if err != nil {
 		return
 	}
-	_, err2 := suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE executions CASCADE")
-	if err2 != nil {
+	_, err = suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE state_history CASCADE")
+	if err != nil {
+		return
+	}
+	_, err = suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE executions CASCADE")
+	if err != nil {
+		return
+	}
+	_, err = suite.repository.db.ExecContext(suite.ctx, "TRUNCATE TABLE message_correlations CASCADE")
+	if err != nil {
 		return
 	}
 }
@@ -120,6 +128,45 @@ func (suite *PostgresIntegrationTestSuite) TestSaveAndGetExecution() {
 	assert.NotNil(suite.T(), retrieved.Input)
 	inputMap := retrieved.Input.(map[string]interface{})
 	assert.Equal(suite.T(), "12345", inputMap["orderId"])
+}
+
+func (suite *PostgresIntegrationTestSuite) TestSaveAndGetStateMachine() {
+	record := &StateMachineRecord{
+		ID:          "sm-test-001",
+		Name:        "test-sm",
+		Description: "test description",
+		Definition:  `{"StartAt": "State1", "States": {"State1": {"Type": "Pass", "End": true}}}`,
+		Version:     "1.0",
+		Metadata: map[string]interface{}{
+			"owner": "team-a",
+		},
+		CreatedAt: time.Now().UTC().Truncate(time.Second),
+		UpdatedAt: time.Now().UTC().Truncate(time.Second),
+	}
+
+	// Save
+	err := suite.repository.SaveStateMachine(suite.ctx, record)
+	require.NoError(suite.T(), err)
+
+	// Get
+	retrieved, err := suite.repository.GetStateMachine(suite.ctx, record.ID)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), record.ID, retrieved.ID)
+	assert.Equal(suite.T(), record.Name, retrieved.Name)
+	assert.Equal(suite.T(), record.Description, retrieved.Description)
+	assert.Equal(suite.T(), record.Definition, retrieved.Definition)
+	assert.Equal(suite.T(), record.Version, retrieved.Version)
+	assert.Equal(suite.T(), record.Metadata["owner"], retrieved.Metadata["owner"])
+	assert.WithinDuration(suite.T(), record.CreatedAt, retrieved.CreatedAt, time.Second)
+
+	// Update
+	record.Description = "updated description"
+	err = suite.repository.SaveStateMachine(suite.ctx, record)
+	require.NoError(suite.T(), err)
+
+	retrieved, err = suite.repository.GetStateMachine(suite.ctx, record.ID)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "updated description", retrieved.Description)
 }
 
 // TestUpdateExecution tests updating an existing execution
@@ -542,6 +589,164 @@ func (suite *PostgresIntegrationTestSuite) TestErrorHandling() {
 		SequenceNumber: 0,
 	})
 	assert.Error(suite.T(), err) // Should fail due to foreign key constraint
+}
+
+func (suite *PostgresIntegrationTestSuite) TestMessageCorrelationLifecycle() {
+	// First, we need an execution because message_correlations has a FK to executions
+	now := time.Now().UTC().Truncate(time.Second)
+	execRecord := &ExecutionRecord{
+		ExecutionID:    "exec-msg-test-001",
+		StateMachineID: "sm-test-001",
+		Name:           "msg-test-execution",
+		Status:         "RUNNING",
+		StartTime:      &now,
+		CurrentState:   "WaitState",
+	}
+	err := suite.repository.SaveExecution(suite.ctx, execRecord)
+	require.NoError(suite.T(), err)
+
+	// 1. Test SaveMessageCorrelation
+	corrRecord := &MessageCorrelationRecord{
+		ID:                 "corr-001",
+		ExecutionID:        execRecord.ExecutionID,
+		ExecutionStartTime: execRecord.StartTime,
+		StateMachineID:     execRecord.StateMachineID,
+		StateName:          "WaitState",
+		CorrelationKey:     "orderId",
+		CorrelationValue:   "12345",
+		CreatedAt:          time.Now().Unix(),
+		Status:             "WAITING",
+	}
+
+	err = suite.repository.SaveMessageCorrelation(suite.ctx, corrRecord)
+	require.NoError(suite.T(), err)
+
+	// 2. Test GetMessageCorrelation
+	retrieved, err := suite.repository.GetMessageCorrelation(suite.ctx, "corr-001")
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), corrRecord.ID, retrieved.ID)
+	assert.Equal(suite.T(), corrRecord.CorrelationValue, retrieved.CorrelationValue)
+	assert.Equal(suite.T(), "WAITING", retrieved.Status)
+	assert.NotNil(suite.T(), retrieved.ExecutionStartTime)
+	assert.WithinDuration(suite.T(), *execRecord.StartTime, *retrieved.ExecutionStartTime, time.Second)
+
+	// 3. Test UpdateCorrelationStatus
+	err = suite.repository.UpdateCorrelationStatus(suite.ctx, "corr-001", "RECEIVED")
+	require.NoError(suite.T(), err)
+
+	retrieved, err = suite.repository.GetMessageCorrelation(suite.ctx, "corr-001")
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "RECEIVED", retrieved.Status)
+
+	// 4. Test FindWaitingCorrelations
+	// Add another waiting correlation
+	corrRecord2 := &MessageCorrelationRecord{
+		ID:                 "corr-002",
+		ExecutionID:        execRecord.ExecutionID,
+		ExecutionStartTime: execRecord.StartTime,
+		StateMachineID:     execRecord.StateMachineID,
+		StateName:          "WaitState",
+		CorrelationKey:     "userId",
+		CorrelationValue:   "user-1",
+		CreatedAt:          time.Now().Unix(),
+		Status:             "WAITING",
+	}
+	err = suite.repository.SaveMessageCorrelation(suite.ctx, corrRecord2)
+	require.NoError(suite.T(), err)
+
+	filter := &MessageCorrelationFilter{
+		CorrelationKey: "userId",
+		Status:         "WAITING",
+	}
+	found, err := suite.repository.FindWaitingCorrelations(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), found, 1)
+	assert.Equal(suite.T(), "corr-002", found[0].ID)
+	assert.NotNil(suite.T(), found[0].ExecutionStartTime)
+
+	// 5. Test ListTimedOutCorrelations
+	timeoutAt := time.Now().Unix() - 10 // 10 seconds ago
+	corrRecord3 := &MessageCorrelationRecord{
+		ID:                 "corr-003",
+		ExecutionID:        execRecord.ExecutionID,
+		ExecutionStartTime: execRecord.StartTime,
+		StateMachineID:     execRecord.StateMachineID,
+		StateName:          "WaitState",
+		CorrelationKey:     "timeoutKey",
+		CorrelationValue:   "val",
+		CreatedAt:          time.Now().Unix() - 20,
+		TimeoutAt:          &timeoutAt,
+		Status:             "WAITING",
+	}
+	err = suite.repository.SaveMessageCorrelation(suite.ctx, corrRecord3)
+	require.NoError(suite.T(), err)
+
+	timedOut, err := suite.repository.ListTimedOutCorrelations(suite.ctx, time.Now().Unix())
+	require.NoError(suite.T(), err)
+	assert.True(suite.T(), len(timedOut) >= 1)
+
+	foundTimedOut := false
+	for _, t := range timedOut {
+		if t.ID == "corr-003" {
+			foundTimedOut = true
+			break
+		}
+	}
+	assert.True(suite.T(), foundTimedOut)
+
+	// 6. Test DeleteMessageCorrelation
+	err = suite.repository.DeleteMessageCorrelation(suite.ctx, "corr-001")
+	require.NoError(suite.T(), err)
+
+	_, err = suite.repository.GetMessageCorrelation(suite.ctx, "corr-001")
+	assert.Error(suite.T(), err)
+}
+
+func (suite *PostgresIntegrationTestSuite) TestFindWaitingCorrelations_Complexity() {
+	// First, we need an execution
+	now := time.Now().UTC().Truncate(time.Second)
+	execRecord := &ExecutionRecord{
+		ExecutionID:    "exec-msg-test-002",
+		StateMachineID: "sm-test-002",
+		Name:           "msg-test-execution-2",
+		Status:         "RUNNING",
+		StartTime:      &now,
+		CurrentState:   "WaitState",
+	}
+	err := suite.repository.SaveExecution(suite.ctx, execRecord)
+	require.NoError(suite.T(), err)
+
+	// Add correlations with complex values (JSONB)
+	val1 := map[string]interface{}{"a": 1.0, "b": "c"}
+	corr1 := &MessageCorrelationRecord{
+		ID:                 "corr-complex-1",
+		ExecutionID:        execRecord.ExecutionID,
+		ExecutionStartTime: execRecord.StartTime,
+		StateMachineID:     execRecord.StateMachineID,
+		StateName:          "WaitState",
+		CorrelationKey:     "complex",
+		CorrelationValue:   val1,
+		CreatedAt:          time.Now().Unix(),
+		Status:             "WAITING",
+	}
+	err = suite.repository.SaveMessageCorrelation(suite.ctx, corr1)
+	require.NoError(suite.T(), err)
+
+	// Filter by complex value
+	filter := &MessageCorrelationFilter{
+		CorrelationKey:   "complex",
+		CorrelationValue: val1,
+		Status:           "WAITING",
+	}
+	found, err := suite.repository.FindWaitingCorrelations(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), found, 1)
+	assert.Equal(suite.T(), "corr-complex-1", found[0].ID)
+
+	// Deserialize check
+	retVal := found[0].CorrelationValue.(map[string]interface{})
+	assert.Equal(suite.T(), 1.0, retVal["a"])
+	assert.Equal(suite.T(), "c", retVal["b"])
 }
 
 // Run the test suite

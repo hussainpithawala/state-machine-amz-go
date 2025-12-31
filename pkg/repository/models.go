@@ -42,6 +42,24 @@ func (j *JSONB) Scan(value interface{}) error {
 	return nil
 }
 
+// StateMachineModel represents the state_machines table
+type StateMachineModel struct {
+	ID          string    `gorm:"primaryKey;size:255;not null"`
+	Name        string    `gorm:"size:255;not null"`
+	Description string    `gorm:"type:text"`
+	Definition  string    `gorm:"type:text;not null"`
+	Type        string    `gorm:"size:50"`
+	Version     string    `gorm:"size:50;not null"`
+	Metadata    JSONB     `gorm:"type:jsonb;default:'{}'"`
+	CreatedAt   time.Time `gorm:"autoCreateTime"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime"`
+}
+
+// TableName specifies the table name for StateMachineModel
+func (StateMachineModel) TableName() string {
+	return "state_machines"
+}
+
 // ExecutionModel represents the executions table
 type ExecutionModel struct {
 	ExecutionID    string    `gorm:"primaryKey;size:255;not null"`
@@ -66,7 +84,7 @@ func (ExecutionModel) TableName() string {
 
 // BeforeCreate hook validates execution before creation
 func (e *ExecutionModel) BeforeCreate(tx *gorm.DB) error {
-	validStatuses := []string{"RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "ABORTED"}
+	validStatuses := []string{"RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "ABORTED", "PAUSED"}
 	for _, status := range validStatuses {
 		if e.Status == status {
 			return nil
@@ -100,13 +118,32 @@ func (StateHistoryModel) TableName() string {
 
 // BeforeCreate hook validates state history before creation
 func (s *StateHistoryModel) BeforeCreate(tx *gorm.DB) error {
-	validStatuses := []string{"SUCCEEDED", "FAILED", "RUNNING", "CANCELLED", "TIMED_OUT", "RETRYING"}
+	validStatuses := []string{"SUCCEEDED", "FAILED", "RUNNING", "CANCELLED", "TIMED_OUT", "RETRYING", "WAITING"}
 	for _, status := range validStatuses {
 		if s.Status == status {
 			return nil
 		}
 	}
 	return errors.New("invalid state history status")
+}
+
+// MessageCorrelationModel represents the message_correlations table
+type MessageCorrelationModel struct {
+	ID                 string    `gorm:"primaryKey;size:255;not null"`
+	ExecutionID        string    `gorm:"size:255;not null;index:idx_message_correlations_execution_id"`
+	ExecutionStartTime time.Time `gorm:"not null"`
+	StateMachineID     string    `gorm:"size:255;not null"`
+	StateName          string    `gorm:"size:255;not null"`
+	CorrelationKey     string    `gorm:"size:255;not null;index:idx_message_correlations_correlation_key"`
+	CorrelationValue   JSONB     `gorm:"type:jsonb;not null;index:idx_message_correlations_key_value_status"`
+	CreatedAt          int64     `gorm:"not null"`
+	TimeoutAt          *int64    `gorm:"index:idx_message_correlations_timeout_at"`
+	Status             string    `gorm:"size:50;not null;default:'WAITING';index:idx_message_correlations_status;index:idx_message_correlations_key_value_status"`
+}
+
+// TableName specifies the table name for MessageCorrelationModel
+func (MessageCorrelationModel) TableName() string {
+	return "message_correlations"
 }
 
 // ExecutionStatisticsModel represents aggregated execution statistics

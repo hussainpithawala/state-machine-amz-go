@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	// Third-party imports
 	"sigs.k8s.io/yaml"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/errors"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/factory"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 )
 
 // StateMachine represents an Amazon States Language state machine
@@ -26,6 +29,7 @@ type StateMachine struct {
 	Version        string                  `json:"Version,omitempty"`
 
 	// Internal fields
+	ID        string
 	validator validator.Validator
 	createdAt time.Time
 }
@@ -96,12 +100,17 @@ func New(definition []byte, isJson bool) (*StateMachine, error) {
 		return nil, fmt.Errorf("state machine validation failed: %w", err)
 	}
 
+	sm.ID = uuid.New().String()
 	sm.createdAt = time.Now()
 
 	return sm, nil
 }
 
 // Validate validates the state machine definition
+func (sm *StateMachine) GetID() string {
+	return "" // Base statemachine doesn't have an ID
+}
+
 func (sm *StateMachine) Validate() error {
 	if sm.validator == nil {
 		sm.validator = validator.NewStateMachineValidator()
@@ -209,6 +218,14 @@ func (sm *StateMachine) RunExecution(ctx context.Context, execCtx *execution.Exe
 }
 
 // GetExecutionSummary returns a summary of the state machine
+func (sm *StateMachine) FindWaitingExecutionsByCorrelation(ctx context.Context, correlationKey string, correlationValue interface{}) ([]*repository.ExecutionRecord, error) {
+	return nil, fmt.Errorf("in-memory state machine does not support repository-based correlation search")
+}
+
+func (sm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
+	return sm.RunExecution(ctx, execCtx)
+}
+
 func (sm *StateMachine) GetExecutionSummary() map[string]interface{} {
 	summary := map[string]interface{}{
 		"startAt":        sm.StartAt,
@@ -268,6 +285,24 @@ func (sm *StateMachine) MarshalJSON() ([]byte, error) {
 	delete(result, "createdAt")
 
 	return json.Marshal(result)
+}
+
+// ToRecord converts the state machine to a repository record
+func (sm *StateMachine) ToRecord() (*repository.StateMachineRecord, error) {
+	definition, err := json.Marshal(sm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal state machine definition: %w", err)
+	}
+
+	return &repository.StateMachineRecord{
+		ID:          sm.ID,
+		Name:        sm.ID, // Using ID as name if not otherwise specified
+		Description: sm.Comment,
+		Definition:  string(definition),
+		Version:     sm.Version,
+		CreatedAt:   sm.createdAt,
+		UpdatedAt:   time.Now(),
+	}, nil
 }
 
 // ExecutionOption configures execution options
