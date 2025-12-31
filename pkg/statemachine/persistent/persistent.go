@@ -13,6 +13,7 @@ import (
 )
 
 const FAILED = "FAILED"
+const PAUSED = "PAUSED"
 
 // StateMachine Persistence.StateMachine represents a state machine with an optional repositoryManager
 type StateMachine struct {
@@ -167,7 +168,7 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 			}
 
 			// Pause the execution
-			execCtx.Status = "PAUSED"
+			execCtx.Status = PAUSED
 			execCtx.CurrentState = currentStateName
 			pm.persistExecution(ctx, execCtx)
 
@@ -282,7 +283,7 @@ func (pm *StateMachine) FindWaitingExecutionsByCorrelation(ctx context.Context, 
 
 func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
 	// Ensure execution is in a valid state for resumption
-	if execCtx.Status != "PAUSED" && execCtx.Status != "RUNNING" {
+	if execCtx.Status != PAUSED && execCtx.Status != "RUNNING" {
 		return nil, fmt.Errorf("cannot resume execution with status: %s", execCtx.Status)
 	}
 
@@ -293,7 +294,7 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 	}
 
 	// Update status to RUNNING if it was PAUSED
-	if execCtx.Status == "PAUSED" {
+	if execCtx.Status == PAUSED {
 		execCtx.Status = "RUNNING"
 		pm.persistExecution(ctx, execCtx)
 	}

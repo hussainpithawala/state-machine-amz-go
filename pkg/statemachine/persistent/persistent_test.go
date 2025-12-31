@@ -435,7 +435,7 @@ func TestRunExecution_MessageState_PausesAndResumes(t *testing.T) {
 	result, err := pm.RunExecution(ctx, execCtx.Input, execCtx)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, "PAUSED", result.Status)
+	require.Equal(t, PAUSED, result.Status)
 	require.Equal(t, "WaitForMessage", result.CurrentState)
 
 	// Verify correlation was saved

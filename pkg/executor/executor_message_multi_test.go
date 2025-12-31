@@ -42,7 +42,7 @@ func (m *mockRepository) GetExecution(ctx context.Context, id string) (*reposito
 	return &repository.ExecutionRecord{
 		ExecutionID:    id,
 		StateMachineID: "sm-repo-1",
-		Status:         "PAUSED",
+		Status:         executor.PAUSED,
 		CurrentState:   "State1",
 	}, nil
 }
@@ -97,7 +97,7 @@ func TestMessage_MultipleExecutions(t *testing.T) {
 	exec1 := &execution.Execution{
 		ID:             "exec-1",
 		StateMachineID: "sm-1",
-		Status:         "PAUSED",
+		Status:         executor.PAUSED,
 		Metadata: map[string]interface{}{
 			"correlation_data": map[string]interface{}{
 				"correlation_key":   "orderId",
@@ -108,7 +108,7 @@ func TestMessage_MultipleExecutions(t *testing.T) {
 	exec2 := &execution.Execution{
 		ID:             "exec-2",
 		StateMachineID: "sm-1",
-		Status:         "PAUSED",
+		Status:         executor.PAUSED,
 		Metadata: map[string]interface{}{
 			"correlation_data": map[string]interface{}{
 				"correlation_key":   "orderId",

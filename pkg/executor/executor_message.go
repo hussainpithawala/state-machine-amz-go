@@ -9,6 +9,8 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
 )
 
+const PAUSED = "PAUSED"
+
 // MessageRequest represents an incoming message to resume execution
 type MessageRequest struct {
 	CorrelationKey   string      `json:"correlation_key"`
@@ -177,7 +179,7 @@ func (executor *BaseExecutor) Message(ctx context.Context, request *MessageReque
 // findWaitingExecutions finds executions waiting for a message with the given correlation
 func (e *BaseExecutor) findWaitingExecutions(ctx context.Context, correlationKey string, correlationValue interface{}) ([]*execution.Execution, error) {
 	// Query the persistence layer for executions with:
-	// 1. Status = "PAUSED"
+	// 1. Status = PAUSED
 	// 2. CurrentState has a matching correlation key/value
 
 	// This is a simplified implementation - you'll need to extend your repository
@@ -188,7 +190,7 @@ func (e *BaseExecutor) findWaitingExecutions(ctx context.Context, correlationKey
 	var waitingExecutions []*execution.Execution
 
 	for _, exec := range e.executions {
-		if exec.Status == "PAUSED" {
+		if exec.Status == PAUSED {
 			// Check if the current state has matching correlation
 			if e.matchesCorrelation(exec, correlationKey, correlationValue) {
 				waitingExecutions = append(waitingExecutions, exec)
@@ -277,8 +279,7 @@ func (e *BaseExecutor) ResumeExecution(ctx context.Context, sm StateMachineInter
 	if execCtx == nil {
 		return nil, fmt.Errorf("execution context cannot be nil")
 	}
-
-	if execCtx.Status != "PAUSED" && execCtx.Status != "RUNNING" {
+	if execCtx.Status != PAUSED && execCtx.Status != "RUNNING" {
 		return nil, fmt.Errorf("cannot resume execution in status: %s", execCtx.Status)
 	}
 
@@ -302,7 +303,7 @@ func (e *BaseExecutor) PauseExecution(ctx context.Context, execCtx *execution.Ex
 	}
 
 	// Update execution status
-	execCtx.Status = "PAUSED"
+	execCtx.Status = PAUSED
 
 	// Store correlation data in metadata
 	if execCtx.Metadata == nil {
@@ -323,7 +324,7 @@ func (e *BaseExecutor) ListWaitingExecutions(ctx context.Context) ([]*execution.
 	var waiting []*execution.Execution
 
 	for _, exec := range e.executions {
-		if exec.Status == "PAUSED" {
+		if exec.Status == PAUSED {
 			waiting = append(waiting, exec)
 		}
 	}
@@ -350,7 +351,7 @@ func (e *BaseExecutor) TimeoutWaitingExecutions(ctx context.Context) error {
 	now := time.Now()
 
 	for _, exec := range e.executions {
-		if exec.Status != "PAUSED" {
+		if exec.Status != PAUSED {
 			continue
 		}
 
