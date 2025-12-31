@@ -3,7 +3,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -229,12 +228,12 @@ func (r *GormPostgresRepository) SaveStateMachine(ctx context.Context, sm *State
 // GetStateMachine retrieves a state machine by ID
 func (r *GormPostgresRepository) GetStateMachine(ctx context.Context, stateMachineID string) (*StateMachineRecord, error) {
 	var model StateMachineModel
-	err := r.db.WithContext(ctx).First(&model, "id = ?", stateMachineID).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("state machine '%s' not found", stateMachineID)
-		}
-		return nil, err
+	result := r.db.WithContext(ctx).Limit(1).Find(&model, "id = ?", stateMachineID)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("state machine '%s' not found", stateMachineID)
 	}
 	return fromStateMachineModel(&model), nil
 }
@@ -266,13 +265,15 @@ func (r *GormPostgresRepository) GetExecution(ctx context.Context, executionID s
 
 	result := r.db.WithContext(ctx).
 		Where("execution_id = ?", executionID).
-		First(&model)
+		Limit(1).
+		Find(&model)
 
 	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("execution not found: %s", executionID)
-		}
 		return nil, fmt.Errorf("failed to get execution: %w", result.Error)
+	}
+
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("execution not found: %s", executionID)
 	}
 
 	return fromExecutionModel(&model), nil
@@ -739,12 +740,12 @@ func (r *GormPostgresRepository) SaveMessageCorrelation(ctx context.Context, rec
 // GetMessageCorrelation retrieves a correlation record by ID
 func (r *GormPostgresRepository) GetMessageCorrelation(ctx context.Context, id string) (*MessageCorrelationRecord, error) {
 	var model MessageCorrelationModel
-	err := r.db.WithContext(ctx).First(&model, "id = ?", id).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("correlation record not found: %s", id)
-		}
-		return nil, err
+	result := r.db.WithContext(ctx).Limit(1).Find(&model, "id = ?", id)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("correlation record not found: %s", id)
 	}
 	return fromMessageCorrelationModel(&model), nil
 }

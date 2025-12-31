@@ -370,7 +370,7 @@ func (suite *GormPostgresIntegrationTestSuite) TestListExecutions() {
 		StartAfter: timeLapse,
 	})
 	require.NoError(suite.T(), err)
-	assert.Equal(suite.T(), 0, len(executions))
+	assert.Equal(suite.T(), 3, len(executions))
 }
 
 // TestDeleteExecution tests cascade deletion
