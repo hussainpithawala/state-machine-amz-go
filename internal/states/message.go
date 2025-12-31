@@ -56,7 +56,7 @@ type MessageStateResult struct {
 }
 
 // NewMessageState creates a new message state
-func NewMessageState(name string, correlationKey string) *MessageState {
+func NewMessageState(name, correlationKey string) *MessageState {
 	return &MessageState{
 		BaseState: BaseState{
 			Name: name,
@@ -69,7 +69,7 @@ func NewMessageState(name string, correlationKey string) *MessageState {
 // Execute implements the State interface
 // For pre-message phase: creates correlation data and returns WAITING status
 // For post-message phase: processes received message and continues
-func (s *MessageState) Execute(ctx context.Context, input interface{}) (interface{}, *string, error) {
+func (s *MessageState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	processor := GetPathProcessor()
 
 	// Apply InputPath if specified
@@ -93,7 +93,7 @@ func (s *MessageState) Execute(ctx context.Context, input interface{}) (interfac
 }
 
 // executePreMessage handles the pre-message phase
-func (s *MessageState) executePreMessage(ctx context.Context, originalInput, effectiveInput interface{}, processor PathProcessor) (interface{}, *string, error) {
+func (s *MessageState) executePreMessage(ctx context.Context, originalInput, effectiveInput interface{}, processor PathProcessor) (result interface{}, nextState *string, err error) {
 	// Extract correlation value from input
 	correlationValue := effectiveInput
 	if s.CorrelationValuePath != nil {
@@ -105,7 +105,7 @@ func (s *MessageState) executePreMessage(ctx context.Context, originalInput, eff
 	}
 
 	// Create the result with correlation data
-	result := &MessageStateResult{
+	messageResult := &MessageStateResult{
 		Status: "WAITING",
 		CorrelationData: &MessageStateData{
 			CorrelationKey:   s.CorrelationKey,
@@ -118,12 +118,12 @@ func (s *MessageState) executePreMessage(ctx context.Context, originalInput, eff
 	var finalResult interface{}
 	if s.ResultPath != nil {
 		var err error
-		finalResult, err = processor.ApplyResultPath(originalInput, result, s.ResultPath)
+		finalResult, err = processor.ApplyResultPath(originalInput, messageResult, s.ResultPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to apply ResultPath: %w", err)
 		}
 	} else {
-		finalResult = result
+		finalResult = messageResult
 	}
 
 	// Apply OutputPath
@@ -140,14 +140,14 @@ func (s *MessageState) executePreMessage(ctx context.Context, originalInput, eff
 }
 
 // executePostMessage handles the post-message phase (after message is received)
-func (s *MessageState) executePostMessage(ctx context.Context, originalInput, effectiveInput interface{}, messageData *MessageData, processor PathProcessor) (interface{}, *string, error) {
+func (s *MessageState) executePostMessage(ctx context.Context, originalInput, effectiveInput interface{}, messageData *MessageData, processor PathProcessor) (result interface{}, nextState *string, err error) {
 	// Process the received message data
-	result := messageData.Data
+	messageResult := messageData.Data
 
 	// If MessagePath is specified, place the message at that path
 	if s.MessagePath != nil && *s.MessagePath != "$" {
 		// Merge message data into the original input at the specified path
-		result = effectiveInput
+		messageResult = effectiveInput
 		// TODO: Implement path-based merging when JSONPath processor supports it
 	}
 
@@ -155,12 +155,12 @@ func (s *MessageState) executePostMessage(ctx context.Context, originalInput, ef
 	var finalResult interface{}
 	if s.ResultPath != nil {
 		var err error
-		finalResult, err = processor.ApplyResultPath(originalInput, result, s.ResultPath)
+		finalResult, err = processor.ApplyResultPath(originalInput, messageResult, s.ResultPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to apply ResultPath: %w", err)
 		}
 	} else {
-		finalResult = result
+		finalResult = messageResult
 	}
 
 	// Apply OutputPath
@@ -178,13 +178,13 @@ func (s *MessageState) executePostMessage(ctx context.Context, originalInput, ef
 
 // checkForReceivedMessage checks if the input contains a received message
 // This is used to determine if we're in post-message phase
-func (s *MessageState) checkForReceivedMessage(input interface{}) (*MessageData, bool) {
+func (s *MessageState) checkForReceivedMessage(input interface{}) (messageData *MessageData, isResume bool) {
 	// Check if input is a map containing message metadata
 	if inputMap, ok := input.(map[string]interface{}); ok {
 		if msgData, exists := inputMap["__received_message__"]; exists {
 			// Try to parse as MessageData
 			if msgMap, ok := msgData.(map[string]interface{}); ok {
-				messageData := &MessageData{
+				messageData = &MessageData{
 					CorrelationKey: s.CorrelationKey,
 				}
 
@@ -207,7 +207,7 @@ func (s *MessageState) checkForReceivedMessage(input interface{}) (*MessageData,
 }
 
 // Validate validates the message state configuration
-func (s *MessageState) Validate() error {
+func (s *MessageState) Validate() (err error) {
 	if err := s.BaseState.Validate(); err != nil {
 		return err
 	}
@@ -240,17 +240,7 @@ func (s *MessageState) Validate() error {
 	return nil
 }
 
-// MarshalJSON implements custom JSON marshaling
-//func (s *MessageState) MarshalJSON() ([]byte, error) {
-//	type Alias MessageState
-//	return json.Marshal(&struct {
-//		*Alias
-//	}{
-//		Alias: (*Alias)(s),
-//	})
-//}
-
-func (s *MessageState) MarshalJSON() ([]byte, error) {
+func (s *MessageState) MarshalJSON() (data []byte, err error) {
 	// Define only the custom fields (not BaseState!)
 	customFields := struct {
 		CorrelationKey       string      `json:"CorrelationKey"`
@@ -272,8 +262,8 @@ func (s *MessageState) MarshalJSON() ([]byte, error) {
 }
 
 // GetNextStates returns all possible next states
-func (s *MessageState) GetNextStates() []string {
-	nextStates := s.BaseState.GetNextStates()
+func (s *MessageState) GetNextStates() (nextStates []string) {
+	nextStates = s.BaseState.GetNextStates()
 
 	// Add catch destinations
 	for _, catch := range s.Catch {
@@ -284,16 +274,16 @@ func (s *MessageState) GetNextStates() []string {
 }
 
 // GetCorrelationKey returns the correlation key
-func (s *MessageState) GetCorrelationKey() string {
+func (s *MessageState) GetCorrelationKey() (key string) {
 	return s.CorrelationKey
 }
 
 // GetTimeoutSeconds returns the timeout in seconds
-func (s *MessageState) GetTimeoutSeconds() *int {
+func (s *MessageState) GetTimeoutSeconds() (timeout *int) {
 	return s.TimeoutSeconds
 }
 
 // IsWaitingState returns true to indicate this is a waiting state
-func (s *MessageState) IsWaitingState() bool {
+func (s *MessageState) IsWaitingState() (isWaiting bool) {
 	return true
 }
