@@ -194,6 +194,11 @@ func (pm *Manager) CountExecutions(ctx context.Context, filter *ExecutionFilter)
 	return pm.repository.CountExecutions(ctx, filter)
 }
 
+// GetExecutionOutput retrieves output from an execution (final or specific state)
+func (pm *Manager) GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error) {
+	return pm.repository.GetExecutionOutput(ctx, executionID, stateName)
+}
+
 // Helper function to generate unique history IDs
 func generateHistoryID(executionID, stateName string, timestamp time.Time) string {
 	return fmt.Sprintf("%s-%s-%d", executionID, stateName, timestamp.UnixNano())

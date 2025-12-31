@@ -1126,3 +1126,57 @@ func (ps *PostgresRepository) RefreshStatistics(ctx context.Context) error {
 	}
 	return nil
 }
+
+// GetExecutionOutput retrieves output from an execution (final or specific state)
+// If stateName is empty, returns the final execution output
+// If stateName is provided, returns the output of that specific state
+func (ps *PostgresRepository) GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error) {
+	if stateName == "" {
+		// Get final execution output
+		query := `SELECT output FROM executions WHERE execution_id = $1`
+		var outputJSON []byte
+		err := ps.db.QueryRowContext(ctx, query, executionID).Scan(&outputJSON)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("execution '%s' not found", executionID)
+			}
+			return nil, fmt.Errorf("failed to get execution output: %w", err)
+		}
+
+		if len(outputJSON) == 0 || string(outputJSON) == NULL {
+			return nil, nil
+		}
+
+		var output interface{}
+		if err := json.Unmarshal(outputJSON, &output); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal execution output: %w", err)
+		}
+		return output, nil
+	}
+
+	// Get specific state output (most recent if state was executed multiple times)
+	query := `
+		SELECT output FROM state_history
+		WHERE execution_id = $1 AND state_name = $2
+		ORDER BY sequence_number DESC
+		LIMIT 1
+	`
+	var outputJSON []byte
+	err := ps.db.QueryRowContext(ctx, query, executionID, stateName).Scan(&outputJSON)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("state '%s' not found in execution '%s'", stateName, executionID)
+		}
+		return nil, fmt.Errorf("failed to get state output: %w", err)
+	}
+
+	if len(outputJSON) == 0 || string(outputJSON) == NULL {
+		return nil, nil
+	}
+
+	var output interface{}
+	if err := json.Unmarshal(outputJSON, &output); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal state output: %w", err)
+	}
+	return output, nil
+}

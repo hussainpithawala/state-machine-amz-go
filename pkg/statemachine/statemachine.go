@@ -309,12 +309,33 @@ func (sm *StateMachine) ToRecord() (*repository.StateMachineRecord, error) {
 type ExecutionOption func(*ExecutionConfig)
 
 type ExecutionConfig struct {
-	Name string
+	Name              string
+	SourceExecutionID string                                 // Execution ID to chain from
+	SourceStateName   string                                 // Optional: specific state to get output from
+	InputTransformer  func(interface{}) (interface{}, error) // Optional: transform source output to input
 }
 
 // WithExecutionName sets the execution name
 func WithExecutionName(name string) ExecutionOption {
 	return func(c *ExecutionConfig) {
 		c.Name = name
+	}
+}
+
+// WithSourceExecution configures execution to use output from another execution
+// If stateName is provided, uses that state's output; otherwise uses final execution output
+func WithSourceExecution(executionID string, stateName ...string) ExecutionOption {
+	return func(c *ExecutionConfig) {
+		c.SourceExecutionID = executionID
+		if len(stateName) > 0 && stateName[0] != "" {
+			c.SourceStateName = stateName[0]
+		}
+	}
+}
+
+// WithInputTransformer sets a transformation function for the chained input
+func WithInputTransformer(transformer func(interface{}) (interface{}, error)) ExecutionOption {
+	return func(c *ExecutionConfig) {
+		c.InputTransformer = transformer
 	}
 }

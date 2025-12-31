@@ -9,6 +9,24 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
+## 🆕 What's New in v1.0.8
+
+**Execution Chaining** - Chain multiple state machine executions together to build sophisticated multi-stage workflows!
+
+```go
+// Execute State Machine A
+execA, _ := stateMachineA.Execute(ctx, inputA)
+
+// Chain State Machine B using A's output
+execB, _ := stateMachineB.Execute(ctx, nil,
+    statemachine.WithSourceExecution(execA.ID),
+)
+```
+
+Build modular, composable workflows by connecting smaller state machines. Perfect for data pipelines, microservices orchestration, and event-driven architectures.
+
+**[📖 Read the full announcement →](releasenote.md)**
+
 ## ✨ Features
 
 - 🚀 **AWS Step Functions Compatible** - Use identical state definitions as AWS Step Functions ([Amazon States Language](https://states-language.net/))
@@ -19,6 +37,7 @@ A powerful, production-ready state machine implementation for Go that's fully co
 - ⏱️ **Advanced Control** - Timeouts, heartbeats, and execution tracking
 - 🔄 **All State Types** - Task, Parallel, Choice, Wait, Pass, Succeed, Fail, Map, Message
 - 📩 **Message Correlation** - Pause workflows and resume with external asynchronous messages
+- 🔗 **Execution Chaining** - Chain multiple state machines together for complex multi-stage workflows
 - 🎯 **Clean Architecture** - Separation between state machine logic and persistence
 - 📊 **Execution History** - Complete audit trail with state-by-state tracking
 - 🧪 **Test-Friendly** - Easy mocking and comprehensive testing support
@@ -402,6 +421,52 @@ response, err := exec.Message(ctx, &executor.MessageRequest{
 })
 ```
 
+### Execution Chaining (NEW in v1.0.8)
+
+Build complex multi-stage workflows by chaining state machine executions together!
+
+**Chain using final output:**
+```go
+// Execute State Machine A
+execA, _ := stateMachineA.Execute(ctx, inputA)
+
+// Chain State Machine B using A's final output
+execB, _ := stateMachineB.Execute(ctx, nil,
+    statemachine.WithSourceExecution(execA.ID),
+)
+```
+
+**Chain using specific state output:**
+```go
+// Use output from a specific state
+execB, _ := stateMachineB.Execute(ctx, nil,
+    statemachine.WithSourceExecution(execA.ID, "ProcessData"),
+)
+```
+
+**Chain with transformation:**
+```go
+// Apply custom transformation to the output
+execB, _ := stateMachineB.Execute(ctx, nil,
+    statemachine.WithSourceExecution(execA.ID),
+    statemachine.WithInputTransformer(func(output interface{}) (interface{}, error) {
+        data := output.(map[string]interface{})
+        return map[string]interface{}{
+            "processedData": data["result"],
+            "timestamp": time.Now(),
+        }, nil
+    }),
+)
+```
+
+**Use Cases:**
+- Multi-stage data processing pipelines (Ingest → Validate → Enrich → Store)
+- Event-driven workflow orchestration
+- Microservices choreography
+- ETL workflows
+
+**[📖 Full Documentation](examples/chained_postgres_gorm/CHAINED_EXECUTION_README.md)**
+
 ## 📊 Execution Tracking
 
 ### Query Execution History
@@ -542,6 +607,8 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] Statistics and analytics
 - [x] Message Pause and Resume (MessageState)
 - [x] GORM & PostgreSQL correlation support
+- [x] **Execution Chaining (v1.0.8)** - Chain state machines together
+- [ ] Visual workflow builder
 - [ ] Redis persistence backend
 - [ ] DynamoDB persistence backend
 - [ ] Distributed execution support

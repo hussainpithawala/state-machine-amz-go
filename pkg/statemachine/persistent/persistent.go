@@ -61,6 +61,21 @@ func NewFromDefnId(ctx context.Context, stateMachineID string, manager *reposito
 func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...statemachine2.ExecutionOption) (*execution.Execution, error) {
 	var execCtx *execution.Execution
 
+	// Process execution options
+	config := &statemachine2.ExecutionConfig{}
+	for _, opt := range opts {
+		opt(config)
+	}
+
+	// Handle chained executions - derive input from source execution if specified
+	if config.SourceExecutionID != "" {
+		derivedInput, err := pm.deriveInputFromExecution(ctx, config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive input from source execution: %w", err)
+		}
+		input = derivedInput
+	}
+
 	// If input is already an Execution context, use it
 	if existingExec, ok := input.(*execution.Execution); ok {
 		execCtx = existingExec
@@ -76,14 +91,8 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 	} else {
 		// Create execution context
 		execName := fmt.Sprintf("execution-%d", time.Now().Unix())
-		if len(opts) > 0 {
-			config := &statemachine2.ExecutionConfig{}
-			for _, opt := range opts {
-				opt(config)
-			}
-			if config.Name != "" {
-				execName = config.Name
-			}
+		if config.Name != "" {
+			execName = config.Name
 		}
 
 		execCtx = execution.NewContext(execName, pm.statemachine.StartAt, input)
@@ -94,6 +103,22 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 	pm.persistExecution(ctx, execCtx)
 
 	return pm.RunExecution(ctx, input, execCtx)
+}
+
+// deriveInputFromExecution retrieves output from a source execution and applies optional transformation
+func (pm *StateMachine) deriveInputFromExecution(ctx context.Context, config *statemachine2.ExecutionConfig) (interface{}, error) {
+	// Get output from the source execution
+	output, err := pm.repositoryManager.GetExecutionOutput(ctx, config.SourceExecutionID, config.SourceStateName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply transformation if provided
+	if config.InputTransformer != nil {
+		return config.InputTransformer(output)
+	}
+
+	return output, nil
 }
 
 // RunExecution executes the state machine with repositoryManager hooks

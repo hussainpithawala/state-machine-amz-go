@@ -111,6 +111,9 @@ type Repository interface {
 
 	// GetStateMachine retrieves a state machine by ID
 	GetStateMachine(ctx context.Context, stateMachineID string) (*StateMachineRecord, error)
+
+	// GetExecutionOutput retrieves output from an execution (final or specific state)
+	GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error)
 }
 
 // ExtendedRepository defines additional repository capabilities
