@@ -1,3 +1,109 @@
+# Release v1.0.7 - MessageState Support and Workflow Resumption
+
+**Release Date**: December 31, 2025  
+**Branch**: `development` → `master`
+
+We are excited to announce **v1.0.7**, which introduces a major new feature: **`MessageState`**. This release enables workflows to pause execution and wait for external asynchronous messages, making it perfect for human-in-the-loop processes, external service callbacks, and multi-stage approval workflows.
+
+---
+
+## 🎉 What's New
+
+### 1. `MessageState` Support
+
+Workflows can now include states that wait for an external message before proceeding.
+
+**Key Features:**
+- **Pause & Persistence**: Automatically saves execution state and pauses when a `MessageState` is reached.
+- **Correlation**: Uses configurable `CorrelationKey` and `CorrelationValue` (with JSONPath support) to match incoming messages to waiting executions.
+- **Timeouts**: Built-in support for message timeouts with error handling via `Catch` rules.
+
+**Example Definition:**
+```json
+{
+  "WaitForPayment": {
+    "Type": "Message",
+    "CorrelationKey": "orderId",
+    "CorrelationValuePath": "$.orderId",
+    "TimeoutSeconds": 3600,
+    "Next": "ProcessOrder",
+    "Catch": [
+      {
+        "ErrorEquals": ["States.Timeout"],
+        "Next": "HandleTimeout"
+      }
+    ]
+  }
+}
+```
+
+### 2. Powerful Resumption API
+
+The `BaseExecutor` has been enhanced to handle incoming messages and resume the correct workflow executions automatically.
+
+- **Dynamic Loading**: Automatically loads the appropriate state machine definition from the repository if not already in memory.
+- **Registry Support**: Intelligent lookup of task handlers (registries) based on the state machine being resumed.
+- **Multi-Resume**: Support for resuming multiple executions waiting on the same correlation (e.g., broadcast events).
+
+```go
+// Resume an execution with an external message
+response, err := executor.Message(ctx, &executor.MessageRequest{
+    CorrelationKey:   "orderId",
+    CorrelationValue: "ORD-123",
+    Data:             map[string]interface{}{"paymentStatus": "SUCCESS"},
+})
+```
+
+### 3. Repository Enhancements
+
+Both PostgreSQL and GORM repositories have been updated to support message correlation records.
+
+- **PostgreSQL**: Optimized raw SQL queries for correlation management.
+- **GORM**: Full model support for `MessageCorrelation` with auto-migration.
+- **Housekeeping**: Automatic status updates for correlations (WAITING -> RECEIVED).
+
+### 4. Code Quality & Performance
+
+- **Reduced Complexity**: Significant refactoring of the `Message` and `FindWaitingCorrelations` methods to improve maintainability.
+- **Robustness**: Improved input handling in the persistent state machine to prevent JSONPath extraction errors when passing existing execution contexts.
+- **Type Safety**: Introduced constants for execution statuses (e.g., `PAUSED`, `WAITING`).
+
+---
+
+## 🐛 Bug Fixes
+
+- ✅ Fixed `PathProcessor` errors when `*execution.Execution` was passed as input to `Execute`.
+- ✅ Resolved issues where workflows would remain in `RUNNING` status after successful resumption.
+- ✅ Fixed critical bug in `TaskState` JSON marshaling where the `Resource` field was lost during persistence.
+- ✅ Corrected multiple linting issues (`gocritic`, `goconst`, `gocyclo`).
+
+---
+
+## 🚀 Migration Guide (v1.0.6 → v1.0.7)
+
+### Database Update
+If using PostgreSQL or GORM, run `Initialize()` to update your schema:
+```go
+manager.Initialize(ctx) // Automatically creates message_correlations table
+```
+
+### API Update
+The `executor.Message` method signature has changed to be more intuitive:
+**Before:**
+`Message(ctx, sm, request)`
+**After:**
+`Message(ctx, request)` (The executor now finds the state machine automatically).
+
+---
+
+## 📚 New Examples
+
+Check out the new examples demonstrating message pause and resume:
+- `examples/postgres_messages/main.go`
+- `examples/postgres_gorm_messages/main.go`
+
+---
+
 # Release v1.0.4 - Persistent State Machine with PostgreSQL & GORM
 
 **Release Date**: December 14, 2024  
