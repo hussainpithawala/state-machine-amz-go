@@ -302,6 +302,14 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 	return pm.RunExecution(ctx, execCtx.Input, execCtx)
 }
 
+func (pm *StateMachine) GetRepositoryManager() *repository.Manager {
+	return pm.repositoryManager
+}
+
+func (pm *StateMachine) GetID() string {
+	return pm.stateMachineID
+}
+
 func (pm *StateMachine) GetStartAt() string {
 	return pm.statemachine.GetStartAt()
 }

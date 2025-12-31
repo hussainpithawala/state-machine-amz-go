@@ -91,6 +91,13 @@ func NewPersistenceManager(config *Config) (*Manager, error) {
 	}, nil
 }
 
+// NewManagerWithRepository creates a new persistence manager with a specific repository (mainly for testing)
+func NewManagerWithRepository(repo Repository) *Manager {
+	return &Manager{
+		repository: repo,
+	}
+}
+
 // Initialize initializes the persistence layer
 func (pm *Manager) Initialize(ctx context.Context) error {
 	return pm.repository.Initialize(ctx)

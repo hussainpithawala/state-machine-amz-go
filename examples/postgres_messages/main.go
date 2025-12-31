@@ -15,15 +15,17 @@ import (
 
 func main() {
 	fmt.Println("=== PostgreSQL Message Pause and Resume Example ===")
-
-	if err := runMessageWorkflowExample(); err != nil {
+	registryMap := make(executor.RegistryMap)
+	stateMachineId := "msg-sm-" + fmt.Sprintf("%d", time.Now().Unix())
+	registryMap[stateMachineId] = prepareStateRegistry()
+	if err := runMessageWorkflowExample(&registryMap, stateMachineId); err != nil {
 		log.Fatal(err)
 	}
 
 	fmt.Println("\n=== Example completed successfully ===")
 }
 
-func runMessageWorkflowExample() error {
+func runMessageWorkflowExample(registryMap *executor.RegistryMap, stateMachineId string) error {
 	ctx := context.Background()
 
 	// 1. Define workflow with a Message state
@@ -48,6 +50,9 @@ States:
     Resource: "arn:aws:states:::lambda:function:final-task"
     End: true
 `
+	// 1. state machine id
+
+	smID := stateMachineId
 
 	// 2. Create persistence manager
 	persistenceManager, err := getPersistenceManager(ctx)
@@ -57,14 +62,20 @@ States:
 	defer persistenceManager.Close()
 
 	// 3. Create persistent state machine
-	smID := "msg-sm-" + fmt.Sprintf("%d", time.Now().Unix())
+
 	pm, err := persistent.New([]byte(yamlContent), false, smID, persistenceManager)
 	if err != nil {
 		return fmt.Errorf("failed to create persistent state machine: %w", err)
 	}
 
+	// Save state machine definition to repository so it can be loaded during resumption
+	if err := pm.SaveDefinition(ctx); err != nil {
+		return fmt.Errorf("failed to save state machine definition: %w", err)
+	}
+
 	// 4. Create executor and register handlers
 	exec := executor.NewBaseExecutor()
+	exec.SetRepositoryManager(persistenceManager)
 
 	exec.RegisterGoFunction("initial-task", func(ctx context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Executing initial task...")
@@ -124,9 +135,11 @@ States:
 		},
 	}
 
-	// We need to provide the state machine to the Message method so it can resume
+	// We don't need to provide the state machine to the Message method anymore
 	fmt.Println("   Sending message to resume execution...")
-	response, err := exec.Message(ctx, pm, messageRequest)
+	secondExecutor := executor.BaseExecutor{}
+	secondExecutor.SetRepositoryManager(persistenceManager)
+	response, err := secondExecutor.Message(ctx, messageRequest, registryMap)
 	if err != nil {
 		fmt.Printf("   Note: Message processing returned: %v\n", err)
 	}
@@ -155,6 +168,27 @@ States:
 	fmt.Println("   ✓ Execution successfully resumed and completed.")
 
 	return nil
+}
+
+func prepareStateRegistry() *executor.StateRegistry {
+	// 4. Create executor and register handlers
+	stateRegisry := executor.NewStateRegistry()
+	stateRegisry.RegisterTaskHandler("initial-task", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Executing initial task...")
+		inputMap := input.(map[string]interface{})
+		return map[string]interface{}{
+			"orderId": inputMap["orderId"],
+			"status":  "INITIAL_DONE",
+		}, nil
+	})
+	stateRegisry.RegisterTaskHandler("final-task", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Executing final task...")
+		return map[string]interface{}{
+			"status": "COMPLETED",
+		}, nil
+	})
+
+	return stateRegisry
 }
 
 func getPersistenceManager(ctx context.Context) (*repository.Manager, error) {

@@ -245,7 +245,7 @@ func TestExecutor_Message(t *testing.T) {
 
 	// In actual implementation, this would find the paused execution
 	// and resume it with the message data
-	response, err := exec.Message(ctx, nil, messageRequest)
+	response, err := exec.Message(ctx, messageRequest, nil)
 
 	// Expected behavior when no matching execution is found
 	if err == nil && response != nil {
@@ -291,7 +291,7 @@ func TestExecutor_MessageValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := exec.Message(ctx, nil, tt.request)
+			_, err := exec.Message(ctx, tt.request, nil)
 
 			if tt.expectError {
 				assert.Error(t, err)

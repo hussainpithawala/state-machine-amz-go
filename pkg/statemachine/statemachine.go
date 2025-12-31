@@ -107,6 +107,10 @@ func New(definition []byte, isJson bool) (*StateMachine, error) {
 }
 
 // Validate validates the state machine definition
+func (sm *StateMachine) GetID() string {
+	return "" // Base statemachine doesn't have an ID
+}
+
 func (sm *StateMachine) Validate() error {
 	if sm.validator == nil {
 		sm.validator = validator.NewStateMachineValidator()
