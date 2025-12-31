@@ -274,6 +274,11 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		}
 	}
 
+	// Initialize message correlation table
+	if err := ps.InitializeMessageCorrelationTable(ctx); err != nil {
+		return fmt.Errorf("failed to initialize message correlation table: %w", err)
+	}
+
 	return nil
 }
 

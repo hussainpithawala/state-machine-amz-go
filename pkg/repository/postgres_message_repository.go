@@ -13,6 +13,7 @@ const createMessageCorrelationTableSQL = `
 CREATE TABLE IF NOT EXISTS message_correlations (
 	id VARCHAR(255) PRIMARY KEY,
 	execution_id VARCHAR(255) NOT NULL,
+	execution_start_time TIMESTAMP NOT NULL,
 	state_machine_id VARCHAR(255) NOT NULL,
 	state_name VARCHAR(255) NOT NULL,
 	correlation_key VARCHAR(255) NOT NULL,
@@ -20,7 +21,8 @@ CREATE TABLE IF NOT EXISTS message_correlations (
 	created_at BIGINT NOT NULL,
 	timeout_at BIGINT,
 	status VARCHAR(50) NOT NULL DEFAULT 'WAITING',
-	FOREIGN KEY (execution_id) REFERENCES executions(execution_id) ON DELETE CASCADE
+	CONSTRAINT fk_execution_message FOREIGN KEY (execution_id, execution_start_time) 
+		REFERENCES executions(execution_id, start_time) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_message_correlations_correlation_key 
@@ -53,9 +55,9 @@ func (r *PostgresRepository) SaveMessageCorrelation(ctx context.Context, record 
 
 	query := `
 		INSERT INTO message_correlations 
-			(id, execution_id, state_machine_id, state_name, correlation_key, 
+			(id, execution_id, execution_start_time, state_machine_id, state_name, correlation_key, 
 			 correlation_value, created_at, timeout_at, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			timeout_at = EXCLUDED.timeout_at
@@ -64,6 +66,7 @@ func (r *PostgresRepository) SaveMessageCorrelation(ctx context.Context, record 
 	_, err = r.db.ExecContext(ctx, query,
 		record.ID,
 		record.ExecutionID,
+		record.ExecutionStartTime,
 		record.StateMachineID,
 		record.StateName,
 		record.CorrelationKey,
@@ -87,7 +90,7 @@ func (r *PostgresRepository) GetMessageCorrelation(ctx context.Context, id strin
 	}
 
 	query := `
-		SELECT id, execution_id, state_machine_id, state_name, correlation_key,
+		SELECT id, execution_id, execution_start_time, state_machine_id, state_name, correlation_key,
 		       correlation_value, created_at, timeout_at, status
 		FROM message_correlations
 		WHERE id = $1
@@ -100,6 +103,7 @@ func (r *PostgresRepository) GetMessageCorrelation(ctx context.Context, id strin
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&record.ID,
 		&record.ExecutionID,
+		&record.ExecutionStartTime,
 		&record.StateMachineID,
 		&record.StateName,
 		&record.CorrelationKey,
@@ -136,7 +140,7 @@ func (r *PostgresRepository) FindWaitingCorrelations(ctx context.Context, filter
 	}
 
 	query := `
-		SELECT id, execution_id, state_machine_id, state_name, correlation_key,
+		SELECT id, execution_id, execution_start_time, state_machine_id, state_name, correlation_key,
 		       correlation_value, created_at, timeout_at, status
 		FROM message_correlations
 		WHERE 1=1
@@ -204,6 +208,7 @@ func (r *PostgresRepository) FindWaitingCorrelations(ctx context.Context, filter
 		err := rows.Scan(
 			&record.ID,
 			&record.ExecutionID,
+			&record.ExecutionStartTime,
 			&record.StateMachineID,
 			&record.StateName,
 			&record.CorrelationKey,
@@ -297,7 +302,7 @@ func (r *PostgresRepository) ListTimedOutCorrelations(ctx context.Context, curre
 	}
 
 	query := `
-		SELECT id, execution_id, state_machine_id, state_name, correlation_key,
+		SELECT id, execution_id, execution_start_time, state_machine_id, state_name, correlation_key,
 		       correlation_value, created_at, timeout_at, status
 		FROM message_correlations
 		WHERE status = 'WAITING'
@@ -321,6 +326,7 @@ func (r *PostgresRepository) ListTimedOutCorrelations(ctx context.Context, curre
 		err := rows.Scan(
 			&record.ID,
 			&record.ExecutionID,
+			&record.ExecutionStartTime,
 			&record.StateMachineID,
 			&record.StateName,
 			&record.CorrelationKey,

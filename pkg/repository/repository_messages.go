@@ -4,19 +4,21 @@ package repository
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // MessageCorrelationRecord represents correlation data for message states
 type MessageCorrelationRecord struct {
-	ID               string      `json:"id"`
-	ExecutionID      string      `json:"execution_id"`
-	StateMachineID   string      `json:"state_machine_id"`
-	StateName        string      `json:"state_name"`
-	CorrelationKey   string      `json:"correlation_key"`
-	CorrelationValue interface{} `json:"correlation_value"`
-	CreatedAt        int64       `json:"created_at"`           // Unix timestamp
-	TimeoutAt        *int64      `json:"timeout_at,omitempty"` // Unix timestamp
-	Status           string      `json:"status"`               // "WAITING", "RECEIVED", "TIMEOUT"
+	ID                 string      `json:"id"`
+	ExecutionID        string      `json:"execution_id"`
+	ExecutionStartTime *time.Time  `json:"execution_start_time,omitempty"`
+	StateMachineID     string      `json:"state_machine_id"`
+	StateName          string      `json:"state_name"`
+	CorrelationKey     string      `json:"correlation_key"`
+	CorrelationValue   interface{} `json:"correlation_value"`
+	CreatedAt          int64       `json:"created_at"`           // Unix timestamp
+	TimeoutAt          *int64      `json:"timeout_at,omitempty"` // Unix timestamp
+	Status             string      `json:"status"`               // "WAITING", "RECEIVED", "TIMEOUT"
 }
 
 // MessageCorrelationFilter for querying correlation records

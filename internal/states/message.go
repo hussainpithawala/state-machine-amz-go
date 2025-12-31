@@ -2,7 +2,6 @@ package states
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -242,13 +241,34 @@ func (s *MessageState) Validate() error {
 }
 
 // MarshalJSON implements custom JSON marshaling
+//func (s *MessageState) MarshalJSON() ([]byte, error) {
+//	type Alias MessageState
+//	return json.Marshal(&struct {
+//		*Alias
+//	}{
+//		Alias: (*Alias)(s),
+//	})
+//}
+
 func (s *MessageState) MarshalJSON() ([]byte, error) {
-	type Alias MessageState
-	return json.Marshal(&struct {
-		*Alias
+	// Define only the custom fields (not BaseState!)
+	customFields := struct {
+		CorrelationKey       string      `json:"CorrelationKey"`
+		CorrelationValuePath *string     `json:"CorrelationValuePath,omitempty"`
+		TimeoutSeconds       *int        `json:"TimeoutSeconds,omitempty"`
+		MessagePath          *string     `json:"MessagePath,omitempty"`
+		Retry                []RetryRule `json:"Retry,omitempty"`
+		Catch                []CatchRule `json:"Catch,omitempty"`
 	}{
-		Alias: (*Alias)(s),
-	})
+		CorrelationKey:       s.CorrelationKey,
+		CorrelationValuePath: s.CorrelationValuePath,
+		TimeoutSeconds:       s.TimeoutSeconds,
+		MessagePath:          s.MessagePath,
+		Retry:                s.Retry,
+		Catch:                s.Catch,
+	}
+
+	return MarshalStateWithBase(s.BaseState, customFields)
 }
 
 // GetNextStates returns all possible next states
