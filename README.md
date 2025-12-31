@@ -17,7 +17,8 @@ A powerful, production-ready state machine implementation for Go that's fully co
 - 📁 **YAML/JSON Support** - Human-readable workflow definitions
 - 🛡️ **Comprehensive Error Handling** - Retry policies, catch blocks, and timeout management
 - ⏱️ **Advanced Control** - Timeouts, heartbeats, and execution tracking
-- 🔄 **All State Types** - Task, Parallel, Choice, Wait, Pass, Succeed, Fail, Map
+- 🔄 **All State Types** - Task, Parallel, Choice, Wait, Pass, Succeed, Fail, Map, Message
+- 📩 **Message Correlation** - Pause workflows and resume with external asynchronous messages
 - 🎯 **Clean Architecture** - Separation between state machine logic and persistence
 - 📊 **Execution History** - Complete audit trail with state-by-state tracking
 - 🧪 **Test-Friendly** - Easy mocking and comprehensive testing support
@@ -274,6 +275,22 @@ TransformData:
 ```
 </details>
 
+<details>
+<summary><b>Message State</b> - Pause and wait for external message</summary>
+
+```yaml
+WaitForPayment:
+  Type: Message
+  CorrelationKey: "orderId"
+  CorrelationValuePath: "$.orderId"
+  TimeoutSeconds: 3600
+  Next: "ProcessOrder"
+  Catch:
+    - ErrorEquals: ["States.Timeout"]
+      Next: "HandleTimeout"
+```
+</details>
+
 ## 💾 Persistence Backends
 
 ### GORM PostgreSQL (Recommended)
@@ -360,6 +377,29 @@ ProcessPayment:
     amount.$: "$.order.total"
     currency: "USD"
     customer.$: "$.customer"
+```
+
+### Message Pause and Resume
+
+Enable your workflows to wait for external events or human interventions.
+
+**1. Define a Message State:**
+```yaml
+WaitForApproval:
+  Type: Message
+  CorrelationKey: "orderId"
+  CorrelationValuePath: "$.orderId"
+  Next: "ProcessOrder"
+```
+
+**2. Resume via Executor:**
+```go
+// When the external message arrives (e.g., via webhook or SQS)
+response, err := exec.Message(ctx, &executor.MessageRequest{
+    CorrelationKey:   "orderId",
+    CorrelationValue: "ORD-123",
+    Data:             map[string]interface{}{"approved": true},
+})
 ```
 
 ## 📊 Execution Tracking
@@ -500,6 +540,8 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] Persistent state machine
 - [x] Execution history tracking
 - [x] Statistics and analytics
+- [x] Message Pause and Resume (MessageState)
+- [x] GORM & PostgreSQL correlation support
 - [ ] Redis persistence backend
 - [ ] DynamoDB persistence backend
 - [ ] Distributed execution support
