@@ -85,6 +85,14 @@ func (f *fakeStrategy) GetStateMachine(_ context.Context, stateMachineID string)
 	return &StateMachineRecord{ID: stateMachineID}, nil
 }
 
+func (f *fakeStrategy) GetExecutionOutput(_ context.Context, executionID string, stateName string) (interface{}, error) {
+	// Return mock output for testing
+	if stateName == "" {
+		return map[string]interface{}{"result": "final output"}, nil
+	}
+	return map[string]interface{}{"result": "state output", "state": stateName}, nil
+}
+
 func TestNewPersistenceManager_UnsupportedStrategy(t *testing.T) {
 	pm, err := NewPersistenceManager(&Config{Strategy: "nope"})
 	require.Error(t, err)

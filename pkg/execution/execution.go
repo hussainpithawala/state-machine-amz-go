@@ -98,6 +98,27 @@ func (e *Execution) GetStateHistory(stateName string) []StateHistory {
 	return history
 }
 
+// GetStateOutput retrieves the output of a specific state by name
+// Returns the output from the last execution of the state if it was executed multiple times
+func (e *Execution) GetStateOutput(stateName string) (interface{}, error) {
+	// Search from the end to get the most recent execution of the state
+	for i := len(e.History) - 1; i >= 0; i-- {
+		if e.History[i].StateName == stateName {
+			return e.History[i].Output, nil
+		}
+	}
+	return nil, fmt.Errorf("state '%s' not found in execution history", stateName)
+}
+
+// GetFinalOutput retrieves the final output of the execution
+// Returns an error if the execution is not complete
+func (e *Execution) GetFinalOutput() (interface{}, error) {
+	if !e.IsComplete() {
+		return nil, fmt.Errorf("execution is not complete (status: %s)", e.Status)
+	}
+	return e.Output, nil
+}
+
 // GetDuration returns the execution duration
 func (e *Execution) GetDuration() time.Duration {
 	var end time.Time

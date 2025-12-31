@@ -3,6 +3,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -868,4 +869,44 @@ func fromMessageCorrelationModel(model *MessageCorrelationModel) *MessageCorrela
 		Status:             model.Status,
 	}
 	return record
+}
+
+// GetExecutionOutput retrieves output from an execution (final or specific state)
+// If stateName is empty, returns the final execution output
+// If stateName is provided, returns the output of that specific state
+func (gr *GormPostgresRepository) GetExecutionOutput(ctx context.Context, executionID string, stateName string) (interface{}, error) {
+	if stateName == "" {
+		// Get final execution output
+		var execution ExecutionModel
+		result := gr.db.WithContext(ctx).
+			Select("output").
+			Where("execution_id = ?", executionID).
+			First(&execution)
+
+		if result.Error != nil {
+			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("execution '%s' not found", executionID)
+			}
+			return nil, fmt.Errorf("failed to get execution output: %w", result.Error)
+		}
+
+		return fromJSONB(execution.Output), nil
+	}
+
+	// Get specific state output (most recent if state was executed multiple times)
+	var stateHistory StateHistoryModel
+	result := gr.db.WithContext(ctx).
+		Select("output").
+		Where("execution_id = ? AND state_name = ?", executionID, stateName).
+		Order("sequence_number DESC").
+		First(&stateHistory)
+
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("state '%s' not found in execution '%s'", stateName, executionID)
+		}
+		return nil, fmt.Errorf("failed to get state output: %w", result.Error)
+	}
+
+	return fromJSONB(stateHistory.Output), nil
 }
