@@ -139,57 +139,9 @@ func (r *PostgresRepository) FindWaitingCorrelations(ctx context.Context, filter
 		return nil, fmt.Errorf("database connection is nil")
 	}
 
-	query := `
-		SELECT id, execution_id, execution_start_time, state_machine_id, state_name, correlation_key,
-		       correlation_value, created_at, timeout_at, status
-		FROM message_correlations
-		WHERE 1=1
-	`
-	args := []interface{}{}
-	argPos := 1
-
-	if filter != nil {
-		if filter.CorrelationKey != "" {
-			query += fmt.Sprintf(" AND correlation_key = $%d", argPos)
-			args = append(args, filter.CorrelationKey)
-			argPos++
-		}
-
-		if filter.CorrelationValue != nil {
-			// Serialize correlation value for comparison
-			valueJSON, err := json.Marshal(filter.CorrelationValue)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal correlation value: %w", err)
-			}
-			query += fmt.Sprintf(" AND correlation_value = $%d::jsonb", argPos)
-			args = append(args, valueJSON)
-			argPos++
-		}
-
-		if filter.Status != "" {
-			query += fmt.Sprintf(" AND status = $%d", argPos)
-			args = append(args, filter.Status)
-			argPos++
-		}
-
-		if filter.StateMachineID != "" {
-			query += fmt.Sprintf(" AND state_machine_id = $%d", argPos)
-			args = append(args, filter.StateMachineID)
-			argPos++
-		}
-
-		query += " ORDER BY created_at ASC"
-
-		if filter.Limit > 0 {
-			query += fmt.Sprintf(" LIMIT $%d", argPos)
-			args = append(args, filter.Limit)
-			argPos++
-		}
-
-		if filter.Offset > 0 {
-			query += fmt.Sprintf(" OFFSET $%d", argPos)
-			args = append(args, filter.Offset)
-		}
+	query, args, err := r.buildFindWaitingCorrelationsQuery(filter)
+	if err != nil {
+		return nil, err
 	}
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -239,6 +191,65 @@ func (r *PostgresRepository) FindWaitingCorrelations(ctx context.Context, filter
 	}
 
 	return records, nil
+}
+
+func (r *PostgresRepository) buildFindWaitingCorrelationsQuery(filter *MessageCorrelationFilter) (string, []interface{}, error) {
+	query := `
+		SELECT id, execution_id, execution_start_time, state_machine_id, state_name, correlation_key,
+		       correlation_value, created_at, timeout_at, status
+		FROM message_correlations
+		WHERE 1=1
+	`
+	args := []interface{}{}
+	argPos := 1
+
+	if filter == nil {
+		return query, args, nil
+	}
+
+	if filter.CorrelationKey != "" {
+		query += fmt.Sprintf(" AND correlation_key = $%d", argPos)
+		args = append(args, filter.CorrelationKey)
+		argPos++
+	}
+
+	if filter.CorrelationValue != nil {
+		// Serialize correlation value for comparison
+		valueJSON, err := json.Marshal(filter.CorrelationValue)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to marshal correlation value: %w", err)
+		}
+		query += fmt.Sprintf(" AND correlation_value = $%d::jsonb", argPos)
+		args = append(args, valueJSON)
+		argPos++
+	}
+
+	if filter.Status != "" {
+		query += fmt.Sprintf(" AND status = $%d", argPos)
+		args = append(args, filter.Status)
+		argPos++
+	}
+
+	if filter.StateMachineID != "" {
+		query += fmt.Sprintf(" AND state_machine_id = $%d", argPos)
+		args = append(args, filter.StateMachineID)
+		argPos++
+	}
+
+	query += " ORDER BY created_at ASC"
+
+	if filter.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, filter.Limit)
+		argPos++
+	}
+
+	if filter.Offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, filter.Offset)
+	}
+
+	return query, args, nil
 }
 
 // UpdateCorrelationStatus updates the status of a correlation record
