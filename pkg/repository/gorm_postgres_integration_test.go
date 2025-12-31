@@ -1,6 +1,3 @@
-//go:build integration
-// +build integration
-
 // pkg/repository/gorm_postgres_integration_test.go
 package repository
 
@@ -75,6 +72,7 @@ func (suite *GormPostgresIntegrationTestSuite) cleanupTestData() {
 	_ = suite.repository.db.WithContext(suite.ctx).Exec("TRUNCATE TABLE state_history CASCADE").Error
 	_ = suite.repository.db.WithContext(suite.ctx).Exec("TRUNCATE TABLE executions CASCADE").Error
 	_ = suite.repository.db.WithContext(suite.ctx).Exec("TRUNCATE TABLE execution_statistics CASCADE").Error
+	_ = suite.repository.db.WithContext(suite.ctx).Exec("TRUNCATE TABLE message_correlations CASCADE").Error
 }
 
 // TestSaveAndGetExecution tests basic save and retrieve operations
@@ -534,6 +532,91 @@ func (suite *GormPostgresIntegrationTestSuite) TestErrorHandling() {
 		StartTime:      &now,
 		SequenceNumber: 0,
 	})
+	assert.Error(suite.T(), err)
+}
+
+// TestMessageCorrelationLifecycle tests the lifecycle of message correlations
+func (suite *GormPostgresIntegrationTestSuite) TestMessageCorrelationLifecycle() {
+	now := time.Now()
+	startTime := now.Add(-1 * time.Hour)
+
+	// 1. Create an execution that will be waiting for a message
+	execRecord := &ExecutionRecord{
+		ExecutionID:    "exec-msg-gorm-001",
+		StateMachineID: "sm-msg-test",
+		Name:           "msg-test",
+		Status:         "PAUSED",
+		StartTime:      &startTime,
+		CurrentState:   "WaitForPayment",
+	}
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, execRecord))
+
+	// 2. Save a message correlation
+	corrRecord := &MessageCorrelationRecord{
+		ID:                 "corr-gorm-001",
+		ExecutionID:        execRecord.ExecutionID,
+		ExecutionStartTime: execRecord.StartTime,
+		StateMachineID:     execRecord.StateMachineID,
+		StateName:          "WaitForPayment",
+		CorrelationKey:     "orderId",
+		CorrelationValue:   "ORD-12345",
+		CreatedAt:          now.Unix(),
+		Status:             "WAITING",
+	}
+	require.NoError(suite.T(), suite.repository.SaveMessageCorrelation(suite.ctx, corrRecord))
+
+	// 3. Find waiting correlations
+	filter := &MessageCorrelationFilter{
+		CorrelationKey:   "orderId",
+		CorrelationValue: "ORD-12345",
+		Status:           "WAITING",
+	}
+	correlations, err := suite.repository.FindWaitingCorrelations(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), correlations, 1)
+	assert.Equal(suite.T(), corrRecord.ID, correlations[0].ID)
+
+	// 4. Update status to RECEIVED
+	err = suite.repository.UpdateCorrelationStatus(suite.ctx, corrRecord.ID, "RECEIVED")
+	require.NoError(suite.T(), err)
+
+	// 5. Verify status updated
+	updated, err := suite.repository.GetMessageCorrelation(suite.ctx, corrRecord.ID)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "RECEIVED", updated.Status)
+
+	// 6. Test timeout listing
+	timeoutAt := now.Add(-10 * time.Minute).Unix()
+	timedOutRecord := &MessageCorrelationRecord{
+		ID:                 "corr-gorm-timeout",
+		ExecutionID:        execRecord.ExecutionID,
+		ExecutionStartTime: execRecord.StartTime,
+		StateMachineID:     execRecord.StateMachineID,
+		StateName:          "WaitForPayment",
+		CorrelationKey:     "orderId",
+		CorrelationValue:   "ORD-TIMEOUT",
+		CreatedAt:          now.Add(-20 * time.Minute).Unix(),
+		TimeoutAt:          &timeoutAt,
+		Status:             "WAITING",
+	}
+	require.NoError(suite.T(), suite.repository.SaveMessageCorrelation(suite.ctx, timedOutRecord))
+
+	timedOut, err := suite.repository.ListTimedOutCorrelations(suite.ctx, now.Unix())
+	require.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), timedOut)
+
+	found := false
+	for _, c := range timedOut {
+		if c.ID == timedOutRecord.ID {
+			found = true
+			break
+		}
+	}
+	assert.True(suite.T(), found, "Expected to find timed out correlation")
+
+	// 7. Delete correlation
+	require.NoError(suite.T(), suite.repository.DeleteMessageCorrelation(suite.ctx, corrRecord.ID))
+	_, err = suite.repository.GetMessageCorrelation(suite.ctx, corrRecord.ID)
 	assert.Error(suite.T(), err)
 }
 
