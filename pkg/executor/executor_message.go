@@ -40,10 +40,76 @@ func (executor *BaseExecutor) Message(ctx context.Context, request *MessageReque
 	}
 
 	// Find paused executions waiting for this message
+	executions, err := executor.findAllWaitingExecutions(ctx, request.CorrelationKey, request.CorrelationValue)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(executions) == 0 {
+		return &MessageResponse{
+			Status:          "NO_MATCH",
+			MessageReceived: false,
+			Error:           "no waiting execution found for correlation key/value",
+		}, nil
+	}
+
+	// Process all matching executions
+	var lastResponse *MessageResponse
+	var lastErr error
+	resumedCount := 0
+
+	// Cache loaded state machines to avoid redundant repository calls
+	smCache := make(map[string]StateMachineInterface)
+
+	for _, exec := range executions {
+		targetSM := executor.getOrLoadStateMachine(ctx, exec.StateMachineID, smCache)
+
+		if targetSM == nil {
+			lastErr = fmt.Errorf("failed to load state machine for execution %s", exec.ID)
+			lastResponse = &MessageResponse{
+				ExecutionID:     exec.ID,
+				StateMachineID:  exec.StateMachineID,
+				Status:          "ERROR",
+				MessageReceived: true,
+				ResumedAt:       time.Now(),
+				Error:           lastErr.Error(),
+			}
+			continue
+		}
+
+		// Resume the execution with the message data
+		executor.prepareRegistryForExecution(exec.StateMachineID, registryMap)
+
+		response, err := executor.resumeExecutionWithMessage(ctx, targetSM, exec, request)
+		if err != nil {
+			lastErr = err
+			lastResponse = &MessageResponse{
+				ExecutionID:     exec.ID,
+				StateMachineID:  exec.StateMachineID,
+				Status:          "ERROR",
+				MessageReceived: true,
+				ResumedAt:       time.Now(),
+				Error:           err.Error(),
+			}
+			continue
+		}
+		lastResponse = response
+		resumedCount++
+	}
+
+	if resumedCount == 0 && lastErr != nil {
+		return lastResponse, lastErr
+	}
+
+	return lastResponse, nil
+}
+
+// findAllWaitingExecutions finds matching executions from both in-memory and repository
+func (executor *BaseExecutor) findAllWaitingExecutions(ctx context.Context, key string, value interface{}) ([]*execution.Execution, error) {
 	var executions []*execution.Execution
 
 	// 1. Try to find in-memory executions
-	memExecutions, err := executor.findWaitingExecutions(ctx, request.CorrelationKey, request.CorrelationValue)
+	memExecutions, err := executor.findWaitingExecutions(ctx, key, value)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find waiting executions in-memory: %w", err)
 	}
@@ -51,7 +117,7 @@ func (executor *BaseExecutor) Message(ctx context.Context, request *MessageReque
 
 	// 2. If we have a repository manager, try to find in repository
 	if executor.repositoryManager != nil {
-		execRecords, err := executor.repositoryManager.FindWaitingExecutionsByCorrelation(ctx, request.CorrelationKey, request.CorrelationValue)
+		execRecords, err := executor.repositoryManager.FindWaitingExecutionsByCorrelation(ctx, key, value)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find waiting executions in repository: %w", err)
 		}
@@ -90,90 +156,46 @@ func (executor *BaseExecutor) Message(ctx context.Context, request *MessageReque
 		}
 	}
 
-	if len(executions) == 0 {
-		return &MessageResponse{
-			Status:          "NO_MATCH",
-			MessageReceived: false,
-			Error:           "no waiting execution found for correlation key/value",
-		}, nil
+	return executions, nil
+}
+
+// getOrLoadStateMachine retrieves a state machine from cache or repository
+func (executor *BaseExecutor) getOrLoadStateMachine(ctx context.Context, smID string, smCache map[string]StateMachineInterface) StateMachineInterface {
+	targetSM := smCache[smID]
+
+	// Try in-memory cache first
+	if targetSM == nil {
+		targetSM = executor.stateMachines[smID]
+		if targetSM != nil {
+			smCache[smID] = targetSM
+		}
 	}
 
-	// Process all matching executions
-	var lastResponse *MessageResponse
-	var lastErr error
-	resumedCount := 0
-
-	// Cache loaded state machines to avoid redundant repository calls
-	smCache := make(map[string]StateMachineInterface)
-
-	for _, exec := range executions {
-		targetSM := smCache[exec.StateMachineID]
-
-		// Try in-memory cache first
-		if targetSM == nil {
-			targetSM = executor.stateMachines[exec.StateMachineID]
-			if targetSM != nil {
-				smCache[exec.StateMachineID] = targetSM
-			}
+	// If we don't have it in cache, try to load it from repository
+	if targetSM == nil && executor.repositoryManager != nil {
+		loadedSM, err := persistent.NewFromDefnId(ctx, smID, executor.repositoryManager)
+		if err == nil {
+			targetSM = loadedSM
+			smCache[smID] = loadedSM
 		}
-
-		// If we don't have it in cache, try to load it from repository
-		if targetSM == nil && executor.repositoryManager != nil {
-			loadedSM, err := persistent.NewFromDefnId(ctx, exec.StateMachineID, executor.repositoryManager)
-			if err == nil {
-				targetSM = loadedSM
-				smCache[exec.StateMachineID] = loadedSM
-			}
-		}
-
-		if targetSM == nil {
-			lastErr = fmt.Errorf("failed to load state machine for execution %s", exec.ID)
-			lastResponse = &MessageResponse{
-				ExecutionID:     exec.ID,
-				StateMachineID:  exec.StateMachineID,
-				Status:          "ERROR",
-				MessageReceived: true,
-				ResumedAt:       time.Now(),
-				Error:           lastErr.Error(),
-			}
-			continue
-		}
-
-		// Resume the execution with the message data
-		if registryMap != nil {
-			registry := (*registryMap)[exec.StateMachineID]
-			if registry != nil {
-				executor.registry = registry
-			}
-		} else if executor.registries != nil {
-			registry := executor.registries[exec.StateMachineID]
-			if registry != nil {
-				executor.registry = registry
-			}
-		}
-
-		response, err := executor.resumeExecutionWithMessage(ctx, targetSM, exec, request)
-		if err != nil {
-			lastErr = err
-			lastResponse = &MessageResponse{
-				ExecutionID:     exec.ID,
-				StateMachineID:  exec.StateMachineID,
-				Status:          "ERROR",
-				MessageReceived: true,
-				ResumedAt:       time.Now(),
-				Error:           err.Error(),
-			}
-			continue
-		}
-		lastResponse = response
-		resumedCount++
 	}
 
-	if resumedCount == 0 && lastErr != nil {
-		return lastResponse, lastErr
-	}
+	return targetSM
+}
 
-	return lastResponse, nil
+// prepareRegistryForExecution sets the appropriate registry for the given state machine
+func (executor *BaseExecutor) prepareRegistryForExecution(smID string, registryMap *RegistryMap) {
+	if registryMap != nil {
+		registry := (*registryMap)[smID]
+		if registry != nil {
+			executor.registry = registry
+		}
+	} else if executor.registries != nil {
+		registry := executor.registries[smID]
+		if registry != nil {
+			executor.registry = registry
+		}
+	}
 }
 
 // findWaitingExecutions finds executions waiting for a message with the given correlation
