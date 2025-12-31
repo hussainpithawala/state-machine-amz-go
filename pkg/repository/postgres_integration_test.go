@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 // pkg/repository/postgres_integration_test.go
 package repository
 
