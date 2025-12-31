@@ -53,7 +53,7 @@ func (f *fakeRepository) FindWaitingCorrelations(ctx context.Context, filter *re
 	return nil, nil
 }
 
-func (f *fakeRepository) UpdateCorrelationStatus(ctx context.Context, id string, status string) error {
+func (f *fakeRepository) UpdateCorrelationStatus(ctx context.Context, id, status string) error {
 	f.lastUpdateCorrelationID = id
 	f.lastUpdateCorrelationStat = status
 	return nil

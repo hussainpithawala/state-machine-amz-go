@@ -193,14 +193,14 @@ func (r *PostgresRepository) FindWaitingCorrelations(ctx context.Context, filter
 	return records, nil
 }
 
-func (r *PostgresRepository) buildFindWaitingCorrelationsQuery(filter *MessageCorrelationFilter) (string, []interface{}, error) {
-	query := `
+func (r *PostgresRepository) buildFindWaitingCorrelationsQuery(filter *MessageCorrelationFilter) (query string, args []interface{}, err error) {
+	query = `
 		SELECT id, execution_id, execution_start_time, state_machine_id, state_name, correlation_key,
 		       correlation_value, created_at, timeout_at, status
 		FROM message_correlations
 		WHERE 1=1
 	`
-	args := []interface{}{}
+	args = []interface{}{}
 	argPos := 1
 
 	if filter == nil {
@@ -253,7 +253,7 @@ func (r *PostgresRepository) buildFindWaitingCorrelationsQuery(filter *MessageCo
 }
 
 // UpdateCorrelationStatus updates the status of a correlation record
-func (r *PostgresRepository) UpdateCorrelationStatus(ctx context.Context, id string, status string) error {
+func (r *PostgresRepository) UpdateCorrelationStatus(ctx context.Context, id, status string) error {
 	if r.db == nil {
 		return fmt.Errorf("database connection is nil")
 	}

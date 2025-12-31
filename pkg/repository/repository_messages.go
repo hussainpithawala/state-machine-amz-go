@@ -93,7 +93,7 @@ func (pm *Manager) FindWaitingExecutionsByCorrelation(ctx context.Context, corre
 }
 
 // UpdateCorrelationStatus updates the status of a correlation record
-func (pm *Manager) UpdateCorrelationStatus(ctx context.Context, correlationID string, status string) error {
+func (pm *Manager) UpdateCorrelationStatus(ctx context.Context, correlationID, status string) error {
 	if msgRepo, ok := pm.repository.(MessageRepository); ok {
 		return msgRepo.UpdateCorrelationStatus(ctx, correlationID, status)
 	}

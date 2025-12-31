@@ -792,7 +792,7 @@ func (r *GormPostgresRepository) FindWaitingCorrelations(ctx context.Context, fi
 }
 
 // UpdateCorrelationStatus updates the status of a correlation record
-func (r *GormPostgresRepository) UpdateCorrelationStatus(ctx context.Context, id string, status string) error {
+func (r *GormPostgresRepository) UpdateCorrelationStatus(ctx context.Context, id, status string) error {
 	result := r.db.WithContext(ctx).Model(&MessageCorrelationModel{}).
 		Where("id = ?", id).
 		Update("status", status)

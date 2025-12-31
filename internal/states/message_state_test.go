@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
-	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 )
 
 func TestMessageState_Creation(t *testing.T) {
@@ -109,7 +110,7 @@ func TestMessageState_PreMessageExecution(t *testing.T) {
 	assert.Nil(t, nextState, "nextState should be nil during pre-message phase")
 
 	// Verify result structure
-	//resultMap, ok := result.(map[string]interface{})
+	// resultMap, ok := result.(map[string]interface{})
 	messageStateResult, ok := result.(*states.MessageStateResult)
 	require.True(t, ok, "result should be a MessageStateResult")
 
@@ -211,25 +212,25 @@ func TestExecutor_Message(t *testing.T) {
 	exec := executor.NewBaseExecutor()
 
 	// Create a mock paused execution
-	//mockExecution := &struct {
-	//	ID             string
-	//	Status         string
-	//	StateMachineID string
-	//	CurrentState   string
-	//	Input          interface{}
-	//	Metadata       map[string]interface{}
-	//}{
-	//	ID:             "exec-123",
-	//	Status:         "PAUSED",
-	//	StateMachineID: "sm-456",
-	//	CurrentState:   "WaitForPayment",
-	//	Metadata: map[string]interface{}{
-	//		"correlation_data": map[string]interface{}{
-	//			"correlation_key":   "payment_confirmation",
-	//			"correlation_value": "TXN-789",
-	//		},
-	//	},
-	//}
+	// mockExecution := &struct {
+	// 	ID             string
+	// 	Status         string
+	// 	StateMachineID string
+	// 	CurrentState   string
+	// 	Input          interface{}
+	// 	Metadata       map[string]interface{}
+	// }{
+	// 	ID:             "exec-123",
+	// 	Status:         "PAUSED",
+	// 	StateMachineID: "sm-456",
+	// 	CurrentState:   "WaitForPayment",
+	// 	Metadata: map[string]interface{}{
+	// 		"correlation_data": map[string]interface{}{
+	// 			"correlation_key":   "payment_confirmation",
+	// 			"correlation_value": "TXN-789",
+	// 		},
+	// 	},
+	// }
 
 	// Note: You'll need to set up the executor with this mock execution
 	// This is a simplified test structure
@@ -392,31 +393,6 @@ func TestMessageState_Timeout(t *testing.T) {
 	err := messageState.Validate()
 	assert.NoError(t, err)
 }
-
-// skipped tests
-//func TestExecutor_ListWaitingExecutions(t *testing.T) {
-//	ctx := context.Background()
-//	exec := executor.NewBaseExecutor()
-//
-//	waiting, err := exec.ListWaitingExecutions(ctx)
-//
-//	assert.NoError(t, err)
-//	assert.NotNil(t, waiting)
-//	// In a real test, you'd create paused executions first
-//	// and verify they appear in the list
-//}
-
-// skipped tests
-//func TestExecutor_TimeoutWaitingExecutions(t *testing.T) {
-//	ctx := context.Background()
-//	exec := executor.NewBaseExecutor()
-//
-//	err := exec.TimeoutWaitingExecutions(ctx)
-//
-//	assert.NoError(t, err)
-//	// In a real test, you'd verify that executions
-//	// exceeding their timeout are properly handled
-//}
 
 // Benchmark tests
 func BenchmarkMessageState_Execute(b *testing.B) {

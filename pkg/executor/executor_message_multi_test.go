@@ -6,12 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 type mockRepository struct {
@@ -53,7 +54,7 @@ func (m *mockRepository) SaveExecution(ctx context.Context, record *repository.E
 func (m *mockRepository) SaveStateHistory(ctx context.Context, record *repository.StateHistoryRecord) error {
 	return nil
 }
-func (m *mockRepository) UpdateCorrelationStatus(ctx context.Context, id string, status string) error {
+func (m *mockRepository) UpdateCorrelationStatus(ctx context.Context, id, status string) error {
 	return nil
 }
 
