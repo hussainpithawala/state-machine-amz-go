@@ -1130,7 +1130,7 @@ func (ps *PostgresRepository) RefreshStatistics(ctx context.Context) error {
 // GetExecutionOutput retrieves output from an execution (final or specific state)
 // If stateName is empty, returns the final execution output
 // If stateName is provided, returns the output of that specific state
-func (ps *PostgresRepository) GetExecutionOutput(ctx context.Context, executionID string, stateName string) (interface{}, error) {
+func (ps *PostgresRepository) GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error) {
 	if stateName == "" {
 		// Get final execution output
 		query := `SELECT output FROM executions WHERE execution_id = $1`

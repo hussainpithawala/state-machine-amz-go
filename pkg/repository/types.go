@@ -113,7 +113,7 @@ type Repository interface {
 	GetStateMachine(ctx context.Context, stateMachineID string) (*StateMachineRecord, error)
 
 	// GetExecutionOutput retrieves output from an execution (final or specific state)
-	GetExecutionOutput(ctx context.Context, executionID string, stateName string) (interface{}, error)
+	GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error)
 }
 
 // ExtendedRepository defines additional repository capabilities

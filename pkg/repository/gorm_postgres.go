@@ -874,7 +874,7 @@ func fromMessageCorrelationModel(model *MessageCorrelationModel) *MessageCorrela
 // GetExecutionOutput retrieves output from an execution (final or specific state)
 // If stateName is empty, returns the final execution output
 // If stateName is provided, returns the output of that specific state
-func (gr *GormPostgresRepository) GetExecutionOutput(ctx context.Context, executionID string, stateName string) (interface{}, error) {
+func (gr *GormPostgresRepository) GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error) {
 	if stateName == "" {
 		// Get final execution output
 		var execution ExecutionModel

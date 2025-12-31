@@ -128,7 +128,7 @@ func (f *fakeRepository) GetStateMachine(_ context.Context, stateMachineID strin
 	}, nil
 }
 
-func (f *fakeRepository) GetExecutionOutput(_ context.Context, executionID string, stateName string) (interface{}, error) {
+func (f *fakeRepository) GetExecutionOutput(_ context.Context, executionID, stateName string) (interface{}, error) {
 	// Return a simple mock output for testing
 	if stateName == "" {
 		return map[string]interface{}{"result": "final output"}, nil

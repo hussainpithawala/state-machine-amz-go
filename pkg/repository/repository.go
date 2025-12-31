@@ -195,7 +195,7 @@ func (pm *Manager) CountExecutions(ctx context.Context, filter *ExecutionFilter)
 }
 
 // GetExecutionOutput retrieves output from an execution (final or specific state)
-func (pm *Manager) GetExecutionOutput(ctx context.Context, executionID string, stateName string) (interface{}, error) {
+func (pm *Manager) GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error) {
 	return pm.repository.GetExecutionOutput(ctx, executionID, stateName)
 }
 
