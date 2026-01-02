@@ -21,14 +21,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	//if err := runComplexWorkflowExample(); err != nil {
-	//	log.Fatal(err)
-	//}
-	//
-	//if err := runParallelWorkflowExample(); err != nil {
-	//	log.Fatal(err)
-	//}
-
 	fmt.Println("\n=== All examples completed successfully ===")
 }
 

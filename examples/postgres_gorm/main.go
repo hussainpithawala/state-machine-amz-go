@@ -203,7 +203,7 @@ func getPersistenceManager(ctx context.Context) (*repository.Manager, error) {
 
 func getConnectionURL() string {
 	// Check environment variable first
-	if url := os.Getenv("DATABASE_URL"); url != "" {
+	if url := os.Getenv("DATABASE_URL_GORM"); url != "" {
 		return url
 	}
 	// Default for local development

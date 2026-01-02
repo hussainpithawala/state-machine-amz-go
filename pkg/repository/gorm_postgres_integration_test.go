@@ -1,6 +1,3 @@
-//go:build integration
-// +build integration
-
 // pkg/repository/gorm_postgres_integration_test.go
 package repository
 
@@ -769,7 +766,7 @@ func TestGormPostgresIntegrationSuite(t *testing.T) {
 		t.Skip("Skipping PostgreSQL integration tests in short mode")
 	}
 
-	connURL := os.Getenv("POSTGRES_TEST_URL")
+	connURL := os.Getenv("POSTGRES_TEST_URL_GORM")
 	if connURL == "" {
 		connURL = "postgres://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable"
 	}
@@ -791,4 +788,9 @@ func TestGormPostgresIntegrationSuite(t *testing.T) {
 	_ = repo.Close()
 
 	suite.Run(t, new(GormPostgresIntegrationTestSuite))
+}
+
+// Helper function to create time pointers
+func timePtr(t time.Time) *time.Time {
+	return &t
 }
