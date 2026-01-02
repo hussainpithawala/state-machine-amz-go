@@ -4,6 +4,7 @@ package persistent
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
@@ -356,4 +357,188 @@ func (pm *StateMachine) SaveDefinition(ctx context.Context) error {
 	// Use the explicit stateMachineID if it was provided to New
 	record.ID = pm.stateMachineID
 	return pm.repositoryManager.SaveStateMachine(ctx, record)
+}
+
+// BatchExecutionResult represents the result of a batch execution
+type BatchExecutionResult struct {
+	SourceExecutionID string
+	Execution         *execution.Execution
+	Error             error
+	Index             int
+}
+
+// ExecuteBatch launches chained executions for multiple source executions in batch
+// It retrieves source execution IDs based on the filter and launches chained executions for each
+func (pm *StateMachine) ExecuteBatch(
+	ctx context.Context,
+	filter *repository.ExecutionFilter,
+	sourceStateName string,
+	opts *statemachine2.BatchExecutionOptions,
+	execOpts ...statemachine2.ExecutionOption,
+) ([]*BatchExecutionResult, error) {
+	// Set defaults for batch options
+	if opts == nil {
+		opts = &statemachine2.BatchExecutionOptions{
+			NamePrefix:        fmt.Sprintf("batch-exec-%d", time.Now().Unix()),
+			ConcurrentBatches: 1,
+			StopOnError:       false,
+		}
+	}
+
+	// Retrieve source execution IDs based on filter
+	sourceExecutionIDs, err := pm.repositoryManager.ListExecutionIDs(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list source executions: %w", err)
+	}
+
+	if len(sourceExecutionIDs) == 0 {
+		return []*BatchExecutionResult{}, nil
+	}
+
+	// Execute in sequential or concurrent mode
+	if opts.ConcurrentBatches <= 1 {
+		return pm.executeBatchSequential(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
+	}
+	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
+}
+
+// executeBatchSequential executes chained executions sequentially
+func (pm *StateMachine) executeBatchSequential(
+	ctx context.Context,
+	sourceExecutionIDs []string,
+	sourceStateName string,
+	opts *statemachine2.BatchExecutionOptions,
+	execOpts ...statemachine2.ExecutionOption,
+) ([]*BatchExecutionResult, error) {
+	results := make([]*BatchExecutionResult, 0, len(sourceExecutionIDs))
+
+	for idx, sourceExecID := range sourceExecutionIDs {
+		// Notify start
+		if opts.OnExecutionStart != nil {
+			opts.OnExecutionStart(sourceExecID, idx)
+		}
+
+		// Prepare execution options
+		chainedOpts := make([]statemachine2.ExecutionOption, 0, len(execOpts)+2)
+		chainedOpts = append(chainedOpts, execOpts...)
+		chainedOpts = append(chainedOpts,
+			statemachine2.WithExecutionName(fmt.Sprintf("%s-%d", opts.NamePrefix, idx)),
+			statemachine2.WithSourceExecution(sourceExecID, sourceStateName),
+		)
+
+		// Execute chained execution
+		exec, err := pm.Execute(ctx, nil, chainedOpts...)
+
+		result := &BatchExecutionResult{
+			SourceExecutionID: sourceExecID,
+			Execution:         exec,
+			Error:             err,
+			Index:             idx,
+		}
+		results = append(results, result)
+
+		// Notify completion
+		if opts.OnExecutionComplete != nil {
+			opts.OnExecutionComplete(sourceExecID, idx, err)
+		}
+
+		// Stop on error if configured
+		if err != nil && opts.StopOnError {
+			return results, fmt.Errorf("batch execution stopped due to error at index %d: %w", idx, err)
+		}
+	}
+
+	return results, nil
+}
+
+// executeBatchConcurrent executes chained executions concurrently with controlled parallelism
+func (pm *StateMachine) executeBatchConcurrent(
+	ctx context.Context,
+	sourceExecutionIDs []string,
+	sourceStateName string,
+	opts *statemachine2.BatchExecutionOptions,
+	execOpts ...statemachine2.ExecutionOption,
+) ([]*BatchExecutionResult, error) {
+	results := make([]*BatchExecutionResult, len(sourceExecutionIDs))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	// Create semaphore for controlling concurrency
+	semaphore := make(chan struct{}, opts.ConcurrentBatches)
+	errChan := make(chan error, 1)
+	stopProcessing := false
+
+	for idx, sourceExecID := range sourceExecutionIDs {
+		// Check if we should stop processing
+		if stopProcessing {
+			break
+		}
+
+		wg.Add(1)
+		go func(index int, srcExecID string) {
+			defer wg.Done()
+
+			// Acquire semaphore
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			// Check if we should stop
+			if stopProcessing {
+				return
+			}
+
+			// Notify start
+			if opts.OnExecutionStart != nil {
+				opts.OnExecutionStart(srcExecID, index)
+			}
+
+			// Prepare execution options
+			chainedOpts := make([]statemachine2.ExecutionOption, 0, len(execOpts)+2)
+			chainedOpts = append(chainedOpts, execOpts...)
+			chainedOpts = append(chainedOpts,
+				statemachine2.WithExecutionName(fmt.Sprintf("%s-%d", opts.NamePrefix, index)),
+				statemachine2.WithSourceExecution(srcExecID, sourceStateName),
+			)
+
+			// Execute chained execution
+			exec, err := pm.Execute(ctx, nil, chainedOpts...)
+
+			result := &BatchExecutionResult{
+				SourceExecutionID: srcExecID,
+				Execution:         exec,
+				Error:             err,
+				Index:             index,
+			}
+
+			// Store result
+			mu.Lock()
+			results[index] = result
+			mu.Unlock()
+
+			// Notify completion
+			if opts.OnExecutionComplete != nil {
+				opts.OnExecutionComplete(srcExecID, index, err)
+			}
+
+			// Handle error
+			if err != nil && opts.StopOnError {
+				select {
+				case errChan <- fmt.Errorf("batch execution failed at index %d: %w", index, err):
+					stopProcessing = true
+				default:
+				}
+			}
+		}(idx, sourceExecID)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(errChan)
+
+	// Check if there was a stop error
+	if err := <-errChan; err != nil {
+		return results, err
+	}
+
+	return results, nil
 }

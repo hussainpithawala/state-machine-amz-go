@@ -74,6 +74,14 @@ func (f *fakeStrategy) CountExecutions(_ context.Context, _ *ExecutionFilter) (i
 	return 1, nil
 }
 
+func (f *fakeStrategy) ListExecutionIDs(_ context.Context, filter *ExecutionFilter) ([]string, error) {
+	if filter != nil {
+		f.listLimit = filter.Limit
+		f.listOffset = filter.Offset
+	}
+	return []string{"exec-1", "exec-2", "exec-3"}, nil
+}
+
 func (f *fakeStrategy) SaveStateMachine(_ context.Context, record *StateMachineRecord) error {
 	f.saveStateMachineCalls++
 	f.lastSavedStateMachine = record
@@ -259,6 +267,25 @@ func TestManager_GetExecution_GetStateHistory_ListExecutions_Delegates(t *testin
 	require.NoError(t, err)
 	require.Equal(t, 10, fs.listLimit)
 	require.Equal(t, 20, fs.listOffset)
+}
+
+func TestManager_ListExecutionIDs_Delegates(t *testing.T) {
+	fs := &fakeStrategy{}
+	pm := &Manager{repository: fs, config: &Config{Strategy: "fake"}}
+
+	ids, err := pm.ListExecutionIDs(context.Background(), &ExecutionFilter{
+		Offset: 5,
+		Limit:  20,
+		Status: "SUCCEEDED",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, ids)
+	require.Equal(t, 3, len(ids))
+	require.Equal(t, "exec-1", ids[0])
+	require.Equal(t, "exec-2", ids[1])
+	require.Equal(t, "exec-3", ids[2])
+	require.Equal(t, 20, fs.listLimit)
+	require.Equal(t, 5, fs.listOffset)
 }
 
 func TestManager_SaveStateMachine_Delegates(t *testing.T) {

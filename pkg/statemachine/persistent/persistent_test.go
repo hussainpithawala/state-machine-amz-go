@@ -113,6 +113,21 @@ func (f *fakeRepository) CountExecutions(_ context.Context, _ *repository.Execut
 	return 1, nil
 }
 
+func (f *fakeRepository) ListExecutionIDs(_ context.Context, filter *repository.ExecutionFilter) ([]string, error) {
+	allIDs := []string{"exec-src-1", "exec-src-2", "exec-src-3", "exec-src-4", "exec-src-5"}
+
+	if filter != nil {
+		f.lastListLimit = filter.Limit
+		f.lastListOffset = filter.Offset
+
+		// Apply limit if specified
+		if filter.Limit > 0 && filter.Limit < len(allIDs) {
+			return allIDs[:filter.Limit], nil
+		}
+	}
+	return allIDs, nil
+}
+
 func (f *fakeRepository) SaveStateMachine(_ context.Context, record *repository.StateMachineRecord) error {
 	f.saveStateMachineCalls++
 	if record != nil {
@@ -485,6 +500,236 @@ func TestRunExecution_MessageState_PausesAndResumes(t *testing.T) {
 	require.Equal(t, "SUCCEEDED", result.History[1].Status)
 	require.Equal(t, "FinalState", result.History[2].StateName)
 	require.Equal(t, "SUCCEEDED", result.History[2].Status)
+}
+
+// TestExecuteBatch_Sequential tests sequential batch execution
+func TestExecuteBatch_Sequential(t *testing.T) {
+	ctx := context.Background()
+
+	// Create state machine
+	definition := []byte(`
+StartAt: SimpleState
+States:
+  SimpleState:
+    Type: Pass
+    Result: "Done"
+    End: true
+`)
+
+	fakeRepo := &fakeRepository{}
+	repoManager := &repository.Manager{}
+	setUnexportedField(t, repoManager, "repository", fakeRepo)
+
+	sm, err := New(definition, false, "test-sm", repoManager)
+	require.NoError(t, err)
+
+	// Test sequential batch execution
+	filter := &repository.ExecutionFilter{
+		StateMachineID: "source-sm",
+		Status:         "SUCCEEDED",
+		Limit:          5,
+	}
+
+	batchOpts := &statemachine.BatchExecutionOptions{
+		NamePrefix:        "batch-sequential",
+		ConcurrentBatches: 1, // Sequential
+		StopOnError:       false,
+	}
+
+	results, err := sm.ExecuteBatch(ctx, filter, "", batchOpts)
+	require.NoError(t, err)
+	require.NotNil(t, results)
+	require.Equal(t, 5, len(results))
+
+	// Verify all executions completed
+	for i, result := range results {
+		require.Equal(t, i, result.Index)
+		require.NotNil(t, result.Execution)
+		require.Equal(t, "SUCCEEDED", result.Execution.Status)
+	}
+}
+
+// TestExecuteBatch_Concurrent tests concurrent batch execution
+func TestExecuteBatch_Concurrent(t *testing.T) {
+	ctx := context.Background()
+
+	// Create state machine
+	definition := []byte(`
+StartAt: SimpleState
+States:
+  SimpleState:
+    Type: Pass
+    Result: "Done"
+    End: true
+`)
+
+	fakeRepo := &fakeRepository{}
+	repoManager := &repository.Manager{}
+	setUnexportedField(t, repoManager, "repository", fakeRepo)
+
+	sm, err := New(definition, false, "test-sm", repoManager)
+	require.NoError(t, err)
+
+	// Test concurrent batch execution
+	filter := &repository.ExecutionFilter{
+		StateMachineID: "source-sm",
+		Status:         "SUCCEEDED",
+		Limit:          5,
+	}
+
+	batchOpts := &statemachine.BatchExecutionOptions{
+		NamePrefix:        "batch-concurrent",
+		ConcurrentBatches: 3, // Concurrent with limit of 3
+		StopOnError:       false,
+	}
+
+	results, err := sm.ExecuteBatch(ctx, filter, "", batchOpts)
+	require.NoError(t, err)
+	require.NotNil(t, results)
+	require.Equal(t, 5, len(results))
+
+	// Verify all executions completed
+	for _, result := range results {
+		require.NotNil(t, result.Execution)
+		require.Equal(t, "SUCCEEDED", result.Execution.Status)
+	}
+}
+
+// TestExecuteBatch_WithCallbacks tests batch execution with callbacks
+func TestExecuteBatch_WithCallbacks(t *testing.T) {
+	ctx := context.Background()
+
+	// Create state machine
+	definition := []byte(`
+StartAt: SimpleState
+States:
+  SimpleState:
+    Type: Pass
+    Result: "Done"
+    End: true
+`)
+
+	fakeRepo := &fakeRepository{}
+	repoManager := &repository.Manager{}
+	setUnexportedField(t, repoManager, "repository", fakeRepo)
+
+	sm, err := New(definition, false, "test-sm", repoManager)
+	require.NoError(t, err)
+
+	// Track callbacks
+	startedCount := 0
+	completedCount := 0
+
+	filter := &repository.ExecutionFilter{
+		StateMachineID: "source-sm",
+		Limit:          3,
+	}
+
+	batchOpts := &statemachine.BatchExecutionOptions{
+		NamePrefix:        "batch-callbacks",
+		ConcurrentBatches: 1,
+		StopOnError:       false,
+		OnExecutionStart: func(sourceExecutionID string, index int) {
+			startedCount++
+		},
+		OnExecutionComplete: func(sourceExecutionID string, index int, err error) {
+			completedCount++
+		},
+	}
+
+	results, err := sm.ExecuteBatch(ctx, filter, "", batchOpts)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(results))
+	require.Equal(t, 3, startedCount)
+	require.Equal(t, 3, completedCount)
+}
+
+// fakeRepositoryEmpty is a fake repository that returns empty execution lists
+type fakeRepositoryEmpty struct {
+	fakeRepository
+}
+
+func (f *fakeRepositoryEmpty) ListExecutionIDs(_ context.Context, filter *repository.ExecutionFilter) ([]string, error) {
+	return []string{}, nil
+}
+
+// TestExecuteBatch_EmptyFilter tests batch execution with empty results
+func TestExecuteBatch_EmptyFilter(t *testing.T) {
+	ctx := context.Background()
+
+	// Create state machine
+	definition := []byte(`
+StartAt: SimpleState
+States:
+  SimpleState:
+    Type: Pass
+    Result: "Done"
+    End: true
+`)
+
+	// Use a fake repo that returns empty list
+	emptyRepo := &fakeRepositoryEmpty{}
+	repoManager := &repository.Manager{}
+	setUnexportedField(t, repoManager, "repository", emptyRepo)
+
+	sm, err := New(definition, false, "test-sm", repoManager)
+	require.NoError(t, err)
+
+	filter := &repository.ExecutionFilter{
+		StateMachineID: "non-existent",
+	}
+
+	batchOpts := &statemachine.BatchExecutionOptions{
+		NamePrefix:        "batch-empty",
+		ConcurrentBatches: 1,
+	}
+
+	results, err := sm.ExecuteBatch(ctx, filter, "", batchOpts)
+	require.NoError(t, err)
+	require.NotNil(t, results)
+	require.Equal(t, 0, len(results))
+}
+
+// TestExecuteBatch_WithFilter tests that filter is properly passed
+func TestExecuteBatch_WithFilter(t *testing.T) {
+	ctx := context.Background()
+
+	// Create state machine
+	definition := []byte(`
+StartAt: SimpleState
+States:
+  SimpleState:
+    Type: Pass
+    Result: "Done"
+    End: true
+`)
+
+	fakeRepo := &fakeRepository{}
+	repoManager := &repository.Manager{}
+	setUnexportedField(t, repoManager, "repository", fakeRepo)
+
+	sm, err := New(definition, false, "test-sm", repoManager)
+	require.NoError(t, err)
+
+	// Test with specific filter
+	filter := &repository.ExecutionFilter{
+		StateMachineID: "source-sm",
+		Status:         "SUCCEEDED",
+		Limit:          10,
+		Offset:         5,
+	}
+
+	batchOpts := &statemachine.BatchExecutionOptions{
+		NamePrefix:        "batch-filter",
+		ConcurrentBatches: 1,
+	}
+
+	_, err = sm.ExecuteBatch(ctx, filter, "", batchOpts)
+	require.NoError(t, err)
+
+	// Verify filter was passed correctly
+	require.Equal(t, 10, fakeRepo.lastListLimit)
+	require.Equal(t, 5, fakeRepo.lastListOffset)
 }
 
 // executionContextForTest creates an execution context by calling pm.Execute-equivalent logic

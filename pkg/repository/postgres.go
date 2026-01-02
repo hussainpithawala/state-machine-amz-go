@@ -776,6 +776,71 @@ func (ps *PostgresRepository) ListExecutions(ctx context.Context, filter *Execut
 	return results, nil
 }
 
+// ListExecutionIDs returns only execution IDs matching the filter (more efficient than ListExecutions)
+func (ps *PostgresRepository) ListExecutionIDs(ctx context.Context, filter *ExecutionFilter) ([]string, error) {
+	query, args := ps.buildListExecutionIDsQuery(filter)
+
+	rows, err := ps.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query execution IDs: %w", err)
+	}
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			fmt.Println("Failed to close execution IDs rows")
+		}
+	}(rows)
+
+	var results []string
+	for rows.Next() {
+		var executionID string
+		if err := rows.Scan(&executionID); err != nil {
+			return nil, fmt.Errorf("failed to scan execution ID: %w", err)
+		}
+		results = append(results, executionID)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating execution IDs: %w", err)
+	}
+
+	return results, nil
+}
+
+func (ps *PostgresRepository) buildListExecutionIDsQuery(filter *ExecutionFilter) (query string, args []interface{}) {
+	baseQuery := `
+		SELECT DISTINCT execution_id
+		FROM executions
+	`
+
+	var conditions []string
+	args = []interface{}{}
+
+	if filter != nil {
+		conditions, args = ps.buildExecutionFilters(filter, conditions, args)
+	}
+
+	query = baseQuery
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY execution_id"
+
+	// Handle pagination
+	if filter != nil {
+		if filter.Limit > 0 {
+			query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+			args = append(args, filter.Limit)
+		}
+		if filter.Offset > 0 {
+			query += fmt.Sprintf(" OFFSET $%d", len(args)+1)
+			args = append(args, filter.Offset)
+		}
+	}
+
+	return query, args
+}
+
 func (ps *PostgresRepository) buildListExecutionsQuery(filter *ExecutionFilter) (query string, args []interface{}) {
 	baseQuery := `
 		SELECT DISTINCT ON (execution_id)

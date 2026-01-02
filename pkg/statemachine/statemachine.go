@@ -339,3 +339,12 @@ func WithInputTransformer(transformer func(interface{}) (interface{}, error)) Ex
 		c.InputTransformer = transformer
 	}
 }
+
+// BatchExecutionOptions configures batch execution behavior
+type BatchExecutionOptions struct {
+	NamePrefix          string // Prefix for generated execution names
+	ConcurrentBatches   int    // Number of concurrent executions (0 = sequential, >0 = concurrent)
+	StopOnError         bool   // Stop processing if an execution fails
+	OnExecutionStart    func(sourceExecutionID string, index int)
+	OnExecutionComplete func(sourceExecutionID string, index int, err error)
+}
