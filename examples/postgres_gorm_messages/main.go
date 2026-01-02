@@ -192,7 +192,7 @@ func getPersistenceManager(ctx context.Context) (*repository.Manager, error) {
 }
 
 func getConnectionURL() string {
-	if url := os.Getenv("DATABASE_URL"); url != "" {
+	if url := os.Getenv("DATABASE_URL_GORM"); url != "" {
 		return url
 	}
 	return "postgres://postgres:postgres@localhost:5432/statemachine_gorm_messages?sslmode=disable"

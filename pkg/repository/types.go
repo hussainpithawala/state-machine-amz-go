@@ -53,6 +53,12 @@ type ExecutionFilter struct {
 	Offset         int       // Offset for pagination
 }
 
+// BatchExecutionFilter extends ExecutionFilter for batch chained executions
+type BatchExecutionFilter struct {
+	ExecutionFilter
+	SourceStateName string // Optional: specific state to get output from in source executions
+}
+
 // Statistics represents aggregated execution statistics
 type Statistics struct {
 	StateMachineID string
@@ -99,6 +105,9 @@ type Repository interface {
 
 	// CountExecutions returns the count of executions matching the filter
 	CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error)
+
+	// ListExecutionIDs returns only execution IDs matching the filter (more efficient than ListExecutions)
+	ListExecutionIDs(ctx context.Context, filter *ExecutionFilter) ([]string, error)
 
 	// DeleteExecution removes an execution and its history
 	DeleteExecution(ctx context.Context, executionID string) error

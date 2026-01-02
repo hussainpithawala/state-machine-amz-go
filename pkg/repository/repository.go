@@ -199,6 +199,11 @@ func (pm *Manager) GetExecutionOutput(ctx context.Context, executionID, stateNam
 	return pm.repository.GetExecutionOutput(ctx, executionID, stateName)
 }
 
+// ListExecutionIDs returns only execution IDs matching the filter
+func (pm *Manager) ListExecutionIDs(ctx context.Context, filter *ExecutionFilter) ([]string, error) {
+	return pm.repository.ListExecutionIDs(ctx, filter)
+}
+
 // Helper function to generate unique history IDs
 func generateHistoryID(executionID, stateName string, timestamp time.Time) string {
 	return fmt.Sprintf("%s-%s-%d", executionID, stateName, timestamp.UnixNano())

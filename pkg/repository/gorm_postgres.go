@@ -349,6 +349,35 @@ func (r *GormPostgresRepository) ListExecutions(ctx context.Context, filter *Exe
 	return executions, nil
 }
 
+// ListExecutionIDs returns only execution IDs matching the filter (more efficient than ListExecutions)
+func (r *GormPostgresRepository) ListExecutionIDs(ctx context.Context, filter *ExecutionFilter) ([]string, error) {
+	query := r.db.WithContext(ctx).Model(&ExecutionModel{}).Select("execution_id").Distinct()
+
+	// Apply filters
+	if filter != nil {
+		query = addFiltersToQuery(filter, query)
+
+		// Apply pagination
+		if filter.Limit > 0 {
+			query = query.Limit(filter.Limit)
+		}
+		if filter.Offset > 0 {
+			query = query.Offset(filter.Offset)
+		}
+	}
+
+	// Always order by execution_id
+	query = query.Order("execution_id")
+
+	var executionIDs []string
+	result := query.Pluck("execution_id", &executionIDs)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to list execution IDs: %w", result.Error)
+	}
+
+	return executionIDs, nil
+}
+
 func addFiltersToQuery(filter *ExecutionFilter, query *gorm.DB) *gorm.DB {
 	if filter.Status != "" {
 		query = query.Where("status = ?", filter.Status)

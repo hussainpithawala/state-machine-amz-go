@@ -32,6 +32,19 @@ jobs:
       matrix:
         go-version: [ 1.23 ]
 
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: statemachine_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +52,22 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
+
+      # Install PostgreSQL client tools (psql, pg_isready, etc.)
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      # Wait for Postgres to be ready (optional, healthcheck usually suffices)
+      - name: Wait for PostgreSQL
+        run: |
+          timeout 60s sh -c 'until pg_isready --host=localhost --port=5432 --username=postgres; do sleep 2; done'
+
+      # Create the second database
+      - name: Create additional test database
+        run: |
+          psql -h localhost -U postgres -d statemachine_test -c 'CREATE DATABASE statemachine_test_gorm;'
+        env:
+          PGPASSWORD: postgres
 
       - name: Cache Go modules
         uses: actions/cache@v3
@@ -54,8 +83,80 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test ./... -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out -tags 'exclude_integration'
+        env:
+          POSTGRES_TEST_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
+          POSTGRES_TEST_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
 
+        run: go test ./... -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
+          flags: ${{ matrix.go-version }}-${{ matrix.os }}
+
+  test-examples:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: [ 1.23 ]
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: statemachine_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      # Install PostgreSQL client tools (psql, pg_isready, etc.)
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      # Wait for Postgres to be ready (optional, healthcheck usually suffices)
+      - name: Wait for PostgreSQL
+        run: |
+          timeout 60s sh -c 'until pg_isready --host=localhost --port=5432 --username=postgres; do sleep 2; done'
+
+      # Create the second database
+      - name: Create additional test database
+        run: |
+          psql -h localhost -U postgres -d statemachine_test -c 'CREATE DATABASE statemachine_test_gorm;'
+        env:
+          PGPASSWORD: postgres
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run test-examples
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
+          DATABASE_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
+        run: find examples -maxdepth 2 -name "*.go" -print0 | xargs -0 -n1 go run
       - name: Upload coverage
         uses: codecov/codecov-action@v5
         with:
@@ -65,7 +166,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, test-examples]
     steps:
       - uses: actions/checkout@v4
 

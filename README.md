@@ -9,23 +9,31 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.0.8
+## 🆕 What's New in v1.0.9
 
-**Execution Chaining** - Chain multiple state machine executions together to build sophisticated multi-stage workflows!
+**Batch Chained Execution** - Execute chained workflows in batch mode with powerful filtering and concurrency control!
 
 ```go
-// Execute State Machine A
-execA, _ := stateMachineA.Execute(ctx, inputA)
+// Filter source executions
+filter := &repository.ExecutionFilter{
+    StateMachineID: sourceStateMachine.GetID(),
+    Status:         "SUCCEEDED",
+    StartAfter:     time.Now().Add(-24 * time.Hour),
+    Limit:          100,
+}
 
-// Chain State Machine B using A's output
-execB, _ := stateMachineB.Execute(ctx, nil,
-    statemachine.WithSourceExecution(execA.ID),
-)
+// Execute batch with concurrency
+batchOpts := &statemachine.BatchExecutionOptions{
+    NamePrefix:        "batch-processing",
+    ConcurrentBatches: 5,  // Process 5 at a time
+}
+
+results, _ := targetStateMachine.ExecuteBatch(ctx, filter, "", batchOpts)
 ```
 
-Build modular, composable workflows by connecting smaller state machines. Perfect for data pipelines, microservices orchestration, and event-driven architectures.
+Launch hundreds or thousands of chained executions automatically! Perfect for data pipeline orchestration, order processing, report generation, and ETL operations.
 
-**[📖 Read the full announcement →](releasenote.md)**
+**[📖 Read the full release notes →](RELEASE_v1.0.9.md)**
 
 ## ✨ Features
 
@@ -38,6 +46,7 @@ Build modular, composable workflows by connecting smaller state machines. Perfec
 - 🔄 **All State Types** - Task, Parallel, Choice, Wait, Pass, Succeed, Fail, Map, Message
 - 📩 **Message Correlation** - Pause workflows and resume with external asynchronous messages
 - 🔗 **Execution Chaining** - Chain multiple state machines together for complex multi-stage workflows
+- 📦 **Batch Execution** - Execute chained workflows in batch mode with filtering and concurrency control
 - 🎯 **Clean Architecture** - Separation between state machine logic and persistence
 - 📊 **Execution History** - Complete audit trail with state-by-state tracking
 - 🧪 **Test-Friendly** - Easy mocking and comprehensive testing support
@@ -466,6 +475,71 @@ execB, _ := stateMachineB.Execute(ctx, nil,
 - ETL workflows
 
 **[📖 Full Documentation](examples/chained_postgres_gorm/CHAINED_EXECUTION_README.md)**
+
+### Batch Chained Execution (NEW in v1.0.9)
+
+Execute chained workflows in batch mode by filtering source executions!
+
+**Basic batch execution:**
+```go
+// Filter source executions
+filter := &repository.ExecutionFilter{
+    StateMachineID: sourceStateMachine.GetID(),
+    Status:         "SUCCEEDED",
+    StartAfter:     time.Now().Add(-24 * time.Hour),
+    Limit:          100,
+}
+
+// Configure batch options
+batchOpts := &statemachine.BatchExecutionOptions{
+    NamePrefix:        "batch-processing",
+    ConcurrentBatches: 5,  // Process 5 at a time
+    StopOnError:       false,
+}
+
+// Execute batch
+results, _ := targetStateMachine.ExecuteBatch(ctx, filter, "", batchOpts)
+
+// Process results
+for _, result := range results {
+    if result.Error != nil {
+        log.Printf("Execution %d failed: %v", result.Index, result.Error)
+    } else {
+        log.Printf("Execution %d succeeded: %s", result.Index, result.Execution.Status)
+    }
+}
+```
+
+**With progress monitoring:**
+```go
+completedCount := 0
+batchOpts := &statemachine.BatchExecutionOptions{
+    NamePrefix:        "monitored-batch",
+    ConcurrentBatches: 3,
+    OnExecutionStart: func(sourceExecutionID string, index int) {
+        log.Printf("⏳ Starting execution %d for %s", index, sourceExecutionID)
+    },
+    OnExecutionComplete: func(sourceExecutionID string, index int, err error) {
+        completedCount++
+        if err != nil {
+            log.Printf("❌ Execution %d failed", index)
+        } else {
+            log.Printf("✅ Execution %d succeeded", index)
+        }
+    },
+}
+
+results, _ := targetStateMachine.ExecuteBatch(ctx, filter, "", batchOpts)
+log.Printf("Batch complete: %d/%d succeeded", completedCount, len(results))
+```
+
+**Use Cases:**
+- Data pipeline orchestration (process hundreds of data files)
+- Order batch processing (fulfill multiple orders)
+- Report generation (generate reports for multiple accounts)
+- ETL operations (transform data from multiple sources)
+
+**[📖 Full Documentation](examples/batch_chained_postgres_gorm/BATCH_CHAINED_EXECUTION_README.md)**
 
 ## 📊 Execution Tracking
 

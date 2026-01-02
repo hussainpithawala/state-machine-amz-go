@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.9] - 2026-01-02
+
+### Added
+- **Batch Chained Execution**: Launch chained executions in batch mode with powerful filtering capabilities.
+  - `ExecuteBatch()` method in persistent state machine for batch execution of chained workflows.
+  - `ListExecutionIDs()` method in Repository interface for efficient execution ID retrieval.
+  - `BatchExecutionOptions` struct for configuring batch execution behavior (concurrency, callbacks, error handling).
+  - `BatchExecutionResult` struct for tracking individual batch execution results.
+  - Support for sequential and concurrent batch execution modes.
+  - Progress monitoring with `OnExecutionStart` and `OnExecutionComplete` callbacks.
+  - Flexible filtering by state machine ID, status, time ranges, and pagination.
+- Comprehensive documentation in `examples/batch_chained_postgres_gorm/BATCH_CHAINED_EXECUTION_README.md`.
+- Working example demonstrating 5 batch execution patterns in `examples/batch_chained_postgres_gorm/batch_chained_execution_example.go`.
+- Integration tests for `ListExecutionIDs` in both PostgreSQL and GORM implementations (7 test scenarios each).
+
+### Changed
+- Extended Repository interface with `ListExecutionIDs()` method.
+- Implemented `ListExecutionIDs()` in PostgreSQL and GORM repositories with optimized DISTINCT queries.
+- Enhanced Manager with `ListExecutionIDs()` delegation method.
+
+### Improved
+- **Testing Strategy**: Removed all fake/mock repository implementations (~750 lines).
+  - Simplified `repository_test.go` by removing `fakeStrategy` (85% code reduction).
+  - Simplified `persistent_test.go` by removing `fakeRepository` (74% code reduction).
+  - Maintained comprehensive integration tests for actual database operations.
+  - Improved test clarity and maintainability.
+  - Better CI/CD pipeline integration with real database testing.
+
+### Fixed
+- Added missing `timePtr` helper function in integration tests.
+
 ## [1.0.8] - 2025-12-31
 
 ### Added

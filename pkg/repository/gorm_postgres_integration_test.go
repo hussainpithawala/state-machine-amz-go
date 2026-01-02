@@ -1,6 +1,3 @@
-//go:build integration
-// +build integration
-
 // pkg/repository/gorm_postgres_integration_test.go
 package repository
 
@@ -623,13 +620,153 @@ func (suite *GormPostgresIntegrationTestSuite) TestMessageCorrelationLifecycle()
 	assert.Error(suite.T(), err)
 }
 
+// TestListExecutionIDs tests the ListExecutionIDs method
+func (suite *GormPostgresIntegrationTestSuite) TestListExecutionIDs() {
+	// Create multiple test executions
+	executions := []*ExecutionRecord{
+		{
+			ExecutionID:    "exec-list-001",
+			StateMachineID: "sm-list-test",
+			Name:           "exec-001",
+			Status:         "SUCCEEDED",
+			StartTime:      timePtr(time.Now().Add(-5 * time.Hour)),
+			CurrentState:   "Final",
+		},
+		{
+			ExecutionID:    "exec-list-002",
+			StateMachineID: "sm-list-test",
+			Name:           "exec-002",
+			Status:         "SUCCEEDED",
+			StartTime:      timePtr(time.Now().Add(-4 * time.Hour)),
+			CurrentState:   "Final",
+		},
+		{
+			ExecutionID:    "exec-list-003",
+			StateMachineID: "sm-list-test",
+			Name:           "exec-003",
+			Status:         "FAILED",
+			StartTime:      timePtr(time.Now().Add(-3 * time.Hour)),
+			CurrentState:   "ErrorState",
+		},
+		{
+			ExecutionID:    "exec-list-004",
+			StateMachineID: "sm-list-other",
+			Name:           "exec-004",
+			Status:         "SUCCEEDED",
+			StartTime:      timePtr(time.Now().Add(-2 * time.Hour)),
+			CurrentState:   "Final",
+		},
+		{
+			ExecutionID:    "exec-list-005",
+			StateMachineID: "sm-list-test",
+			Name:           "exec-005",
+			Status:         "SUCCEEDED",
+			StartTime:      timePtr(time.Now().Add(-1 * time.Hour)),
+			CurrentState:   "Final",
+		},
+	}
+
+	// Save all executions
+	for _, exec := range executions {
+		err := suite.repository.SaveExecution(suite.ctx, exec)
+		require.NoError(suite.T(), err)
+	}
+
+	// Test 1: List all execution IDs
+	suite.Run("ListAll", func() {
+		ids, err := suite.repository.ListExecutionIDs(suite.ctx, &ExecutionFilter{})
+		require.NoError(suite.T(), err)
+		assert.GreaterOrEqual(suite.T(), len(ids), 5)
+	})
+
+	// Test 2: Filter by state machine ID
+	suite.Run("FilterByStateMachineID", func() {
+		ids, err := suite.repository.ListExecutionIDs(suite.ctx, &ExecutionFilter{
+			StateMachineID: "sm-list-test",
+		})
+		require.NoError(suite.T(), err)
+		assert.Equal(suite.T(), 4, len(ids))
+		// Should include: exec-list-001, 002, 003, 005
+		assert.Contains(suite.T(), ids, "exec-list-001")
+		assert.Contains(suite.T(), ids, "exec-list-002")
+		assert.Contains(suite.T(), ids, "exec-list-003")
+		assert.Contains(suite.T(), ids, "exec-list-005")
+		assert.NotContains(suite.T(), ids, "exec-list-004")
+	})
+
+	// Test 3: Filter by status
+	suite.Run("FilterByStatus", func() {
+		ids, err := suite.repository.ListExecutionIDs(suite.ctx, &ExecutionFilter{
+			StateMachineID: "sm-list-test",
+			Status:         "SUCCEEDED",
+		})
+		require.NoError(suite.T(), err)
+		assert.Equal(suite.T(), 3, len(ids))
+		// Should include: exec-list-001, 002, 005
+		assert.Contains(suite.T(), ids, "exec-list-001")
+		assert.Contains(suite.T(), ids, "exec-list-002")
+		assert.Contains(suite.T(), ids, "exec-list-005")
+		assert.NotContains(suite.T(), ids, "exec-list-003") // FAILED
+	})
+
+	// Test 4: Use limit
+	suite.Run("WithLimit", func() {
+		ids, err := suite.repository.ListExecutionIDs(suite.ctx, &ExecutionFilter{
+			StateMachineID: "sm-list-test",
+			Limit:          2,
+		})
+		require.NoError(suite.T(), err)
+		assert.Equal(suite.T(), 2, len(ids))
+	})
+
+	// Test 5: Use offset
+	suite.Run("WithOffset", func() {
+		// Get all IDs first
+		allIDs, err := suite.repository.ListExecutionIDs(suite.ctx, &ExecutionFilter{
+			StateMachineID: "sm-list-test",
+		})
+		require.NoError(suite.T(), err)
+
+		// Get with offset
+		idsWithOffset, err := suite.repository.ListExecutionIDs(suite.ctx, &ExecutionFilter{
+			StateMachineID: "sm-list-test",
+			Offset:         2,
+		})
+		require.NoError(suite.T(), err)
+		assert.Equal(suite.T(), len(allIDs)-2, len(idsWithOffset))
+	})
+
+	// Test 6: Time range filter
+	suite.Run("FilterByTimeRange", func() {
+		ids, err := suite.repository.ListExecutionIDs(suite.ctx, &ExecutionFilter{
+			StateMachineID: "sm-list-test",
+			StartAfter:     time.Now().Add(-3*time.Hour - 30*time.Minute),
+			StartBefore:    time.Now().Add(-30 * time.Minute),
+		})
+		require.NoError(suite.T(), err)
+		// Should include: exec-list-003 and exec-list-005
+		assert.GreaterOrEqual(suite.T(), len(ids), 2)
+		assert.Contains(suite.T(), ids, "exec-list-003")
+		assert.Contains(suite.T(), ids, "exec-list-005")
+	})
+
+	// Test 7: Empty result
+	suite.Run("EmptyResult", func() {
+		ids, err := suite.repository.ListExecutionIDs(suite.ctx, &ExecutionFilter{
+			StateMachineID: "non-existent-sm",
+		})
+		require.NoError(suite.T(), err)
+		assert.Equal(suite.T(), 0, len(ids))
+	})
+}
+
 // Run the test suite
 func TestGormPostgresIntegrationSuite(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping PostgreSQL integration tests in short mode")
 	}
 
-	connURL := os.Getenv("POSTGRES_TEST_URL")
+	connURL := os.Getenv("POSTGRES_TEST_URL_GORM")
 	if connURL == "" {
 		connURL = "postgres://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable"
 	}
@@ -651,4 +788,9 @@ func TestGormPostgresIntegrationSuite(t *testing.T) {
 	_ = repo.Close()
 
 	suite.Run(t, new(GormPostgresIntegrationTestSuite))
+}
+
+// Helper function to create time pointers
+func timePtr(t time.Time) *time.Time {
+	return &t
 }
