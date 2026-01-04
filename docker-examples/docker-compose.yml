@@ -12,3 +12,40 @@ services:
       - "./postgres_14/postgres.conf:/usr/local/etc/postgres/postgres.conf"
       - "./postgres_14/data:/var/lib/postgresql/data:delegated"
     command: "postgres -c config_file=/usr/local/etc/postgres/postgres.conf"
+    networks:
+      - statemachine-network
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - '6379:6379'
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - statemachine-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  asynqmon:
+    image: asynqmon:local
+    restart: always
+    ports:
+      - '8080:8080'
+    environment:
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      - redis
+    networks:
+      - statemachine-network
+
+networks:
+  statemachine-network:
+    driver: bridge
+
+volumes:
+  redis-data:

@@ -42,6 +42,12 @@ type StateHistory struct {
 	Metadata       map[string]interface{}
 }
 
+// DefinitionFilter defines filters for querying state machines
+type DefinitionFilter struct {
+	StateMachineID string // Filter by state machine ID
+	Name           string // Filter by name (supports partial match)
+}
+
 // ExecutionFilter defines filters for querying executions
 type ExecutionFilter struct {
 	Status         string    // Filter by status

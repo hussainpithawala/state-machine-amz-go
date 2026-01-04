@@ -877,6 +877,41 @@ func (ps *PostgresRepository) buildListExecutionsQuery(filter *ExecutionFilter) 
 	return query, args
 }
 
+func (ps *PostgresRepository) buildDefinitionQuery(filter *DefinitionFilter) (query string, args []interface{}) {
+	baseQuery := `
+		SELECT
+			id, name, definition, initial_state, timeout_seconds, retry_strategy
+		FROM state_machines
+		WHERE id = $1
+	`
+	var conditions []string
+	args = []interface{}{} // initialize args since it's a named return
+
+	if filter != nil {
+		conditions, args = ps.buildExecutionFilters(filter, conditions, args)
+	}
+
+	query = baseQuery
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY id, created_at DESC"
+
+	// Handle pagination
+	if filter != nil {
+		if filter.Limit > 0 {
+			query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+			args = append(args, filter.Limit)
+		}
+		if filter.Offset > 0 {
+			query += fmt.Sprintf(" OFFSET $%d", len(args)+1)
+			args = append(args, filter.Offset)
+		}
+	}
+
+	return query, args
+}
+
 func (ps *PostgresRepository) scanExecutionRow(rows *sql.Rows) (*ExecutionRecord, error) {
 	record := &ExecutionRecord{}
 	var inputJSON, outputJSON, metadataJSON []byte

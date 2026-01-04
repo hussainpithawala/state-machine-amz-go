@@ -9,6 +9,7 @@ import (
 
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	statemachine2 "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
 )
@@ -21,6 +22,7 @@ type StateMachine struct {
 	statemachine      *statemachine2.StateMachine
 	repositoryManager *repository.Manager
 	stateMachineID    string
+	queueClient       *queue.Client
 }
 
 // Option allows configuring the state machine
@@ -337,6 +339,16 @@ func (pm *StateMachine) GetID() string {
 	return pm.stateMachineID
 }
 
+// SetQueueClient sets the queue client for distributed execution
+func (pm *StateMachine) SetQueueClient(client *queue.Client) {
+	pm.queueClient = client
+}
+
+// GetQueueClient returns the queue client
+func (pm *StateMachine) GetQueueClient() *queue.Client {
+	return pm.queueClient
+}
+
 func (pm *StateMachine) GetStartAt() string {
 	return pm.statemachine.GetStartAt()
 }
@@ -452,7 +464,81 @@ func (pm *StateMachine) executeBatchSequential(
 }
 
 // executeBatchConcurrent executes chained executions concurrently with controlled parallelism
+// If a queue client is configured, tasks are enqueued to the distributed queue
+// Otherwise, tasks are executed locally with goroutines
 func (pm *StateMachine) executeBatchConcurrent(
+	ctx context.Context,
+	sourceExecutionIDs []string,
+	sourceStateName string,
+	opts *statemachine2.BatchExecutionOptions,
+	execOpts ...statemachine2.ExecutionOption,
+) ([]*BatchExecutionResult, error) {
+	// If queue client is configured, use distributed execution
+	if pm.queueClient != nil {
+		return pm.executeBatchViaQueue(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
+	}
+
+	// Otherwise, execute locally (original implementation)
+	return pm.executeBatchLocal(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
+}
+
+// executeBatchViaQueue enqueues execution tasks to the distributed queue
+func (pm *StateMachine) executeBatchViaQueue(
+	ctx context.Context,
+	sourceExecutionIDs []string,
+	sourceStateName string,
+	opts *statemachine2.BatchExecutionOptions,
+	execOpts ...statemachine2.ExecutionOption,
+) ([]*BatchExecutionResult, error) {
+	results := make([]*BatchExecutionResult, len(sourceExecutionIDs))
+
+	for idx, sourceExecID := range sourceExecutionIDs {
+		// Notify start
+		if opts.OnExecutionStart != nil {
+			opts.OnExecutionStart(sourceExecID, idx)
+		}
+
+		// Create task payload
+		payload := &queue.ExecutionTaskPayload{
+			StateMachineID:    pm.stateMachineID,
+			SourceExecutionID: sourceExecID,
+			SourceStateName:   sourceStateName,
+			ExecutionName:     fmt.Sprintf("%s-%d", opts.NamePrefix, idx),
+			ExecutionIndex:    idx,
+			Input:             nil, // Input will be derived from source execution
+		}
+
+		// Enqueue the task
+		taskInfo, err := pm.queueClient.EnqueueExecution(payload)
+
+		result := &BatchExecutionResult{
+			SourceExecutionID: sourceExecID,
+			Execution:         nil, // Execution will be processed by worker
+			Error:             err,
+			Index:             idx,
+		}
+		results[idx] = result
+
+		// Notify completion (task enqueued, not executed)
+		if opts.OnExecutionComplete != nil {
+			opts.OnExecutionComplete(sourceExecID, idx, err)
+		}
+
+		if err != nil {
+			if opts.StopOnError {
+				return results, fmt.Errorf("failed to enqueue task at index %d: %w", idx, err)
+			}
+		} else {
+			fmt.Printf("Enqueued execution task: TaskID=%s, Queue=%s, SourceExecutionID=%s\n",
+				taskInfo.ID, taskInfo.Queue, sourceExecID)
+		}
+	}
+
+	return results, nil
+}
+
+// executeBatchLocal executes chained executions locally with goroutines
+func (pm *StateMachine) executeBatchLocal(
 	ctx context.Context,
 	sourceExecutionIDs []string,
 	sourceStateName string,
