@@ -9,31 +9,45 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.0.9
+## 🆕 What's New in v1.1.0
 
-**Batch Chained Execution** - Execute chained workflows in batch mode with powerful filtering and concurrency control!
+**Distributed Queue Execution** - Scale your state machine executions across multiple workers with Redis-backed task queues! 🚀
 
 ```go
-// Filter source executions
-filter := &repository.ExecutionFilter{
-    StateMachineID: sourceStateMachine.GetID(),
-    Status:         "SUCCEEDED",
-    StartAfter:     time.Now().Add(-24 * time.Hour),
-    Limit:          100,
+// Configure distributed queue
+queueConfig := &queue.Config{
+    RedisAddr:   "localhost:6379",
+    Concurrency: 10,
+    Queues: map[string]int{
+        "critical": 6,  // High priority
+        "default":  3,
+        "low":      1,
+    },
 }
 
-// Execute batch with concurrency
+queueClient, _ := queue.NewClient(queueConfig)
+sm.SetQueueClient(queueClient)
+
+// Execute batch in distributed mode - tasks processed across workers
 batchOpts := &statemachine.BatchExecutionOptions{
-    NamePrefix:        "batch-processing",
-    ConcurrentBatches: 5,  // Process 5 at a time
+    NamePrefix:  "distributed-batch",
+    Concurrency: 10,
+    Mode:        "distributed",  // NEW: distributed, concurrent, sequential
 }
 
-results, _ := targetStateMachine.ExecuteBatch(ctx, filter, "", batchOpts)
+results, _ := sm.ExecuteBatch(ctx, filter, "", batchOpts)
 ```
 
-Launch hundreds or thousands of chained executions automatically! Perfect for data pipeline orchestration, order processing, report generation, and ETL operations.
+**Key Features:**
+- ⚡ **Leader-Worker Architecture** - Separate task generation from execution
+- 🔄 **Priority Queues** - Route critical tasks to high-priority workers
+- 📊 **Performance Optimizations** - 96% faster execution saves (265ms → <10ms)
+- 🎯 **Queue Statistics** - Monitor pending, active, and failed tasks
+- 🔗 **REST API Framework** - New [state-machine-amz-gin](https://github.com/hussainpithawala/state-machine-amz-gin) for HTTP API
 
-**[📖 Read the full release notes →](RELEASE_v1.0.9.md)**
+Process millions of tasks efficiently! Perfect for high-throughput order processing, ETL pipelines, batch jobs, and distributed workflows.
+
+**[📖 Read the full release notes →](RELEASE_NOTES.md)**
 
 ## ✨ Features
 
@@ -47,7 +61,9 @@ Launch hundreds or thousands of chained executions automatically! Perfect for da
 - 📩 **Message Correlation** - Pause workflows and resume with external asynchronous messages
 - 🔗 **Execution Chaining** - Chain multiple state machines together for complex multi-stage workflows
 - 📦 **Batch Execution** - Execute chained workflows in batch mode with filtering and concurrency control
-- 🎯 **Clean Architecture** - Separation between state machine logic and persistence
+- 🌐 **Distributed Queue** - Redis-backed task queue for horizontal scaling across workers (NEW in v1.1.0)
+- 🎯 **REST API** - Complete HTTP API via [state-machine-amz-gin](https://github.com/hussainpithawala/state-machine-amz-gin) (NEW in v1.1.0)
+- 🏗️ **Clean Architecture** - Separation between state machine logic and persistence
 - 📊 **Execution History** - Complete audit trail with state-by-state tracking
 - 🧪 **Test-Friendly** - Easy mocking and comprehensive testing support
 - 🔌 **Pluggable Storage** - Support for multiple persistence backends (PostgreSQL, GORM, In-Memory)
@@ -69,6 +85,16 @@ go get gorm.io/driver/postgres
 For PostgreSQL persistence with raw SQL:
 ```bash
 go get github.com/lib/pq
+```
+
+For distributed queue support (optional):
+```bash
+go get github.com/hibiken/asynq
+```
+
+For REST API framework (optional):
+```bash
+go get github.com/hussainpithawala/state-machine-amz-gin
 ```
 
 ## 🚀 Quick Start
@@ -541,6 +567,121 @@ log.Printf("Batch complete: %d/%d succeeded", completedCount, len(results))
 
 **[📖 Full Documentation](examples/batch_chained_postgres_gorm/BATCH_CHAINED_EXECUTION_README.md)**
 
+### Distributed Queue Execution (NEW in v1.1.0)
+
+Scale your state machine executions horizontally with Redis-backed task queues!
+
+**1. Setup Queue Infrastructure:**
+
+```go
+// Configure Redis-backed queue
+queueConfig := &queue.Config{
+    RedisAddr:     "localhost:6379",
+    RedisPassword: "",
+    RedisDB:       0,
+    Concurrency:   10,
+    Queues: map[string]int{
+        "critical": 6,  // Priority 6 (highest)
+        "default":  3,  // Priority 3
+        "low":      1,  // Priority 1 (lowest)
+    },
+    RetryPolicy: &queue.RetryPolicy{
+        MaxRetry: 3,
+        Timeout:  10 * time.Minute,
+    },
+}
+
+queueClient, _ := queue.NewClient(queueConfig)
+defer queueClient.Close()
+```
+
+**2. Leader Mode - Enqueue Tasks:**
+
+```go
+// Load state machine
+sm, _ := persistent.NewFromDefnId(ctx, "order-processing", repoManager)
+sm.SetQueueClient(queueClient)
+
+// Enqueue 1M tasks to distributed queue
+for i := 0; i < 1000000; i++ {
+    payload := &queue.ExecutionTaskPayload{
+        StateMachineID: sm.GetID(),
+        ExecutionName:  fmt.Sprintf("order-%d", i),
+        Input: map[string]interface{}{
+            "orderId": fmt.Sprintf("ORD-%d", i),
+            "amount":  100.00 + float64(i),
+        },
+    }
+
+    queueClient.EnqueueExecution(payload)
+}
+```
+
+**3. Worker Mode - Process Tasks:**
+
+```go
+// Setup task executor with handlers
+exec := executor.NewBaseExecutor()
+exec.RegisterGoFunction("validate:order", validateOrderHandler)
+exec.RegisterGoFunction("process:payment", processPaymentHandler)
+
+// Create execution handler with context
+execAdapter := executor.NewExecutionContextAdapter(exec)
+handler := persistent.NewExecutionHandlerWithContext(repoManager, execAdapter)
+
+// Create and start worker
+worker, _ := queue.NewWorker(queueConfig, handler)
+worker.Run()  // Blocks and processes tasks
+```
+
+**4. Batch Execution with Distributed Mode:**
+
+```go
+// Execute batch via distributed queue
+batchOpts := &statemachine.BatchExecutionOptions{
+    NamePrefix:  "distributed-batch",
+    Concurrency: 10,
+    Mode:        "distributed",  // Tasks go to queue
+}
+
+results, _ := sm.ExecuteBatch(ctx, filter, "", batchOpts)
+log.Printf("Enqueued %d tasks to distributed queue", len(results))
+```
+
+**5. Monitor Queue Statistics:**
+
+```go
+stats, _ := queueClient.GetStats()
+for queueName, stat := range stats {
+    fmt.Printf("Queue %s: Pending=%d, Active=%d, Failed=%d\n",
+        queueName, stat.Pending, stat.Active, stat.Failed)
+}
+```
+
+**Architecture:**
+```
+┌─────────────┐         ┌─────────────┐
+│   Leader    │────────▶│    Redis    │
+│  (Enqueue)  │         │    Queue    │
+└─────────────┘         └──────┬──────┘
+                               │
+                    ┌──────────┼──────────┐
+                    ▼          ▼          ▼
+              ┌─────────┐ ┌─────────┐ ┌─────────┐
+              │Worker 1 │ │Worker 2 │ │Worker N │
+              │(Process)│ │(Process)│ │(Process)│
+              └─────────┘ └─────────┘ └─────────┘
+```
+
+**Use Cases:**
+- High-throughput order processing (millions of orders/day)
+- Distributed ETL pipelines
+- Batch job processing across multiple servers
+- Microservices task orchestration
+- Scalable workflow execution
+
+**[📖 Full Example](examples/distributed_queue/main.go)**
+
 ## 📊 Execution Tracking
 
 ### Query Execution History
@@ -682,12 +823,14 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] Message Pause and Resume (MessageState)
 - [x] GORM & PostgreSQL correlation support
 - [x] **Execution Chaining (v1.0.8)** - Chain state machines together
+- [x] **Batch Chained Execution (v1.0.9)** - Batch processing with filtering
+- [x] **Distributed Queue Execution (v1.1.0)** - Redis-backed task queues
+- [x] **REST API Framework (v1.1.0)** - Complete HTTP API via Gin
 - [ ] Visual workflow builder
-- [ ] Redis persistence backend
 - [ ] DynamoDB persistence backend
-- [ ] Distributed execution support
 - [ ] Web dashboard for monitoring
 - [ ] Grafana/Prometheus metrics
+- [ ] Workflow versioning and rollback
 
 ## 📄 License
 
