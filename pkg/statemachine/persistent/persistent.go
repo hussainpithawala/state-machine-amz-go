@@ -82,9 +82,13 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 	// If input is already an Execution context, use it
 	if existingExec, ok := input.(*execution.Execution); ok {
 		execCtx = existingExec
-		// If ID is not set, use stateMachineID
+		// If ID is not set, generate a unique execution ID
 		if execCtx.ID == "" {
-			execCtx.ID = pm.stateMachineID
+			execCtx.ID = fmt.Sprintf("%s-exec-%d", pm.stateMachineID, time.Now().UnixNano())
+		}
+		// Set StateMachineID if not set
+		if execCtx.StateMachineID == "" {
+			execCtx.StateMachineID = pm.stateMachineID
 		}
 		// If StartAt is not set, use state machine's StartAt
 		if execCtx.CurrentState == "" {
@@ -99,7 +103,9 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 		}
 
 		execCtx = execution.NewContext(execName, pm.statemachine.StartAt, input)
-		execCtx.ID = pm.stateMachineID
+		// Generate unique execution ID
+		execCtx.ID = fmt.Sprintf("%s-exec-%d", pm.stateMachineID, time.Now().UnixNano())
+		execCtx.StateMachineID = pm.stateMachineID
 	}
 
 	// Save initial execution state if repositoryManager is enabled

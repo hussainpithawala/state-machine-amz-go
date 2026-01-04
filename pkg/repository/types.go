@@ -112,6 +112,9 @@ type Repository interface {
 	// CountExecutions returns the count of executions matching the filter
 	CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error)
 
+	// ListStateMachines lists all state-machines with filtering and pagination
+	ListStateMachines(ctx context.Context, filter *DefinitionFilter) ([]*StateMachineRecord, error)
+
 	// ListExecutionIDs returns only execution IDs matching the filter (more efficient than ListExecutions)
 	ListExecutionIDs(ctx context.Context, filter *ExecutionFilter) ([]string, error)
 

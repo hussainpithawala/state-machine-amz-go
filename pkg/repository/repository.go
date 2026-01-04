@@ -148,6 +148,11 @@ func (pm *Manager) GetStateMachine(ctx context.Context, stateMachineID string) (
 	return pm.repository.GetStateMachine(ctx, stateMachineID)
 }
 
+// ListStateMachines lists all state machines with filtering
+func (pm *Manager) ListStateMachines(ctx context.Context, filter *DefinitionFilter) ([]*StateMachineRecord, error) {
+	return pm.repository.ListStateMachines(ctx, filter)
+}
+
 // SaveStateHistory saves a state history entry
 func (pm *Manager) SaveStateHistory(ctx context.Context, executionInstance *execution.Execution, history *execution.StateHistory) error {
 	record := &StateHistoryRecord{

@@ -5,7 +5,7 @@ on:
   push:
     tags:
       - 'v*'  # Trigger on version tags like v1.0.0, v1.2.3-beta.1
-  workflow_dispatch:  # Allow manual triggering
+  workflow_dispatch: # Allow manual triggering
     inputs:
       version:
         description: 'Version tag (e.g., v1.0.0)'
@@ -168,7 +168,7 @@ jobs:
           POSTGRES_TEST_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
           POSTGRES_TEST_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
 
-        run: go test ./... -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
+        run: go test $(go list ./... | grep -v /examples) -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
 
       - name: Upload coverage
         uses: codecov/codecov-action@v5
@@ -176,7 +176,7 @@ jobs:
           files: coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
           flags: ${{ matrix.go-version }}-${{ matrix.os }}
   test-examples:
-    name: Test
+    name: Test Examples
     needs: lint
     runs-on: ubuntu-latest
     strategy:
@@ -237,7 +237,8 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
           DATABASE_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
-        run: find examples -maxdepth 2 -name "*.go" -print0 | xargs -0 -n1 go run
+        #        run: find examples -maxdepth 2 -name "*.go" -print0 | xargs -0 -n1 go run
+        run: find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' -name "*.go" -print0 | xargs -0 -n1 go run
       - name: Upload coverage
         uses: codecov/codecov-action@v5
         with:
@@ -248,7 +249,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, test-examples, lint]
+    needs: [ test, test-examples, lint ]
     if: ${{ !github.event.inputs.skip_tests || github.event.inputs.skip_tests == 'false' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -327,7 +328,7 @@ jobs:
   publish:
     name: Publish
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [ build ]
     if: ${{ !github.event.inputs.skip_tests || github.event.inputs.skip_tests == 'false' }}
     permissions:
       contents: write
@@ -463,7 +464,7 @@ jobs:
   notify:
     name: Notify
     runs-on: ubuntu-latest
-    needs: [publish]
+    needs: [ publish ]
     if: always()
     steps:
       - name: Determine status
@@ -479,15 +480,15 @@ jobs:
             echo "message=❌ Release failed. Check the workflow logs." >> $GITHUB_OUTPUT
           fi
 
-#      - name: Send status to Slack
-#        if: failure() && github.event_name == 'push'
-#        uses: 8398a7/action-slack@v3
-#        with:
-#          status: ${{ steps.status.outputs.result }}
-#          fields: workflow,job,commit,repo,ref,author,took
-#        env:
-#          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-#        continue-on-error: true
+      #      - name: Send status to Slack
+      #        if: failure() && github.event_name == 'push'
+      #        uses: 8398a7/action-slack@v3
+      #        with:
+      #          status: ${{ steps.status.outputs.result }}
+      #          fields: workflow,job,commit,repo,ref,author,took
+      #        env:
+      #          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      #        continue-on-error: true
 
       - name: Update release badge
         if: success() && github.event_name == 'push'

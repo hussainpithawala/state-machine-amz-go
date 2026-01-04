@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	statemachine2 "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
@@ -13,12 +14,22 @@ import (
 // It handles execution tasks from the queue by loading the state machine and executing it
 type ExecutionHandler struct {
 	repositoryManager *repository.Manager
+	executionContext  states.ExecutionContext
 }
 
 // NewExecutionHandler creates a new execution handler
 func NewExecutionHandler(repositoryManager *repository.Manager) *ExecutionHandler {
 	return &ExecutionHandler{
 		repositoryManager: repositoryManager,
+		executionContext:  nil,
+	}
+}
+
+// NewExecutionHandlerWithContext creates a new execution handler with an execution context
+func NewExecutionHandlerWithContext(repositoryManager *repository.Manager, execCtx states.ExecutionContext) *ExecutionHandler {
+	return &ExecutionHandler{
+		repositoryManager: repositoryManager,
+		executionContext:  execCtx,
 	}
 }
 
@@ -28,6 +39,11 @@ func (h *ExecutionHandler) HandleExecution(ctx context.Context, payload *queue.E
 	sm, err := NewFromDefnId(ctx, payload.StateMachineID, h.repositoryManager)
 	if err != nil {
 		return fmt.Errorf("failed to load state machine: %w", err)
+	}
+
+	// Add execution context if available
+	if h.executionContext != nil {
+		ctx = context.WithValue(ctx, states.ExecutionContextKey, h.executionContext)
 	}
 
 	// Build execution options
