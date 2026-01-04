@@ -107,7 +107,7 @@ func runLeader(ctx context.Context, queueConfig *queue.Config, repoManager *repo
 	enqueuedCount := 0
 	failedCount := 0
 
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 1000; i++ {
 		// Create task payload
 		payload := &queue.ExecutionTaskPayload{
 			StateMachineID: sm.GetID(),
