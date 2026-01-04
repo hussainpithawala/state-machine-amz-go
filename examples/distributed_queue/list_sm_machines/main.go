@@ -19,8 +19,7 @@ func main() {
 		log.Fatalf("Failed to setup repository: %v", err)
 	}
 	defer repoManager.Close()
-
-	fmt.Println("=== ListStateMachines Examples ===\n")
+	fmt.Println("=== ListStateMachines Examples ===")
 	// Example 1: List all state machines
 	fmt.Println("1. List all state machines:")
 	allStateMachines, err := repoManager.ListStateMachines(ctx, nil)
