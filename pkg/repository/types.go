@@ -42,6 +42,12 @@ type StateHistory struct {
 	Metadata       map[string]interface{}
 }
 
+// DefinitionFilter defines filters for querying state machines
+type DefinitionFilter struct {
+	StateMachineID string // Filter by state machine ID
+	Name           string // Filter by name (supports partial match)
+}
+
 // ExecutionFilter defines filters for querying executions
 type ExecutionFilter struct {
 	Status         string    // Filter by status
@@ -105,6 +111,9 @@ type Repository interface {
 
 	// CountExecutions returns the count of executions matching the filter
 	CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error)
+
+	// ListStateMachines lists all state-machines with filtering and pagination
+	ListStateMachines(ctx context.Context, filter *DefinitionFilter) ([]*StateMachineRecord, error)
 
 	// ListExecutionIDs returns only execution IDs matching the filter (more efficient than ListExecutions)
 	ListExecutionIDs(ctx context.Context, filter *ExecutionFilter) ([]string, error)

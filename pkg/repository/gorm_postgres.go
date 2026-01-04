@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -239,6 +240,36 @@ func (r *GormPostgresRepository) GetStateMachine(ctx context.Context, stateMachi
 	return fromStateMachineModel(&model), nil
 }
 
+// ListStateMachines lists all state machines with filtering
+func (r *GormPostgresRepository) ListStateMachines(ctx context.Context, filter *DefinitionFilter) ([]*StateMachineRecord, error) {
+	var models []StateMachineModel
+
+	query := r.db.WithContext(ctx)
+
+	// Apply filters
+	if filter != nil {
+		if filter.StateMachineID != "" {
+			query = query.Where("id = ?", filter.StateMachineID)
+		}
+		if filter.Name != "" {
+			query = query.Where("name ILIKE ?", "%"+filter.Name+"%")
+		}
+	}
+
+	// Order by created_at descending
+	result := query.Order("created_at DESC").Find(&models)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to list state machines: %w", result.Error)
+	}
+
+	records := make([]*StateMachineRecord, len(models))
+	for i := range models {
+		records[i] = fromStateMachineModel(&models[i])
+	}
+
+	return records, nil
+}
+
 func (r *GormPostgresRepository) Close() error {
 	sqlDB, err := r.db.DB()
 	if err != nil {
@@ -251,8 +282,15 @@ func (r *GormPostgresRepository) Close() error {
 func (r *GormPostgresRepository) SaveExecution(ctx context.Context, exec *ExecutionRecord) error {
 	model := toExecutionModel(exec)
 
-	// GORM's Save handles both INSERT and UPDATE
-	result := r.db.WithContext(ctx).Save(model)
+	// Use Clauses with OnConflict for proper upsert behavior
+	// This ensures we either insert a new record or update the existing one based on execution_id
+	result := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "execution_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"status", "current_state", "output", "error", "end_time", "updated_at"}),
+		}).
+		Create(model)
+
 	if result.Error != nil {
 		return fmt.Errorf("failed to save execution: %w", result.Error)
 	}
@@ -284,7 +322,15 @@ func (r *GormPostgresRepository) GetExecution(ctx context.Context, executionID s
 func (r *GormPostgresRepository) SaveStateHistory(ctx context.Context, history *StateHistoryRecord) error {
 	model := toStateHistoryModel(history)
 
-	result := r.db.WithContext(ctx).Save(model)
+	// State history is immutable - use insert-only with ON CONFLICT DO NOTHING
+	// This avoids expensive upserts since history records should never be updated
+	result := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoNothing: true,
+		}).
+		Create(model)
+
 	if result.Error != nil {
 		return fmt.Errorf("failed to save state history: %w", result.Error)
 	}

@@ -398,6 +398,75 @@ func (ps *PostgresRepository) GetStateMachine(ctx context.Context, stateMachineI
 	return &record, nil
 }
 
+// ListStateMachines lists all state machines with filtering
+func (ps *PostgresRepository) ListStateMachines(ctx context.Context, filter *DefinitionFilter) ([]*StateMachineRecord, error) {
+	query := `
+		SELECT id, name, description, definition, type, version, metadata, created_at, updated_at
+		FROM state_machines
+		WHERE 1=1
+	`
+	args := []interface{}{}
+	argCount := 0
+
+	// Apply filters
+	if filter != nil {
+		if filter.StateMachineID != "" {
+			argCount++
+			query += fmt.Sprintf(" AND id = $%d", argCount)
+			args = append(args, filter.StateMachineID)
+		}
+		if filter.Name != "" {
+			argCount++
+			query += fmt.Sprintf(" AND name ILIKE $%d", argCount)
+			args = append(args, "%"+filter.Name+"%")
+		}
+	}
+
+	// Order by created_at descending
+	query += " ORDER BY created_at DESC"
+
+	rows, err := ps.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list state machines: %w", err)
+	}
+	defer rows.Close()
+
+	var records []*StateMachineRecord
+	for rows.Next() {
+		var record StateMachineRecord
+		var metadataJSON []byte
+
+		err := rows.Scan(
+			&record.ID,
+			&record.Name,
+			&record.Description,
+			&record.Definition,
+			&record.Type,
+			&record.Version,
+			&metadataJSON,
+			&record.CreatedAt,
+			&record.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan state machine record: %w", err)
+		}
+
+		if len(metadataJSON) > 0 && string(metadataJSON) != NULL {
+			if err := json.Unmarshal(metadataJSON, &record.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			}
+		}
+
+		records = append(records, &record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating state machine rows: %w", err)
+	}
+
+	return records, nil
+}
+
 // SaveExecution saves or updates an execution record with UPSERT
 func (ps *PostgresRepository) SaveExecution(ctx context.Context, record *ExecutionRecord) error {
 	if record.ExecutionID == "" {
