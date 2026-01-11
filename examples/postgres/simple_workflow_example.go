@@ -188,5 +188,5 @@ func getConnectionURL() string {
 		return url
 	}
 	// Default for local development
-	return "postgres://postgres:postgres@localhost:5432/statemachine_example_simple?sslmode=disable"
+	return "postgres://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable"
 }

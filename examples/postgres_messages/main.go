@@ -217,5 +217,5 @@ func getConnectionURL() string {
 	if url := os.Getenv("DATABASE_URL"); url != "" {
 		return url
 	}
-	return "postgres://postgres:postgres@localhost:5432/statemachine_example_messages?sslmode=disable"
+	return "postgres://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable"
 }

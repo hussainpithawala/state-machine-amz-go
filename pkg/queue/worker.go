@@ -12,6 +12,7 @@ import (
 // This interface breaks the circular dependency between queue and persistent packages
 type ExecutionHandler interface {
 	HandleExecution(ctx context.Context, payload *ExecutionTaskPayload) error
+	HandleTimeout(ctx context.Context, payload *TimeoutTaskPayload) error
 }
 
 // Worker wraps asynq.Server for processing state machine execution tasks
@@ -49,6 +50,7 @@ func NewWorker(config *Config, handler ExecutionHandler) (*Worker, error) {
 // registerHandlers registers all task type handlers
 func (w *Worker) registerHandlers() {
 	w.mux.HandleFunc(TypeExecutionTask, w.handleExecutionTask)
+	w.mux.HandleFunc(TypeTimeoutTask, w.handleTimeoutTask)
 }
 
 // handleExecutionTask processes a state machine execution task
@@ -59,8 +61,8 @@ func (w *Worker) handleExecutionTask(ctx context.Context, task *asynq.Task) erro
 		return fmt.Errorf("failed to parse task payload: %w", err)
 	}
 
-	log.Printf("Processing execution task: StateMachineID=%s, SourceExecutionID=%s, ExecutionName=%s, Index=%d",
-		payload.StateMachineID, payload.SourceExecutionID, payload.ExecutionName, payload.ExecutionIndex)
+	log.Printf("Processing execution task: StateMachineID=%s, ExecutionID=%s, ExecutionName=%s, IsTimeout=%v",
+		payload.StateMachineID, payload.ExecutionID, payload.ExecutionName, payload.IsTimeout)
 
 	// Delegate to execution handler
 	if err := w.executionHandler.HandleExecution(ctx, payload); err != nil {
@@ -69,6 +71,33 @@ func (w *Worker) handleExecutionTask(ctx context.Context, task *asynq.Task) erro
 	}
 
 	log.Printf("Execution completed successfully: ExecutionName=%s", payload.ExecutionName)
+	return nil
+}
+
+// handleTimeoutTask processes a timeout boundary event task
+func (w *Worker) handleTimeoutTask(ctx context.Context, task *asynq.Task) error {
+	// Parse the task payload
+	payload, err := ParseTimeoutTaskPayload(task)
+	if err != nil {
+		return fmt.Errorf("failed to parse timeout task payload: %w", err)
+	}
+
+	log.Printf("Processing timeout task: ExecutionID=%s, StateName=%s, CorrelationID=%s",
+		payload.ExecutionID, payload.StateName, payload.CorrelationID)
+
+	// Delegate to execution handler
+	if err := w.executionHandler.HandleTimeout(ctx, payload); err != nil {
+		// Check if this is a benign error (correlation already processed)
+		if err.Error() == "correlation already processed" {
+			log.Printf("Timeout task skipped (correlation already processed): CorrelationID=%s", payload.CorrelationID)
+			return nil // Don't retry
+		}
+
+		log.Printf("Timeout task failed: CorrelationID=%s, Error=%v", payload.CorrelationID, err)
+		return fmt.Errorf("timeout task failed: %w", err)
+	}
+
+	log.Printf("Timeout task completed successfully: CorrelationID=%s", payload.CorrelationID)
 	return nil
 }
 

@@ -3,6 +3,7 @@ package states
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // MessageState represents a state that pauses execution and waits for an external message
@@ -18,6 +19,10 @@ type MessageState struct {
 	// TimeoutSeconds specifies how long to wait for a message before timing out
 	// If not specified, waits indefinitely
 	TimeoutSeconds *int `json:"TimeoutSeconds,omitempty"`
+
+	// TimeoutPath specifies the next state to transition to on timeout
+	// If not specified, the execution fails on timeout
+	TimeoutPath *string `json:"TimeoutPath,omitempty"`
 
 	// MessagePath specifies where to place the received message data in the state output
 	// Default is "$" (replace entire output with message data)
@@ -55,6 +60,16 @@ type MessageStateResult struct {
 	ReceivedMessage *MessageData      `json:"received_message,omitempty"`
 }
 
+// TimeoutScheduleRequest represents a request to schedule a timeout execution
+type TimeoutScheduleRequest struct {
+	ExecutionID    string `json:"execution_id"`
+	StateMachineID string `json:"state_machine_id"`
+	StateName      string `json:"state_name"`
+	CorrelationID  string `json:"correlation_id"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	ScheduleTime   int64  `json:"schedule_time"` // Unix timestamp when to trigger
+}
+
 // NewMessageState creates a new message state
 func NewMessageState(name, correlationKey string) *MessageState {
 	return &MessageState{
@@ -82,8 +97,12 @@ func (s *MessageState) Execute(ctx context.Context, input interface{}) (result i
 		effectiveInput = processedInput
 	}
 
+	// Check if this is a timeout resumption
+	if _, isTimeout := s.checkForTimeout(effectiveInput); isTimeout {
+		return s.executeTimeout(ctx, input, effectiveInput, processor)
+	}
+
 	// Check if this is a resume operation (post-message)
-	// This is determined by checking if the input contains a received message
 	if messageData, isResume := s.checkForReceivedMessage(effectiveInput); isResume {
 		return s.executePostMessage(ctx, input, effectiveInput, messageData, processor)
 	}
@@ -104,6 +123,13 @@ func (s *MessageState) executePreMessage(ctx context.Context, originalInput, eff
 		}
 	}
 
+	// Calculate timeout timestamp if specified
+	var timeoutAt *int64
+	if s.TimeoutSeconds != nil && *s.TimeoutSeconds > 0 {
+		timeout := time.Now().Unix() + int64(*s.TimeoutSeconds)
+		timeoutAt = &timeout
+	}
+
 	// Create the result with correlation data
 	messageResult := &MessageStateResult{
 		Status: "WAITING",
@@ -111,6 +137,8 @@ func (s *MessageState) executePreMessage(ctx context.Context, originalInput, eff
 			CorrelationKey:   s.CorrelationKey,
 			CorrelationValue: correlationValue,
 			InputData:        effectiveInput,
+			CreatedAt:        time.Now().Unix(),
+			TimeoutAt:        timeoutAt,
 		},
 	}
 
@@ -172,8 +200,47 @@ func (s *MessageState) executePostMessage(ctx context.Context, originalInput, ef
 		}
 	}
 
-	// Continue to next state
+	// Continue to next state (normal path)
 	return finalResult, s.Next, nil
+}
+
+// executeTimeout handles the timeout scenario
+func (s *MessageState) executeTimeout(ctx context.Context, originalInput, effectiveInput interface{}, processor PathProcessor) (result interface{}, nextState *string, err error) {
+	// Create timeout result
+	timeoutResult := map[string]interface{}{
+		"status":  "TIMEOUT",
+		"message": fmt.Sprintf("Message state '%s' timed out waiting for correlation", s.Name),
+	}
+
+	// Apply ResultPath
+	var finalResult interface{}
+	if s.ResultPath != nil {
+		var err error
+		finalResult, err = processor.ApplyResultPath(originalInput, timeoutResult, s.ResultPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to apply ResultPath: %w", err)
+		}
+	} else {
+		finalResult = timeoutResult
+	}
+
+	// Apply OutputPath
+	if s.OutputPath != nil {
+		var err error
+		finalResult, err = processor.ApplyOutputPath(finalResult, s.OutputPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to apply OutputPath: %w", err)
+		}
+	}
+
+	// If TimeoutPath is specified, transition to that state
+	// Otherwise, this will be treated as an error by the state machine
+	if s.TimeoutPath != nil {
+		return finalResult, s.TimeoutPath, nil
+	}
+
+	// No timeout path specified - return error
+	return finalResult, nil, fmt.Errorf("message state '%s' timed out", s.Name)
 }
 
 // checkForReceivedMessage checks if the input contains a received message
@@ -206,6 +273,19 @@ func (s *MessageState) checkForReceivedMessage(input interface{}) (messageData *
 	return nil, false
 }
 
+// checkForTimeout checks if the input contains a timeout trigger
+// This is used to determine if we're executing the timeout boundary event
+func (s *MessageState) checkForTimeout(input interface{}) (timeoutData map[string]interface{}, isTimeout bool) {
+	// Check if input is a map containing timeout metadata
+	if inputMap, ok := input.(map[string]interface{}); ok {
+		if _, exists := inputMap["__timeout_trigger__"]; exists {
+			return inputMap, true
+		}
+	}
+
+	return nil, false
+}
+
 // Validate validates the message state configuration
 func (s *MessageState) Validate() (err error) {
 	if err := s.BaseState.Validate(); err != nil {
@@ -218,6 +298,13 @@ func (s *MessageState) Validate() (err error) {
 
 	if s.TimeoutSeconds != nil && *s.TimeoutSeconds < 0 {
 		return fmt.Errorf("message state '%s': TimeoutSeconds cannot be negative", s.Name)
+	}
+
+	// Validate that if TimeoutSeconds is set, either TimeoutPath or error handling is configured
+	if s.TimeoutSeconds != nil && *s.TimeoutSeconds > 0 {
+		if s.TimeoutPath == nil && len(s.Catch) == 0 {
+			return fmt.Errorf("message state '%s': TimeoutSeconds is set but no TimeoutPath or Catch handlers configured", s.Name)
+		}
 	}
 
 	// Validate retry rules
@@ -246,6 +333,7 @@ func (s *MessageState) MarshalJSON() (data []byte, err error) {
 		CorrelationKey       string      `json:"CorrelationKey"`
 		CorrelationValuePath *string     `json:"CorrelationValuePath,omitempty"`
 		TimeoutSeconds       *int        `json:"TimeoutSeconds,omitempty"`
+		TimeoutPath          *string     `json:"TimeoutPath,omitempty"`
 		MessagePath          *string     `json:"MessagePath,omitempty"`
 		Retry                []RetryRule `json:"Retry,omitempty"`
 		Catch                []CatchRule `json:"Catch,omitempty"`
@@ -253,6 +341,7 @@ func (s *MessageState) MarshalJSON() (data []byte, err error) {
 		CorrelationKey:       s.CorrelationKey,
 		CorrelationValuePath: s.CorrelationValuePath,
 		TimeoutSeconds:       s.TimeoutSeconds,
+		TimeoutPath:          s.TimeoutPath,
 		MessagePath:          s.MessagePath,
 		Retry:                s.Retry,
 		Catch:                s.Catch,
@@ -265,9 +354,18 @@ func (s *MessageState) MarshalJSON() (data []byte, err error) {
 func (s *MessageState) GetNextStates() (nextStates []string) {
 	nextStates = s.BaseState.GetNextStates()
 
+	// Add timeout path
+	if s.TimeoutPath != nil {
+		nextStates = append(nextStates, *s.TimeoutPath)
+	}
+
 	// Add catch destinations
 	for _, catch := range s.Catch {
 		nextStates = append(nextStates, catch.Next)
+	}
+
+	if s.GetTimeoutPath() != nil {
+		nextStates = append(nextStates, *s.GetTimeoutPath())
 	}
 
 	return nextStates
@@ -283,7 +381,30 @@ func (s *MessageState) GetTimeoutSeconds() (timeout *int) {
 	return s.TimeoutSeconds
 }
 
+// GetTimeoutPath returns the timeout path
+func (s *MessageState) GetTimeoutPath() (path *string) {
+	return s.TimeoutPath
+}
+
 // IsWaitingState returns true to indicate this is a waiting state
 func (s *MessageState) IsWaitingState() (isWaiting bool) {
 	return true
+}
+
+// CreateTimeoutScheduleRequest creates a request for scheduling a timeout execution
+func (s *MessageState) CreateTimeoutScheduleRequest(executionID, stateMachineID, correlationID string) *TimeoutScheduleRequest {
+	if s.TimeoutSeconds == nil || *s.TimeoutSeconds <= 0 {
+		return nil
+	}
+
+	scheduleTime := time.Now().Unix() + int64(*s.TimeoutSeconds)
+
+	return &TimeoutScheduleRequest{
+		ExecutionID:    executionID,
+		StateMachineID: stateMachineID,
+		StateName:      s.Name,
+		CorrelationID:  correlationID,
+		TimeoutSeconds: *s.TimeoutSeconds,
+		ScheduleTime:   scheduleTime,
+	}
 }

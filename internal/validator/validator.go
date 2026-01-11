@@ -190,6 +190,12 @@ func (v *StateMachineValidator) getAllNextStateNames(state states.State) []strin
 		return state.GetNextStates()
 	}
 
+	// For Task states, return all catch destinations plus Next
+	if stateType == "Message" {
+		// Return empty - validation happens in the main Validate method
+		return state.GetNextStates()
+	}
+
 	// For all other states, return single Next if present
 	if next := state.GetNext(); next != nil {
 		nextStates = append(nextStates, *next)

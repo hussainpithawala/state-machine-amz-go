@@ -207,5 +207,5 @@ func getConnectionURL() string {
 		return url
 	}
 	// Default for local development
-	return "postgres://postgres:postgres@localhost:5432/statemachine_gorm?sslmode=disable"
+	return "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
 }

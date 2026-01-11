@@ -195,5 +195,5 @@ func getConnectionURL() string {
 	if url := os.Getenv("DATABASE_URL_GORM"); url != "" {
 		return url
 	}
-	return "postgres://postgres:postgres@localhost:5432/statemachine_gorm_messages?sslmode=disable"
+	return "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
 }

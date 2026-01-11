@@ -1,0 +1,12 @@
+### Post Payment Webhook
+POST http://localhost:7070/webhook/payment
+Content-Type: application/json
+
+{
+  "order_id": "ORD-12345",
+  "payment_id": "PAY-67890",
+  "status": "success",
+  "amount": 99.99,
+  "payment_method": "credit_card",
+  "timestamp": 1736593740
+}

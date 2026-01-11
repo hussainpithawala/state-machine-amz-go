@@ -28,7 +28,7 @@ func runBatchChainedExecutionExample() error {
 	// Setup database connection
 	dbURL := os.Getenv("DATABASE_URL_GORM")
 	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/statemachine_batched_execution?sslmode=disable"
+		dbURL = "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
 	}
 
 	// Create repository manager

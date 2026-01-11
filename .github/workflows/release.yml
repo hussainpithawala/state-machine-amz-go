@@ -14,26 +14,24 @@ on:
       skip_tests:
         description: 'Skip tests (for debugging)'
         required: false
+        type: boolean
         default: false
 
 env:
-  # Go configuration
   GO_VERSION: '1.23'
   GOPROXY: 'https://proxy.golang.org,direct'
   GOSUMDB: 'sum.golang.org'
-
-  # Module name - update this to match your module
   MODULE_PATH: 'github.com/hussainpithawala/state-machine-amz-go'
 
 permissions:
   contents: write
-  id-token: write  # Required for Go package provenance
+  id-token: write
 
 jobs:
   validate:
-    name: Validate
+    name: Validate Release
     runs-on: ubuntu-latest
-    if: ${{ !github.event.inputs.skip_tests || github.event.inputs.skip_tests == 'false' }}
+    if: ${{ !inputs.skip_tests }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -45,12 +43,13 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
+          cache: true
 
       - name: Verify go.mod
         run: |
           ACTUAL_MODULE=$(go list -m)
           if [ "$ACTUAL_MODULE" != "$MODULE_PATH" ]; then
-            echo "Error: Module path mismatch!"
+            echo "❌ Error: Module path mismatch!"
             echo "Expected: $MODULE_PATH"
             echo "Actual:   $ACTUAL_MODULE"
             echo "Please update MODULE_PATH in release.yml or fix go.mod"
@@ -77,180 +76,17 @@ jobs:
             fi
           done
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    needs: validate
-    if: ${{ !github.event.inputs.skip_tests || github.event.inputs.skip_tests == 'false' }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest
-          args: --timeout=5m --config=.golangci.yml
-
-      - name: Check for vet errors
-        run: go vet ./...
-
-      - name: Check for staticcheck issues
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
-
-  test:
-    name: Test
-    needs: lint
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: [ 1.23 ]
-
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: statemachine_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Go ${{ matrix.go-version }}
-        uses: actions/setup-go@v4
-        with:
-          go-version: ${{ matrix.go-version }}
-
-      # Install PostgreSQL client tools (psql, pg_isready, etc.)
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-
-      # Wait for Postgres to be ready (optional, healthcheck usually suffices)
-      - name: Wait for PostgreSQL
-        run: |
-          timeout 60s sh -c 'until pg_isready --host=localhost --port=5432 --username=postgres; do sleep 2; done'
-
-      # Create the second database
-      - name: Create additional test database
-        run: |
-          psql -h localhost -U postgres -d statemachine_test -c 'CREATE DATABASE statemachine_test_gorm;'
-        env:
-          PGPASSWORD: postgres
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Run tests
-        env:
-          POSTGRES_TEST_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
-          POSTGRES_TEST_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
-
-        run: go test $(go list ./... | grep -v /examples) -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
-          flags: ${{ matrix.go-version }}-${{ matrix.os }}
-  test-examples:
-    name: Test Examples
-    needs: lint
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: [ 1.23 ]
-
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: statemachine_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Go ${{ matrix.go-version }}
-        uses: actions/setup-go@v4
-        with:
-          go-version: ${{ matrix.go-version }}
-
-      # Install PostgreSQL client tools (psql, pg_isready, etc.)
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-
-      # Wait for Postgres to be ready (optional, healthcheck usually suffices)
-      - name: Wait for PostgreSQL
-        run: |
-          timeout 60s sh -c 'until pg_isready --host=localhost --port=5432 --username=postgres; do sleep 2; done'
-
-      # Create the second database
-      - name: Create additional test database
-        run: |
-          psql -h localhost -U postgres -d statemachine_test -c 'CREATE DATABASE statemachine_test_gorm;'
-        env:
-          PGPASSWORD: postgres
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Run test-examples
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
-          DATABASE_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
-        #        run: find examples -maxdepth 2 -name "*.go" -print0 | xargs -0 -n1 go run
-        run: find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' -name "*.go" -print0 | xargs -0 -n1 go run
-      - name: Upload coverage
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
-          flags: ${{ matrix.go-version }}-${{ matrix.os }}
-
+  # Run CI tests before release
+  ci-tests:
+    name: Run CI Tests
+    uses: ./.github/workflows/ci.yml
+    if: ${{ !inputs.skip_tests }}
 
   build:
-    name: Build
+    name: Build Release
     runs-on: ubuntu-latest
-    needs: [ test, test-examples, lint ]
-    if: ${{ !github.event.inputs.skip_tests || github.event.inputs.skip_tests == 'false' }}
+    needs: [ validate, ci-tests ]
+    if: ${{ !inputs.skip_tests }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -264,12 +100,13 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
+          cache: true
 
       - name: Get version
         id: version
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
+            VERSION="${{ inputs.version }}"
           else
             VERSION="${GITHUB_REF#refs/tags/}"
           fi
@@ -326,10 +163,10 @@ jobs:
             go.sum
 
   publish:
-    name: Publish
+    name: Publish Release
     runs-on: ubuntu-latest
     needs: [ build ]
-    if: ${{ !github.event.inputs.skip_tests || github.event.inputs.skip_tests == 'false' }}
+    if: ${{ !inputs.skip_tests }}
     permissions:
       contents: write
       id-token: write
@@ -344,15 +181,16 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
+          cache: true
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4.0.0
+        uses: actions/download-artifact@v4
 
       - name: Get version
         id: version
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
+            VERSION="${{ inputs.version }}"
           else
             VERSION="${GITHUB_REF#refs/tags/}"
           fi
@@ -368,11 +206,6 @@ jobs:
           # Verify the module can be downloaded
           echo "Testing module download..."
           GOPROXY=https://proxy.golang.org go mod download $MODULE_PATH@$VERSION 2>/dev/null || true
-
-      - name: Sign release with cosign
-        if: github.event_name == 'push'
-        uses: sigstore/cosign-installer@main
-        continue-on-error: true
 
       - name: Create GitHub Release
         if: github.event_name == 'push'
@@ -397,17 +230,25 @@ jobs:
             ### 🚀 Features
             
             - Complete AWS Step Functions State Machine Language implementation
-            - Parallel execution support
+            - Message state with async timeout boundary events (BPMN-style)
+            - Parallel execution support with distributed queue
             - Task delegation to local Go functions
             - Retry policies with exponential backoff
             - YAML/JSON state machine definitions
-            - All state types: Task, Parallel, Choice, Wait, Pass, Succeed, Fail
+            - PostgreSQL persistence with real-time execution tracking
+            - Redis-backed distributed queue (Asynq)
+            - All state types: Task, Parallel, Choice, Wait, Pass, Succeed, Fail, Message
             
-            ### 🔧 Testing
+            ### 🧪 Testing
             
             Run the test suite:
             ```bash
-            go test ./... -tags 'exclude_integration' 
+            make test-all
+            ```
+            
+            View test coverage:
+            ```bash
+            make test-coverage
             ```
             
             ### 📄 License
@@ -425,7 +266,7 @@ jobs:
             README.md
             go.mod
             go.sum
-            sbom.json
+            build-artifacts/sbom.json
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to Go Package Registry
@@ -454,15 +295,8 @@ jobs:
             echo "Check https://pkg.go.dev/$MODULE_PATH@$VERSION in 5-10 minutes"
           fi
 
-      - name: Sign container image
-        if: github.event_name == 'push'
-        continue-on-error: true
-        run: |
-          # Sign the release
-          cosign sign --yes ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }} || echo "Container signing skipped"
-
   notify:
-    name: Notify
+    name: Notify Release
     runs-on: ubuntu-latest
     needs: [ publish ]
     if: always()
@@ -480,21 +314,11 @@ jobs:
             echo "message=❌ Release failed. Check the workflow logs." >> $GITHUB_OUTPUT
           fi
 
-      #      - name: Send status to Slack
-      #        if: failure() && github.event_name == 'push'
-      #        uses: 8398a7/action-slack@v3
-      #        with:
-      #          status: ${{ steps.status.outputs.result }}
-      #          fields: workflow,job,commit,repo,ref,author,took
-      #        env:
-      #          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      #        continue-on-error: true
-
-      - name: Update release badge
+      - name: Summary
         if: success() && github.event_name == 'push'
         run: |
           echo "🎉 Release ${{ needs.build.outputs.version }} completed!"
           echo ""
-          echo "📦 Package: $MODULE_PATH@${{ needs.build.outputs.version }}"
-          echo "📚 Docs: https://pkg.go.dev/$MODULE_PATH@${{ needs.build.outputs.version }}"
+          echo "📦 Package: ${{ env.MODULE_PATH }}@${{ needs.build.outputs.version }}"
+          echo "📚 Docs: https://pkg.go.dev/${{ env.MODULE_PATH }}@${{ needs.build.outputs.version }}"
           echo "🏷️  Release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.build.outputs.version }}"

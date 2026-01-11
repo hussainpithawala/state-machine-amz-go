@@ -16,6 +16,7 @@ import (
 
 const FAILED = "FAILED"
 const PAUSED = "PAUSED"
+const WAITING = "WAITING"
 
 // StateMachine Persistence.StateMachine represents a state machine with an optional repositoryManager
 type StateMachine struct {
@@ -138,110 +139,41 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 	currentStateName := execCtx.CurrentState
 
 	for {
-		// Check context cancellation
-		select {
-		case <-ctx.Done():
-			execCtx.Status = "CANCELLED"
-			execCtx.Error = ctx.Err()
-			execCtx.EndTime = time.Now()
-			pm.persistExecution(ctx, execCtx)
-			return execCtx, ctx.Err()
-		default:
+		if err := pm.checkContext(ctx, execCtx); err != nil {
+			return execCtx, err
 		}
 
-		// Get current state
-		state, exists := pm.statemachine.States[currentStateName]
-		if !exists {
-			err := fmt.Errorf("state not found: %s", currentStateName)
-			execCtx.Status = FAILED
-			execCtx.Error = err
+		state, err := pm.getState(currentStateName)
+		if err != nil {
+			execCtx.MarkFailed(err)
 			execCtx.EndTime = time.Now()
 			pm.persistExecution(ctx, execCtx)
 			return execCtx, err
 		}
 
-		// Execute state and record history
-		history := &execution.StateHistory{
-			StateName:      currentStateName,
-			StateType:      state.GetType(),
-			Input:          execCtx.Input,
-			StartTime:      time.Now(),
-			SequenceNumber: len(execCtx.History),
-		}
+		history := pm.newStateHistory(currentStateName, state, execCtx)
 
-		// Execute the state
 		output, nextState, err := state.Execute(ctx, execCtx.Input)
 
-		// Check if it's a message state that needs to pause
-		if msgResult, ok := output.(*states.MessageStateResult); ok && msgResult.Status == "WAITING" {
-			// Update history for the WAITING state
-			history.EndTime = time.Now()
-			history.Output = output
-			history.Status = "WAITING"
-			execCtx.History = append(execCtx.History, *history)
-			saveHistory(ctx, execCtx, pm, history)
-
-			// Save MessageCorrelationRecord
-			correlationRecord := &repository.MessageCorrelationRecord{
-				ID:                 fmt.Sprintf("corr-%s-%s", execCtx.ID, currentStateName),
-				ExecutionID:        execCtx.ID,
-				ExecutionStartTime: &execCtx.StartTime,
-				StateMachineID:     pm.stateMachineID,
-				StateName:          currentStateName,
-				CorrelationKey:     msgResult.CorrelationData.CorrelationKey,
-				CorrelationValue:   msgResult.CorrelationData.CorrelationValue,
-				CreatedAt:          time.Now().Unix(),
-				Status:             "WAITING",
-			}
-			if msgResult.CorrelationData.TimeoutAt != nil {
-				correlationRecord.TimeoutAt = msgResult.CorrelationData.TimeoutAt
-			}
-
-			if err := pm.repositoryManager.SaveMessageCorrelation(ctx, correlationRecord); err != nil {
-				fmt.Printf("Warning: failed to save message correlation: %v\n", err)
-			}
-
-			// Pause the execution
-			execCtx.Status = PAUSED
-			execCtx.CurrentState = currentStateName
-			pm.persistExecution(ctx, execCtx)
-
-			return execCtx, nil
+		// Handle WAITING message state early
+		if pm.isWaitingMessageState(output) {
+			return pm.handleWaitingState(ctx, execCtx, history, output, state, currentStateName)
 		}
 
-		// Update history
-		history.EndTime = time.Now()
-		history.Output = output
-
-		if err != nil {
-			history.Status = FAILED
-			history.Error = err
-			execCtx.Status = FAILED
-			execCtx.Error = err
-			execCtx.EndTime = time.Now()
-		} else {
-			history.Status = "SUCCEEDED"
-			execCtx.Input = output // Next state's input
-		}
-
-		// Append to history
+		// Finalize history & update execution context
+		pm.finalizeHistory(history, output, err)
 		execCtx.History = append(execCtx.History, *history)
-
-		// Persist state history immediately after execution
 		saveHistory(ctx, execCtx, pm, history)
 
-		// Update execution record
 		execCtx.CurrentState = currentStateName
 		pm.persistExecution(ctx, execCtx)
 
 		if err != nil {
-			// Handle err by returning and closing the execution at this point only
-			// We have already persisted the state of the execution and hence we can
-			// return back
+			execCtx.MarkFailed(err)
+			execCtx.EndTime = time.Now()
 			return execCtx, err
 		}
 
-		// Check if this is a terminal state
 		if state.IsEnd() {
 			execCtx.Status = "SUCCEEDED"
 			execCtx.Output = output
@@ -250,11 +182,9 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 			return execCtx, nil
 		}
 
-		// Move to next state
-		if *nextState == "" {
+		if nextState == nil || *nextState == "" {
 			err := fmt.Errorf("non-terminal state %s did not provide next state", currentStateName)
-			execCtx.Status = FAILED
-			execCtx.Error = err
+			execCtx.MarkFailed(err)
 			execCtx.EndTime = time.Now()
 			pm.persistExecution(ctx, execCtx)
 			return execCtx, err
@@ -263,6 +193,133 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 		currentStateName = *nextState
 		execCtx.CurrentState = currentStateName
 	}
+}
+
+func (pm *StateMachine) checkContext(ctx context.Context, execCtx *execution.Execution) error {
+	select {
+	case <-ctx.Done():
+		execCtx.Status = "CANCELLED"
+		execCtx.Error = ctx.Err()
+		execCtx.EndTime = time.Now()
+		pm.persistExecution(ctx, execCtx)
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
+func (pm *StateMachine) getState(stateName string) (states.State, error) {
+	state, exists := pm.statemachine.States[stateName]
+	if !exists {
+		return nil, fmt.Errorf("state not found: %s", stateName)
+	}
+	return state, nil
+}
+
+func (pm *StateMachine) newStateHistory(stateName string, state states.State, execCtx *execution.Execution) *execution.StateHistory {
+	return &execution.StateHistory{
+		StateName:      stateName,
+		StateType:      state.GetType(),
+		Input:          execCtx.Input,
+		StartTime:      time.Now(),
+		SequenceNumber: len(execCtx.History),
+	}
+}
+
+func (pm *StateMachine) isWaitingMessageState(output interface{}) bool {
+	msgResult, ok := output.(*states.MessageStateResult)
+	return ok && msgResult != nil && msgResult.Status == WAITING
+}
+
+func (pm *StateMachine) handleWaitingState(
+	ctx context.Context,
+	execCtx *execution.Execution,
+	history *execution.StateHistory,
+	output interface{},
+	state states.State,
+	currentStateName string,
+) (*execution.Execution, error) {
+	history.EndTime = time.Now()
+	history.Output = output
+	history.Status = WAITING
+	execCtx.History = append(execCtx.History, *history)
+	saveHistory(ctx, execCtx, pm, history)
+
+	correlationID := fmt.Sprintf("corr-%s-%s", execCtx.ID, currentStateName)
+
+	msgResult := output.(*states.MessageStateResult)
+	correlationRecord := &repository.MessageCorrelationRecord{
+		ID:                 correlationID,
+		ExecutionID:        execCtx.ID,
+		ExecutionStartTime: &execCtx.StartTime,
+		StateMachineID:     pm.stateMachineID,
+		StateName:          currentStateName,
+		CorrelationKey:     msgResult.CorrelationData.CorrelationKey,
+		CorrelationValue:   msgResult.CorrelationData.CorrelationValue,
+		CreatedAt:          time.Now().Unix(),
+		Status:             WAITING,
+	}
+	if msgResult.CorrelationData.TimeoutAt != nil {
+		correlationRecord.TimeoutAt = msgResult.CorrelationData.TimeoutAt
+	}
+
+	if err := pm.repositoryManager.SaveMessageCorrelation(ctx, correlationRecord); err != nil {
+		fmt.Printf("Warning: failed to save message correlation: %v\n", err)
+	}
+
+	if msgState, ok := state.(*states.MessageState); ok {
+		if scheduleReq := msgState.CreateTimeoutScheduleRequest(execCtx.ID, pm.stateMachineID, correlationID); scheduleReq != nil {
+			if err := pm.scheduleTimeoutExecution(ctx, scheduleReq, execCtx); err != nil {
+				fmt.Printf("Warning: failed to schedule timeout execution: %v\n", err)
+			}
+		}
+	}
+
+	execCtx.Status = PAUSED
+	execCtx.CurrentState = currentStateName
+	pm.persistExecution(ctx, execCtx)
+
+	return execCtx, nil
+}
+
+func (pm *StateMachine) finalizeHistory(history *execution.StateHistory, output interface{}, err error) {
+	history.EndTime = time.Now()
+	history.Output = output
+	if err != nil {
+		history.Status = FAILED
+		history.Error = err
+	} else {
+		history.Status = "SUCCEEDED"
+	}
+}
+
+// scheduleTimeoutExecution schedules an async execution to handle timeout boundary event
+func (pm *StateMachine) scheduleTimeoutExecution(ctx context.Context, req *states.TimeoutScheduleRequest, execCtx *execution.Execution) error {
+	if pm.queueClient == nil {
+		return fmt.Errorf("queue client not configured for timeout scheduling")
+	}
+
+	// Create timeout task payload
+	payload := &queue.TimeoutTaskPayload{
+		ExecutionID:    req.ExecutionID,
+		StateMachineID: req.StateMachineID,
+		StateName:      req.StateName,
+		CorrelationID:  req.CorrelationID,
+		TimeoutSeconds: req.TimeoutSeconds,
+		ScheduledAt:    time.Now().Unix(),
+	}
+
+	// Schedule the task with delay
+	delay := time.Duration(req.TimeoutSeconds) * time.Second
+	taskInfo, err := pm.queueClient.ScheduleTimeout(payload, delay)
+	if err != nil {
+		return fmt.Errorf("failed to schedule timeout execution: %w", err)
+	}
+
+	fmt.Printf("Scheduled timeout execution: TaskID=%s, ExecutionID=%s, Delay=%ds, CorrelationID=%s\n",
+		taskInfo.ID, req.ExecutionID, req.TimeoutSeconds, req.CorrelationID)
+
+	return nil
 }
 
 func saveHistory(ctx context.Context, execCtx *execution.Execution, sm *StateMachine, history *execution.StateHistory) {
@@ -310,21 +367,47 @@ func (pm *StateMachine) CountExecutions(ctx context.Context, filter *repository.
 	return pm.repositoryManager.CountExecutions(ctx, filter)
 }
 
-// SaveDefinition persists the state machine definition to the repository
+// FindWaitingExecutionsByCorrelation finds executions waiting for a specific correlation
 func (pm *StateMachine) FindWaitingExecutionsByCorrelation(ctx context.Context, correlationKey string, correlationValue interface{}) ([]*repository.ExecutionRecord, error) {
 	return pm.repositoryManager.FindWaitingExecutionsByCorrelation(ctx, correlationKey, correlationValue)
 }
 
+// ResumeExecution resumes a paused execution (either from message or timeout)
 func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
 	// Ensure execution is in a valid state for resumption
 	if execCtx.Status != PAUSED && execCtx.Status != "RUNNING" {
 		return nil, fmt.Errorf("cannot resume execution with status: %s", execCtx.Status)
 	}
 
-	// Update correlation status to RECEIVED
+	// Check if this is a timeout resumption
+	isTimeout := false
+	if inputMap, ok := execCtx.Input.(map[string]interface{}); ok {
+		if _, exists := inputMap["__timeout_trigger__"]; exists {
+			isTimeout = true
+		}
+	}
+
+	// Update correlation status
 	correlationID := fmt.Sprintf("corr-%s-%s", execCtx.ID, execCtx.CurrentState)
-	if err := pm.repositoryManager.UpdateCorrelationStatus(ctx, correlationID, "RECEIVED"); err != nil {
-		fmt.Printf("Warning: failed to update correlation status: %v\n", err)
+
+	if isTimeout {
+		// For timeout, update status to TIMEOUT and cancel the correlation
+		if err := pm.repositoryManager.UpdateCorrelationStatus(ctx, correlationID, "TIMEOUT"); err != nil {
+			fmt.Printf("Warning: failed to update correlation status to TIMEOUT: %v\n", err)
+		}
+	} else {
+		// For message received, update status to RECEIVED
+		if err := pm.repositoryManager.UpdateCorrelationStatus(ctx, correlationID, "RECEIVED"); err != nil {
+			fmt.Printf("Warning: failed to update correlation status to RECEIVED: %v\n", err)
+		}
+
+		// Cancel any pending timeout task if message was received
+		if pm.queueClient != nil {
+			// Try to cancel the timeout task (best effort)
+			if err := pm.cancelTimeoutTask(ctx, correlationID); err != nil {
+				fmt.Printf("Warning: failed to cancel timeout task: %v\n", err)
+			}
+		}
 	}
 
 	// Update status to RUNNING if it was PAUSED
@@ -335,6 +418,71 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 
 	// Continue execution from the current state
 	return pm.RunExecution(ctx, execCtx.Input, execCtx)
+}
+
+// cancelTimeoutTask attempts to cancel a scheduled timeout task
+func (pm *StateMachine) cancelTimeoutTask(ctx context.Context, correlationID string) error {
+	if pm.queueClient == nil {
+		return nil // No queue client configured, nothing to cancel
+	}
+
+	cancelled, err := pm.queueClient.CancelTimeout(correlationID)
+	if err != nil {
+		return fmt.Errorf("failed to cancel timeout task: %w", err)
+	}
+
+	if cancelled {
+		fmt.Printf("Successfully cancelled timeout task for correlation: %s\n", correlationID)
+	} else {
+		fmt.Printf("Timeout task already processed or not found for correlation: %s\n", correlationID)
+	}
+
+	return nil
+}
+
+// ProcessTimeoutTrigger processes a timeout trigger from the scheduled task
+func (pm *StateMachine) ProcessTimeoutTrigger(ctx context.Context, correlationID string) error {
+	// Get the correlation record
+	correlation, err := pm.repositoryManager.GetMessageCorrelation(ctx, correlationID)
+	if err != nil {
+		return fmt.Errorf("failed to get correlation record: %w", err)
+	}
+
+	// Check if correlation is still waiting
+	if correlation.Status != WAITING {
+		// Already processed (message received), skip timeout processing
+		fmt.Printf("Correlation %s already processed with status %s, skipping timeout\n", correlationID, correlation.Status)
+		return nil
+	}
+
+	// Get the executionRecord
+	executionRecord, err := pm.repositoryManager.GetExecution(ctx, correlation.ExecutionID)
+	if err != nil {
+		return fmt.Errorf("failed to get executionRecord: %w", err)
+	}
+
+	// Prepare timeout input
+	timeoutInput := map[string]interface{}{
+		"__timeout_trigger__": true,
+		"correlation_id":      correlationID,
+		"execution_id":        correlation.ExecutionID,
+		"state_name":          correlation.StateName,
+	}
+
+	// Create executionRecord context for resumption
+	execCtx := execution.Execution{
+		ID:             executionRecord.ExecutionID,
+		StateMachineID: executionRecord.StateMachineID,
+		Name:           executionRecord.Name,
+		Status:         executionRecord.Status,
+		CurrentState:   executionRecord.CurrentState,
+		Input:          timeoutInput,
+		StartTime:      *executionRecord.StartTime,
+	}
+
+	// Resume executionRecord with timeout trigger
+	_, err = pm.ResumeExecution(ctx, &execCtx)
+	return err
 }
 
 func (pm *StateMachine) GetRepositoryManager() *repository.Manager {
