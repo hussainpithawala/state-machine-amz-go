@@ -6,6 +6,7 @@ on:
     branches: [ development, main ]
   pull_request:
     branches: [ master, main, development ]
+  workflow_call:
 
 env:
   GO_VERSION: '1.23'
