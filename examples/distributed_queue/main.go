@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/handler"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
@@ -39,7 +40,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to setup repository: %v", err)
 	}
-	defer repoManager.Close()
+	defer func(repoManager *repository.Manager) {
+		err := repoManager.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close repository manager: %v\n", err)
+		}
+	}(repoManager)
 
 	// Setup queue configuration
 	queueConfig := &queue.Config{
@@ -82,18 +88,23 @@ func main() {
 func runLeader(ctx context.Context, queueConfig *queue.Config, repoManager *repository.Manager) {
 	log.Println("Starting application in LEADER mode...")
 
-	// Create queue client
-	queueClient, err := queue.NewClient(queueConfig)
-	if err != nil {
-		log.Fatalf("Failed to create queue client: %v", err)
-	}
-	defer queueClient.Close()
-
 	// Load or create state machine
 	sm, err := getOrCreateStateMachine(ctx, repoManager)
 	if err != nil {
 		log.Fatalf("Failed to get state machine: %v", err)
 	}
+
+	// Create queue client
+	queueClient, err := queue.NewClient(queueConfig)
+	if err != nil {
+		log.Fatalf("Failed to create queue client: %v", err)
+	}
+	defer func(queueClient *queue.Client) {
+		err := queueClient.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close queue client: %v\n", err)
+		}
+	}(queueClient)
 
 	// Set queue client for distributed execution
 	sm.SetQueueClient(queueClient)
@@ -150,8 +161,20 @@ func runWorker(ctx context.Context, queueConfig *queue.Config, repoManager *repo
 	// Create execution context adapter
 	execAdapter := executor.NewExecutionContextAdapter(exec)
 
+	// Create queue client
+	queueClient, err := queue.NewClient(queueConfig)
+	if err != nil {
+		log.Fatalf("Failed to create queue client: %v", err)
+	}
+	defer func(queueClient *queue.Client) {
+		err := queueClient.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close queue client: %v\n", err)
+		}
+	}(queueClient)
+
 	// Create execution handler with executor
-	handler := persistent.NewExecutionHandlerWithContext(repoManager, execAdapter)
+	handler := handler.NewExecutionHandlerWithContext(repoManager, queueClient, execAdapter)
 
 	// Create worker with handler
 	worker, err := queue.NewWorker(queueConfig, handler)

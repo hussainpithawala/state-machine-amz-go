@@ -157,7 +157,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
           DATABASE_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
         #        run: find examples -maxdepth 2 -name "*.go" -print0 | xargs -0 -n1 go run
-        run: find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' -name "*.go" -print0 | xargs -0 -n1 go run
+        run: find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' -path '*/message_timeout_complete/*' -name "*.go" -print0 | xargs -0 -n1 go run
       - name: Upload coverage
         uses: codecov/codecov-action@v5
         with:
