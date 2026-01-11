@@ -9,9 +9,37 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.1.0
+## 🆕 What's New in v1.1.1
 
-**Distributed Queue Execution** - Scale your state machine executions across multiple workers with Redis-backed task queues! 🚀
+**Asynchronous Task Cancellation** - Automatic timeout cancellation when messages arrive! 🎯
+
+Building on v1.1.0's BPMN-style boundary timer events with Redis-backed async task scheduling, when a Message state enters a waiting state, it schedules a timeout task in Redis that will trigger if no correlated message arrives within the specified timeout period.
+
+**What's New in v1.1.1**: If the message arrives before the timeout expires, the message is correlated and the scheduled timeout task is automatically cancelled. If no message arrives, the timeout task executes as scheduled. This prevents unnecessary processing and keeps queues clean.
+
+```go
+// Message arrives before timeout → timeout automatically cancelled
+WaitForPayment:
+  Type: Message
+  CorrelationKey: "orderId"
+  TimeoutSeconds: 3600  # 1 hour timeout
+  TimeoutPath: HandleTimeout
+  Next: ProcessOrder
+```
+
+**Key Benefits:**
+- 🧹 **Clean Queues** - No orphaned timeout tasks cluttering Redis
+- ⚡ **Reduced Load** - Lower CPU and queue processing overhead
+- 🎯 **Race Condition Handling** - Proper handling of message-vs-timeout races
+- 📊 **Better Observability** - Accurate task counts in Asynqmon
+
+**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.1.md)**
+
+---
+
+## 🚀 Previous Release - v1.1.0
+
+**Distributed Queue Execution** - Scale your state machine executions across multiple workers with Redis-backed task queues!
 
 ```go
 // Configure distributed queue
@@ -330,19 +358,20 @@ TransformData:
 </details>
 
 <details>
-<summary><b>Message State</b> - Pause and wait for external message</summary>
+<summary><b>Message State</b> - Pause and wait for external message (with timeout cancellation)</summary>
 
 ```yaml
 WaitForPayment:
   Type: Message
   CorrelationKey: "orderId"
   CorrelationValuePath: "$.orderId"
-  TimeoutSeconds: 3600
+  TimeoutSeconds: 3600  # Timeout automatically cancelled if message arrives
+  TimeoutPath: "HandleTimeout"  # Only triggered if timeout fires
   Next: "ProcessOrder"
-  Catch:
-    - ErrorEquals: ["States.Timeout"]
-      Next: "HandleTimeout"
 ```
+
+**Message State Timeouts** (v1.1.0): BPMN-style boundary timer events with Redis-backed async task scheduling
+**NEW in v1.1.1**: Scheduled timeout tasks are automatically cancelled when correlated messages arrive, preventing unnecessary processing and keeping queues clean.
 </details>
 
 ## 💾 Persistence Backends
@@ -433,28 +462,56 @@ ProcessPayment:
     customer.$: "$.customer"
 ```
 
-### Message Pause and Resume
+### Message Pause and Resume (with Async Timeouts and Cancellation)
 
-Enable your workflows to wait for external events or human interventions.
+Enable your workflows to wait for external events with BPMN-style boundary timer events.
 
-**1. Define a Message State:**
+**Message State Timeouts** (v1.1.0): Uses Redis-backed async task scheduling for distributed timeout processing
+**Timeout Cancellation** (v1.1.1): Automatically cancels scheduled tasks when messages arrive
+
+**1. Define a Message State with Timeout:**
 ```yaml
 WaitForApproval:
   Type: Message
   CorrelationKey: "orderId"
   CorrelationValuePath: "$.orderId"
+  TimeoutSeconds: 300  # 5 minute timeout
+  TimeoutPath: "HandleTimeout"
   Next: "ProcessOrder"
 ```
 
 **2. Resume via Executor:**
 ```go
 // When the external message arrives (e.g., via webhook or SQS)
+// Scheduled timeout is automatically cancelled!
 response, err := exec.Message(ctx, &executor.MessageRequest{
     CorrelationKey:   "orderId",
     CorrelationValue: "ORD-123",
     Data:             map[string]interface{}{"approved": true},
 })
 ```
+
+**3. Timeout Handling:**
+```yaml
+HandleTimeout:
+  Type: Pass
+  Result:
+    status: "timeout"
+    message: "Approval not received within 5 minutes"
+  End: true
+```
+
+**How it works:**
+1. **Message State Entered** (v1.1.0) → Timeout task scheduled in Redis queue with unique ID, timer starts
+2. **Message Arrives Before Timeout** (v1.1.1) → Message is correlated, scheduled timeout task automatically cancelled from Redis ✅
+3. **Timeout Expires (No Message)** → Scheduled timeout task executes, workflow transitions to TimeoutPath ⏰
+4. **Race Conditions** → Handled gracefully with correlation status tracking (idempotent)
+5. **Clean Queues** → No orphaned tasks after message correlation 🧹
+
+**Architecture Benefits:**
+- Distributed timeout processing across multiple workers
+- Redis persistence for reliability
+- Automatic cleanup when messages are correlated (v1.1.1)
 
 ### Execution Chaining (NEW in v1.0.8)
 
@@ -768,6 +825,29 @@ if gormRepo, ok := manager.GetRepository().(repository.ExtendedRepository); ok {
 
 ## 🧪 Testing
 
+The project includes comprehensive unit and integration tests.
+
+**Run Unit Tests (fast, no dependencies):**
+```bash
+go test ./pkg/queue/...
+go test ./pkg/statemachine/handler/...
+```
+
+**Run Integration Tests (requires Docker):**
+```bash
+# Start Postgres and Redis
+cd docker-examples
+docker-compose up -d postgres redis
+
+# Run integration tests
+go test -tags=integration -v ./pkg/queue/...
+go test -tags=integration -v ./pkg/statemachine/handler/...
+
+# Cleanup
+docker-compose down -v
+```
+
+**Example Unit Test:**
 ```go
 func TestOrderWorkflow(t *testing.T) {
 	// Use in-memory repository
@@ -798,6 +878,15 @@ func TestOrderWorkflow(t *testing.T) {
 }
 ```
 
+**Test Coverage:**
+- ✅ 47 integration tests for queue and handler packages
+- ✅ Comprehensive timeout event scenario coverage
+- ✅ Real Postgres and Redis integration (no mocks)
+- ✅ Message-arrives-first vs timeout-triggers-first scenarios
+- ✅ High-volume and concurrent operation testing
+
+**[📖 Full Testing Guide](TESTING.md)**
+
 ## 📈 Performance
 
 ```
@@ -826,6 +915,7 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] **Batch Chained Execution (v1.0.9)** - Batch processing with filtering
 - [x] **Distributed Queue Execution (v1.1.0)** - Redis-backed task queues
 - [x] **REST API Framework (v1.1.0)** - Complete HTTP API via Gin
+- [x] **Async Task Cancellation (v1.1.1)** - Automatic timeout cancellation
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring

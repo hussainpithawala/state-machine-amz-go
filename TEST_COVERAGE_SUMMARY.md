@@ -2,7 +2,13 @@
 
 ## Overview
 
-Comprehensive test coverage has been added for the queue and handler packages with a focus on message timeout event scenarios. All tests use real Postgres and Redis instances instead of mocks for accurate integration testing.
+Comprehensive test coverage has been added for the queue and handler packages with a focus on message timeout event scenarios, specifically testing the async task cancellation feature introduced in v1.1.1.
+
+**Testing Focus**: The tests verify:
+- **Async Timeout Scheduling (v1.1.0)**: Timeout tasks scheduled in Redis when Message state enters waiting; tasks execute if no message arrives within timeout period
+- **Automatic Cancellation (v1.1.1)**: Scheduled timeout tasks automatically cancelled when messages arrive and are correlated before timeout expires
+
+All tests use real Postgres and Redis instances instead of mocks for accurate integration testing.
 
 ## Test Files Created
 
