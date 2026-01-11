@@ -108,6 +108,9 @@ jobs:
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
+      - name: Install Redis client
+        run: sudo apt-get update && sudo apt-get install -y redis-tools
+
       - name: Wait for PostgreSQL
         run: |
           timeout 60s sh -c 'until pg_isready --host=localhost --port=5432 --username=postgres; do sleep 2; done'
@@ -193,6 +196,9 @@ jobs:
 
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Install Redis client
+        run: sudo apt-get update && sudo apt-get install -y redis-tools
 
       - name: Wait for PostgreSQL
         run: |
@@ -286,6 +292,9 @@ jobs:
 
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Install Redis client
+        run: sudo apt-get update && sudo apt-get install -y redis-tools
 
       - name: Wait for PostgreSQL
         run: |

@@ -7,6 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const FAILED = "FAILED"
+
 // Execution represents a state machine execution instance
 type Execution struct {
 	StateMachineID string
@@ -21,6 +23,11 @@ type Execution struct {
 	CurrentState   string
 	History        []StateHistory
 	Metadata       map[string]interface{}
+}
+
+func (e *Execution) MarkFailed(err error) {
+	e.Status = FAILED
+	e.Error = err
 }
 
 // StateHistory represents the history of a state execution
