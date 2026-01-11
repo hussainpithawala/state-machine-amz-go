@@ -1,51 +1,79 @@
+version: '3.8'
+
 services:
-  postgres_sm_test:
-    image: postgres:14.1-alpine
+  postgres:
+    image: postgres:15-alpine
+    container_name: statemachine-postgres
     restart: always
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DATABASE=statemachine_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: statemachine_test
     ports:
       - '5432:5432'
     volumes:
-      - "./postgres_14/postgres.conf:/usr/local/etc/postgres/postgres.conf"
-      - "./postgres_14/data:/var/lib/postgresql/data:delegated"
-    command: "postgres -c config_file=/usr/local/etc/postgres/postgres.conf"
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_14/postgres.conf:/usr/local/etc/postgres/postgres.conf:ro
+    command: >
+      postgres
+      -c config_file=/usr/local/etc/postgres/postgres.conf
+      -c max_connections=200
+      -c shared_buffers=256MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - statemachine-network
 
   redis:
     image: redis:7-alpine
+    container_name: statemachine-redis
     restart: always
     ports:
       - '6379:6379'
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
-      - redis-data:/data
-    networks:
-      - statemachine-network
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - statemachine-network
 
   asynqmon:
     image: hussainp/asynqmon:0.7.2
+    container_name: statemachine-asynqmon
     restart: always
     ports:
       - '8080:8080'
     environment:
       - REDIS_ADDR=redis:6379
+      - REDIS_DB=0
+      - ENABLE_METRICS=true
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
       - statemachine-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 networks:
   statemachine-network:
     driver: bridge
+    name: statemachine-network
 
 volumes:
-  redis-data:
+  postgres_data:
+    driver: local
+    name: statemachine-postgres-data
+  redis_data:
+    driver: local
+    name: statemachine-redis-data

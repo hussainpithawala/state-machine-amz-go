@@ -42,7 +42,7 @@ const stateMachineDefinition = `
       "Type": "Message",
       "CorrelationKey": "orderId",
       "CorrelationValuePath": "$.orderId",
-      "TimeoutSeconds": 300,
+      "TimeoutSeconds": 15,
       "TimeoutPath": "PaymentTimeout",
       "Next": "ProcessPayment",
       "Catch": [

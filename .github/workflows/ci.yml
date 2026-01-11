@@ -3,21 +3,26 @@ name: CI
 
 on:
   push:
-    branches: [ development ]
+    branches: [ development, main ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, main, development ]
+
+env:
+  GO_VERSION: '1.23'
 
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v3
@@ -25,44 +30,92 @@ jobs:
           version: latest
           args: --timeout=5m --config=.golangci.yml
 
-  test:
-    name: Test
+  test-unit:
+    name: Unit Tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: [ 1.23 ]
-
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: statemachine_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
+        go-version: [ '1.23' ]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Setup Go ${{ matrix.go-version }}
         uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
+          cache: true
 
-      # Install PostgreSQL client tools (psql, pg_isready, etc.)
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: go test -v -short -race ./pkg/queue/...
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [ lint ]
+    strategy:
+      matrix:
+        go-version: [ '1.23' ]
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: statemachine_test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      # Wait for Postgres to be ready (optional, healthcheck usually suffices)
       - name: Wait for PostgreSQL
         run: |
           timeout 60s sh -c 'until pg_isready --host=localhost --port=5432 --username=postgres; do sleep 2; done'
 
-      # Create the second database
+      - name: Wait for Redis
+        run: |
+          timeout 60s sh -c 'until redis-cli -h localhost -p 6379 ping; do sleep 2; done'
+
       - name: Create additional test database
         run: |
           psql -h localhost -U postgres -d statemachine_test -c 'CREATE DATABASE statemachine_test_gorm;'
@@ -82,57 +135,166 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Run tests
+      - name: Run integration tests
         env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: statemachine_test
+          REDIS_ADDR: localhost:6379
           POSTGRES_TEST_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
           POSTGRES_TEST_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
+        run: |
+          go test -v -race ./pkg/handler/... ./pkg/statemachine/persistent/...
 
-        run: go test $(go list ./... | grep -v /examples) -v -race -coverprofile=coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
+  test-all:
+    name: Full Test Suite
+    runs-on: ubuntu-latest
+    needs: [ lint, test-unit ]
+    strategy:
+      matrix:
+        go-version: [ '1.23' ]
 
-      - name: Upload coverage
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: statemachine_test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Wait for PostgreSQL
+        run: |
+          timeout 60s sh -c 'until pg_isready --host=localhost --port=5432 --username=postgres; do sleep 2; done'
+
+      - name: Wait for Redis
+        run: |
+          timeout 60s sh -c 'until redis-cli -h localhost -p 6379 ping; do sleep 2; done'
+
+      - name: Create additional test database
+        run: |
+          psql -h localhost -U postgres -d statemachine_test -c 'CREATE DATABASE statemachine_test_gorm;'
+        env:
+          PGPASSWORD: postgres
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run all tests with coverage
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: statemachine_test
+          REDIS_ADDR: localhost:6379
+          POSTGRES_TEST_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
+          POSTGRES_TEST_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
+        run: |
+          go test $(go list ./... | grep -v /examples) -v -race -coverprofile=coverage-${{ matrix.go-version }}.out -covermode=atomic
+
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
-          flags: ${{ matrix.go-version }}-${{ matrix.os }}
+          files: coverage-${{ matrix.go-version }}.out
+          flags: go-${{ matrix.go-version }}
+          name: go-${{ matrix.go-version }}
 
   test-examples:
     name: Test Examples
     runs-on: ubuntu-latest
+    needs: [ lint ]
     strategy:
       matrix:
-        go-version: [ 1.23 ]
+        go-version: [ '1.23' ]
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15-alpine
         env:
+          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: statemachine_test
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
         ports:
           - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Setup Go ${{ matrix.go-version }}
         uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
+          cache: true
 
-      # Install PostgreSQL client tools (psql, pg_isready, etc.)
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      # Wait for Postgres to be ready (optional, healthcheck usually suffices)
       - name: Wait for PostgreSQL
         run: |
           timeout 60s sh -c 'until pg_isready --host=localhost --port=5432 --username=postgres; do sleep 2; done'
 
-      # Create the second database
+      - name: Wait for Redis
+        run: |
+          timeout 60s sh -c 'until redis-cli -h localhost -p 6379 ping; do sleep 2; done'
+
       - name: Create additional test database
         run: |
           psql -h localhost -U postgres -d statemachine_test -c 'CREATE DATABASE statemachine_test_gorm;'
@@ -152,56 +314,69 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Run test-examples
+      - name: Run examples
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
           DATABASE_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
-        #        run: find examples -maxdepth 2 -name "*.go" -print0 | xargs -0 -n1 go run
-        run: find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' -path '*/message_timeout_complete/*' -name "*.go" -print0 | xargs -0 -n1 go run
-      - name: Upload coverage
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage-${{ matrix.go-version }}-${{ matrix.os }}.out
-          flags: ${{ matrix.go-version }}-${{ matrix.os }}
+        run: |
+          find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' ! -path '*/message_timeout_complete/*' -name "*.go" -print0 | xargs -0 -n1 go run
 
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [ lint, test, test-examples ]
+    needs: [ lint, test-all, test-examples ]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Build package
         run: |
           go build -v ./...
-          go build -o /dev/null ./examples/*.go 2>/dev/null || true
 
-      - name: Check for breaking changes
+      - name: Build examples
         run: |
-          # Install apidiff
-          go install golang.org/x/exp/cmd/apidiff@latest
-          
-          # Compare with last release (if available)
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          echo "Comparing with $LATEST_TAG"
-          
-          # Create temporary directories for comparison
-          mkdir -p /tmp/old /tmp/new
-          git archive $LATEST_TAG | tar -x -C /tmp/old/ || true
-          cp -r . /tmp/new/
-          
-          # Run apidiff if old version exists
-          if [ -f "/tmp/old/go.mod" ]; then
-            apidiff /tmp/old /tmp/new || echo "Note: API differences detected"
-          fi
+          for example in examples/*/*.go; do
+            if [ -f "$example" ]; then
+              echo "Building $example..."
+              go build -o /dev/null "$example" || echo "Warning: Failed to build $example"
+            fi
+          done
 
       - name: Verify go.mod
         run: |
           echo "Module: $(go list -m)"
           go mod tidy
           git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum not tidy" && exit 1)
+
+  summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [ lint, test-unit, test-integration, test-all, test-examples, build ]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ needs.lint.result }}" == "success" ]] && \
+             [[ "${{ needs.test-unit.result }}" == "success" ]] && \
+             [[ "${{ needs.test-integration.result }}" == "success" ]] && \
+             [[ "${{ needs.test-all.result }}" == "success" ]] && \
+             [[ "${{ needs.test-examples.result }}" == "success" ]] && \
+             [[ "${{ needs.build.result }}" == "success" ]]; then
+            echo "✅ All CI checks passed!"
+            exit 0
+          else
+            echo "❌ Some CI checks failed"
+            echo "Lint: ${{ needs.lint.result }}"
+            echo "Unit Tests: ${{ needs.test-unit.result }}"
+            echo "Integration Tests: ${{ needs.test-integration.result }}"
+            echo "Full Test Suite: ${{ needs.test-all.result }}"
+            echo "Examples: ${{ needs.test-examples.result }}"
+            echo "Build: ${{ needs.build.result }}"
+            exit 1
+          fi
