@@ -9,23 +9,31 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.1.1
+## 🆕 What's New in v1.1.2
+
+**Critical Bug Fix** - ExecutionContext moved to types package for proper context management! 🔧
+
+**What's Fixed in v1.1.2**: Resolved a critical issue where `ExecutionContext` and its registry needed to be accessible at the Background context level. The type has been relocated from `internal/states` to `pkg/types` to enable proper context propagation across the application.
+
+**Key Changes:**
+- 📦 **Type Relocation** - `ExecutionContext` moved to `pkg/types/types.go`
+- 🔄 **Updated References** - All imports and usages updated across codebase
+- 📝 **Examples Updated** - All example code updated with new import paths
+- ✅ **Context Management** - Proper context propagation now ensured
+
+**Impact**: This is an urgent fix that ensures proper context management. Users should update immediately.
+
+**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.2.md)**
+
+---
+
+## 🔄 Previous Release - v1.1.1
 
 **Asynchronous Task Cancellation** - Automatic timeout cancellation when messages arrive! 🎯
 
 Building on v1.1.0's BPMN-style boundary timer events with Redis-backed async task scheduling, when a Message state enters a waiting state, it schedules a timeout task in Redis that will trigger if no correlated message arrives within the specified timeout period.
 
 **What's New in v1.1.1**: If the message arrives before the timeout expires, the message is correlated and the scheduled timeout task is automatically cancelled. If no message arrives, the timeout task executes as scheduled. This prevents unnecessary processing and keeps queues clean.
-
-```go
-// Message arrives before timeout → timeout automatically cancelled
-WaitForPayment:
-  Type: Message
-  CorrelationKey: "orderId"
-  TimeoutSeconds: 3600  # 1 hour timeout
-  TimeoutPath: HandleTimeout
-  Next: ProcessOrder
-```
 
 **Key Benefits:**
 - 🧹 **Clean Queues** - No orphaned timeout tasks cluttering Redis
