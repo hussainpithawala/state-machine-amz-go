@@ -11,6 +11,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
 func main() {
@@ -105,6 +106,7 @@ States:
     Resource: "arn:aws:lambda:::ingest:data"
     End: true
 `
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
 
 	// Create persistent state machine A
 	smA, err := persistent.New([]byte(stateMachineA_YAML), false, "data-ingestion-pipeline", repoManager)

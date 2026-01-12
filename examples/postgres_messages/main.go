@@ -11,6 +11,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
 func main() {
@@ -109,6 +110,9 @@ States:
 	}
 
 	fmt.Printf("\n1. Starting execution %s...\n", execID)
+
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
+
 	executionInstance, err := pm.Execute(ctx, execCtx)
 	if err != nil {
 		return fmt.Errorf("initial execution failed: %w", err)

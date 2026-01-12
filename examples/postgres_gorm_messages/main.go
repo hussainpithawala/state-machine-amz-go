@@ -11,6 +11,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
 func main() {
@@ -118,6 +119,8 @@ States:
 
 	exec := executor.BaseExecutor{}
 	exec.SetRepositoryManager(persistenceManager)
+	executionContextAdapter := executor.NewExecutionContextAdapter(&exec)
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executionContextAdapter)
 
 	response, err := exec.Message(ctx, messageRequest, registryMap)
 	if err != nil {

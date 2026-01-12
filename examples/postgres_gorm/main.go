@@ -12,6 +12,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
 func main() {
@@ -36,19 +37,19 @@ StartAt: ProcessOrder
 States:
   ProcessOrder:
     Type: Task
-    Resource: "arn:aws:lambda:::process:order"
+    Resource: "process:order"
     ResultPath: "$.orderResult"
     Next: ValidatePayment
 
   ValidatePayment:
     Type: Task
-    Resource: "arn:aws:lambda:::validate:payment"
+    Resource: "validate:payment"
     ResultPath: "$.paymentResult"
     Next: SendNotification
 
   SendNotification:
     Type: Task
-    Resource: "arn:aws:lambda:::send:notification"
+    Resource: "send:notification"
     ResultPath: "$.notificationResult"
     End: true
 `
@@ -71,10 +72,10 @@ States:
 	}
 
 	// 5. Create executor and register task handlers
-	exec := executor.NewBaseExecutor()
+	newBaseExecutor := executor.NewBaseExecutor()
 
 	// Register handlers for the resources defined in YAML
-	exec.RegisterGoFunction("process:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+	newBaseExecutor.RegisterGoFunction("process:order", func(ctx context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Processing order...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -86,7 +87,7 @@ States:
 		}, nil
 	})
 
-	exec.RegisterGoFunction("validate:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+	newBaseExecutor.RegisterGoFunction("validate:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Validating payment...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -96,7 +97,7 @@ States:
 		}, nil
 	})
 
-	exec.RegisterGoFunction("send:notification", func(ctx context.Context, input interface{}) (interface{}, error) {
+	newBaseExecutor.RegisterGoFunction("send:notification", func(ctx context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Sending notification...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -106,9 +107,12 @@ States:
 		}, nil
 	})
 
+	executionContextAdapter := executor.NewExecutionContextAdapter(newBaseExecutor)
+
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executionContextAdapter)
 	// 6. Create execution context with persistence
 	execCtx := &execution.Execution{
-		ID:             "exec-simple-001",
+		ID:             "newBaseExecutor-simple-001",
 		Name:           "SimpleOrderProcessing",
 		StateMachineID: "simple-workflow-v1",
 		Input: map[string]interface{}{
@@ -126,6 +130,7 @@ States:
 	// 7. Execute the workflow
 	fmt.Println("\nExecuting workflow...")
 
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(newBaseExecutor))
 	executionInstance, err := pm.Execute(ctx, execCtx)
 
 	if err != nil {

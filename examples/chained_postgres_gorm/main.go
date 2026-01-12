@@ -11,6 +11,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
 func main() {
@@ -128,6 +129,8 @@ States:
     ResultPath: "$.validationResult"
     End: true
 `
+
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
 
 	// Create persistent state machine A
 	smA, err := persistent.New([]byte(stateMachineA_YAML), false, "data-processing-pipeline", repoManager)

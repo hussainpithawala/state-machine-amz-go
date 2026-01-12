@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	statemachine2 "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
 // ExecutionHandler implements queue.ExecutionHandler interface
@@ -18,7 +18,7 @@ import (
 type ExecutionHandler struct {
 	repositoryManager *repository.Manager
 	queueClient       *queue.Client
-	executionContext  states.ExecutionContext
+	executionContext  types.ExecutionContext
 }
 
 // NewExecutionHandler creates a new execution handler
@@ -31,7 +31,7 @@ func NewExecutionHandler(repositoryManager *repository.Manager, queueClient *que
 }
 
 // NewExecutionHandlerWithContext creates a new execution handler with an execution context
-func NewExecutionHandlerWithContext(repositoryManager *repository.Manager, queueClient *queue.Client, execCtx states.ExecutionContext) *ExecutionHandler {
+func NewExecutionHandlerWithContext(repositoryManager *repository.Manager, queueClient *queue.Client, execCtx types.ExecutionContext) *ExecutionHandler {
 	return &ExecutionHandler{
 		repositoryManager: repositoryManager,
 		queueClient:       queueClient,
@@ -56,7 +56,7 @@ func (h *ExecutionHandler) HandleExecution(ctx context.Context, payload *queue.E
 
 	// Add execution context if available
 	if h.executionContext != nil {
-		ctx = context.WithValue(ctx, states.ExecutionContextKey, h.executionContext)
+		ctx = context.WithValue(ctx, types.ExecutionContextKey, h.executionContext)
 	}
 
 	// Route to appropriate handler based on execution type
@@ -167,7 +167,7 @@ func (h *ExecutionHandler) HandleTimeout(ctx context.Context, payload *queue.Tim
 
 	// Add execution context if available
 	if h.executionContext != nil {
-		ctx = context.WithValue(ctx, states.ExecutionContextKey, h.executionContext)
+		ctx = context.WithValue(ctx, types.ExecutionContextKey, h.executionContext)
 	}
 
 	// Get the correlation record
@@ -204,7 +204,7 @@ func (h *ExecutionHandler) HandleTimeout(ctx context.Context, payload *queue.Tim
 }
 
 // SetExecutionContext sets the execution context for the handler
-func (h *ExecutionHandler) SetExecutionContext(execCtx states.ExecutionContext) {
+func (h *ExecutionHandler) SetExecutionContext(execCtx types.ExecutionContext) {
 	h.executionContext = execCtx
 }
 

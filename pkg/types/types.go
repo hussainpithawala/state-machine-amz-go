@@ -1,5 +1,9 @@
 package types
 
+import (
+	"context"
+)
+
 // State types as defined in AWS States Language
 const (
 	StateTypeTask     = "Task"
@@ -69,7 +73,21 @@ const (
 	MaxTimeoutSeconds     = 86400 // 24 hours
 )
 
+// Context keys for task execution
+type contextKey string
+
+const (
+	// ExecutionContextKey is the key for storing execution context in context
+	ExecutionContextKey contextKey = "execution_context"
+)
+
 // Version constants
 const (
 	Version1 = "1.0"
 )
+
+// ExecutionContext provides access to execution-related functionality
+type ExecutionContext interface {
+	// GetTaskHandler retrieves a task handler for a resource
+	GetTaskHandler(resource string) (func(context.Context, interface{}) (interface{}, error), bool)
+}
