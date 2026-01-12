@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
 // TaskState represents an AWS Task state
@@ -54,20 +56,6 @@ type TaskHandler interface {
 	CanHandle(resource string) bool
 }
 
-// Context keys for task execution
-type contextKey string
-
-const (
-	// ExecutionContextKey is the key for storing execution context in context
-	ExecutionContextKey contextKey = "execution_context"
-)
-
-// ExecutionContext provides access to execution-related functionality
-type ExecutionContext interface {
-	// GetTaskHandler retrieves a task handler for a resource
-	GetTaskHandler(resource string) (func(context.Context, interface{}) (interface{}, error), bool)
-}
-
 // DefaultTaskHandler is an enhanced handler that delegates to execution context
 type DefaultTaskHandler struct{}
 
@@ -79,7 +67,7 @@ func NewDefaultTaskHandler() *DefaultTaskHandler {
 // Execute tries to delegate to handler from execution context
 func (h *DefaultTaskHandler) Execute(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 	// Try to get execution context
-	if execCtx, ok := ctx.Value(ExecutionContextKey).(ExecutionContext); ok && execCtx != nil {
+	if execCtx, ok := ctx.Value(types.ExecutionContextKey).(types.ExecutionContext); ok && execCtx != nil {
 		// Get handler from execution context
 		if handler, exists := execCtx.GetTaskHandler(resource); exists {
 			// Apply parameters if provided
@@ -548,6 +536,6 @@ func (t *TaskState) GetNextStates() []string {
 // Helper functions for context management
 
 // WithExecutionContext adds an execution context to the context
-func WithExecutionContext(ctx context.Context, execCtx ExecutionContext) context.Context {
-	return context.WithValue(ctx, ExecutionContextKey, execCtx)
+func WithExecutionContext(ctx context.Context, execCtx types.ExecutionContext) context.Context {
+	return context.WithValue(ctx, types.ExecutionContextKey, execCtx)
 }

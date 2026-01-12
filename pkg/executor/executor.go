@@ -136,8 +136,7 @@ func (e *BaseExecutor) ListExecutions() []*execution.Execution {
 
 // RegisterGoFunction registers a Go function as a task handler
 func (e *BaseExecutor) RegisterGoFunction(name string, fn func(context.Context, interface{}) (interface{}, error)) {
-	resourceURI := fmt.Sprintf("arn:aws:states:::lambda:function:%s", name)
-	e.registry.RegisterTaskHandler(resourceURI, fn)
+	e.registry.RegisterTaskHandler(name, fn)
 }
 
 // ExecuteGoTask executes a Go task function

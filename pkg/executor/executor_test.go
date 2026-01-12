@@ -126,9 +126,9 @@ func TestBaseExecutor_RegisterGoFunction_RegistersHandlerWithExpectedARN(t *test
 		return "ok", nil
 	}
 
-	e.RegisterGoFunction("MyFn", handler)
-
 	arn := "arn:aws:states:::lambda:function:MyFn"
+	e.RegisterGoFunction(arn, handler)
+
 	got, ok := e.registry.GetTaskHandler(arn)
 	require.True(t, ok)
 	require.NotNil(t, got)
