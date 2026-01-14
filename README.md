@@ -9,19 +9,33 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.1.2
+## 🆕 What's New in v1.1.3
+
+**🔥 CRITICAL Bug Fix** - State execution chain input propagation fixed!
+
+**What's Fixed in v1.1.3**: Resolved a **critical bug** where output from one state was not being passed as input to the next state in multi-state workflows. This caused subsequent states to receive incorrect input data, breaking the entire state machine execution flow.
+
+**The Issue:**
+- Output from State A was not propagated as input to State B
+- Multi-state workflows produced incorrect results
+- Data transformations were not applied correctly
+
+**The Fix:**
+- Added missing `execCtx.Input = output` at `persistent.go:195`
+- Ensures proper state-to-state data flow
+- All multi-state workflows now execute correctly
+
+**Impact**: ⚠️ **CRITICAL** - Affects ALL users running workflows with 2+ states. **Update immediately!**
+
+**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.3.md)**
+
+---
+
+## 🔄 Previous Release - v1.1.2
 
 **Critical Bug Fix** - ExecutionContext moved to types package for proper context management! 🔧
 
-**What's Fixed in v1.1.2**: Resolved a critical issue where `ExecutionContext` and its registry needed to be accessible at the Background context level. The type has been relocated from `internal/states` to `pkg/types` to enable proper context propagation across the application.
-
-**Key Changes:**
-- 📦 **Type Relocation** - `ExecutionContext` moved to `pkg/types/types.go`
-- 🔄 **Updated References** - All imports and usages updated across codebase
-- 📝 **Examples Updated** - All example code updated with new import paths
-- ✅ **Context Management** - Proper context propagation now ensured
-
-**Impact**: This is an urgent fix that ensures proper context management. Users should update immediately.
+Resolved a critical issue where `ExecutionContext` and its registry needed to be accessible at the Background context level. The type has been relocated from `internal/states` to `pkg/types` to enable proper context propagation across the application.
 
 **[📖 Read the full release notes →](RELEASE_NOTES_v1.1.2.md)**
 

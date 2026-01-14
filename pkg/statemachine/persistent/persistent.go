@@ -192,6 +192,7 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 
 		currentStateName = *nextState
 		execCtx.CurrentState = currentStateName
+		execCtx.Input = output
 	}
 }
 
