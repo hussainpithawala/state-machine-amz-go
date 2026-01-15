@@ -78,13 +78,22 @@ func (p *JSONPathProcessor) getValue(data interface{}, path string) (interface{}
 
 			arr, ok := current.([]interface{})
 			if !ok {
-				return nil, fmt.Errorf("cannot index non-array")
+				arrOfMaps, ok2 := current.([]map[string]interface{})
+				if index < 0 || index >= len(arrOfMaps) {
+					return nil, fmt.Errorf("array index out of bounds")
+				}
+				if !ok2 {
+					return nil, fmt.Errorf("cannot index non-array")
+				}
+				current = arrOfMaps[index]
+				continue
+			} else {
+				if index < 0 || index >= len(arr) {
+					return nil, fmt.Errorf("array index out of bounds")
+				}
+				current = arr[index]
+				continue
 			}
-			if index < 0 || index >= len(arr) {
-				return nil, fmt.Errorf("array index out of bounds")
-			}
-			current = arr[index]
-			continue
 		}
 
 		// Handle object field

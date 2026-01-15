@@ -1434,7 +1434,43 @@ func TestChoiceState_EdgeCases(t *testing.T) {
 				},
 			},
 			expectedNext: StringPtr("FirstActive"),
-			description:  "should handle array indexing in variable path",
+			description:  "should handle []interface{} array indexing in variable path",
+		},
+		{
+			name: "array element access",
+			state: &ChoiceState{
+				BaseState: BaseState{
+					Name: "ChoiceState",
+					Type: "Choice",
+				},
+				Choices: []ChoiceRule{
+					{
+						Variable:     "$.accounts[0].createdBy",
+						StringEquals: StringPtr("LESSPAY"),
+						Next:         "FirstActive",
+					},
+				},
+			},
+			input: map[string]interface{}{
+				"accounts": []map[string]interface{}{
+					{
+						"createdBy": "LESSPAY",
+						"bankInfo": map[string]interface{}{
+							"bankCode": "100000",
+							"bankName": "UNKNOWN BANK",
+						},
+						"otherData": []map[string]interface{}{
+							{
+								"epoch":     1761896894817,
+								"status":    "ACTIVE",
+								"isPrimary": true,
+							},
+						},
+					},
+				},
+			},
+			expectedNext: StringPtr("FirstActive"),
+			description:  "should handle []map[string]interface{} array indexing in variable path",
 		},
 	}
 
