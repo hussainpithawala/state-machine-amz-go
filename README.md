@@ -9,23 +9,33 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.1.3
+## 🆕 What's New in v1.1.4
+
+**🐛 Bug Fix** - JSONPath array handling for `[]map[string]interface{}` fixed!
+
+**What's Fixed in v1.1.4**: Enhanced JSONPath processing to properly handle `[]map[string]interface{}` array types during value extraction. Previously, only `[]interface{}` arrays were supported, causing Choice state conditions and JSONPath expressions to fail with common Go data structures.
+
+**The Issue:**
+- JSONPath expressions with array indexing failed for `[]map[string]interface{}` types
+- Choice states couldn't evaluate conditions on array elements
+- Error: `"cannot index non-array"` even though data was an array
+
+**The Fix:**
+- Enhanced array type handling in `internal/states/jsonpath.go`
+- Now supports both `[]interface{}` and `[]map[string]interface{}` arrays
+- Proper bounds checking for both array types
+
+**Impact**: Affects users with Choice states using array indexing or workflows processing `[]map[string]interface{}` data structures.
+
+**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.4.md)**
+
+---
+
+## 🔄 Previous Release - v1.1.3
 
 **🔥 CRITICAL Bug Fix** - State execution chain input propagation fixed!
 
-**What's Fixed in v1.1.3**: Resolved a **critical bug** where output from one state was not being passed as input to the next state in multi-state workflows. This caused subsequent states to receive incorrect input data, breaking the entire state machine execution flow.
-
-**The Issue:**
-- Output from State A was not propagated as input to State B
-- Multi-state workflows produced incorrect results
-- Data transformations were not applied correctly
-
-**The Fix:**
-- Added missing `execCtx.Input = output` at `persistent.go:195`
-- Ensures proper state-to-state data flow
-- All multi-state workflows now execute correctly
-
-**Impact**: ⚠️ **CRITICAL** - Affects ALL users running workflows with 2+ states. **Update immediately!**
+Resolved a **critical bug** where output from one state was not being passed as input to the next state in multi-state workflows. This caused subsequent states to receive incorrect input data, breaking the entire state machine execution flow.
 
 **[📖 Read the full release notes →](RELEASE_NOTES_v1.1.3.md)**
 
@@ -938,6 +948,8 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] **Distributed Queue Execution (v1.1.0)** - Redis-backed task queues
 - [x] **REST API Framework (v1.1.0)** - Complete HTTP API via Gin
 - [x] **Async Task Cancellation (v1.1.1)** - Automatic timeout cancellation
+- [x] **Critical Bug Fix (v1.1.3)** - State execution chain input propagation
+- [x] **JSONPath Array Handling (v1.1.4)** - Support for []map[string]interface{}
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring
