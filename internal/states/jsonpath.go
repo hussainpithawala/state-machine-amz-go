@@ -69,58 +69,81 @@ func (p *JSONPathProcessor) getValue(data interface{}, path string) (interface{}
 			continue
 		}
 
+		var err error
 		// Handle array index
-		if part[0] == '[' && part[len(part)-1] == ']' {
-			index, err := strconv.Atoi(part[1 : len(part)-1])
+		if p.isArrayIndexPart(part) {
+			current, err = p.handleArrayIndex(current, part)
 			if err != nil {
-				return nil, fmt.Errorf("invalid array index: %s", part)
+				return nil, err
 			}
-
-			arr, ok := current.([]interface{})
-			if !ok {
-				arrOfMaps, ok2 := current.([]map[string]interface{})
-				if index < 0 || index >= len(arrOfMaps) {
-					return nil, fmt.Errorf("array index out of bounds")
-				}
-				if !ok2 {
-					return nil, fmt.Errorf("cannot index non-array")
-				}
-				current = arrOfMaps[index]
-				continue
-			} else {
-				if index < 0 || index >= len(arr) {
-					return nil, fmt.Errorf("array index out of bounds")
-				}
-				current = arr[index]
-				continue
-			}
+			continue
 		}
 
 		// Handle object field
-		// Since the root starts with '$.0' we need to first pick the map[string]interface{} from root
-		rootObj, ok := current.(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("cannot access root-field '%s' on type %T", part, current)
-		}
-		obj, ok := rootObj["$"]
-		if !ok {
-			// In this case we directly have the key at the root
-			val, exists := rootObj[part]
-			if !exists {
-				return nil, fmt.Errorf("field '%s' not found", part)
-			}
-			current = val
-		} else {
-			// In this case we are following the $.key path
-			val, exists := obj.(map[string]interface{})[part]
-			if !exists {
-				return nil, fmt.Errorf("field '%s' not found", part)
-			}
-			current = val
+		current, err = p.handleObjectField(current, part)
+		if err != nil {
+			return nil, err
 		}
 	}
 
 	return current, nil
+}
+
+// isArrayIndexPart checks if a path part is an array index like [0]
+func (p *JSONPathProcessor) isArrayIndexPart(part string) bool {
+	return part != "" && part[0] == '[' && part[len(part)-1] == ']'
+}
+
+// handleArrayIndex handles array indexing for both []interface{} and []map[string]interface{}
+func (p *JSONPathProcessor) handleArrayIndex(current interface{}, part string) (interface{}, error) {
+	index, err := strconv.Atoi(part[1 : len(part)-1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid array index: %s", part)
+	}
+
+	// Try []interface{} first
+	if arr, ok := current.([]interface{}); ok {
+		if index < 0 || index >= len(arr) {
+			return nil, fmt.Errorf("array index out of bounds")
+		}
+		return arr[index], nil
+	}
+
+	// Try []map[string]interface{}
+	if arrOfMaps, ok := current.([]map[string]interface{}); ok {
+		if index < 0 || index >= len(arrOfMaps) {
+			return nil, fmt.Errorf("array index out of bounds")
+		}
+		return arrOfMaps[index], nil
+	}
+
+	return nil, fmt.Errorf("cannot index non-array")
+}
+
+// handleObjectField handles object field access with support for root-level and nested paths
+func (p *JSONPathProcessor) handleObjectField(current interface{}, part string) (interface{}, error) {
+	rootObj, ok := current.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("cannot access root-field '%s' on type %T", part, current)
+	}
+
+	// Check if we have a special '$' key in the root object
+	if obj, hasRootKey := rootObj["$"]; hasRootKey {
+		// Following the $.key path
+		return p.extractFieldValue(obj.(map[string]interface{}), part)
+	}
+
+	// Direct key at the root level
+	return p.extractFieldValue(rootObj, part)
+}
+
+// extractFieldValue extracts a field value from a map
+func (p *JSONPathProcessor) extractFieldValue(obj map[string]interface{}, field string) (interface{}, error) {
+	val, exists := obj[field]
+	if !exists {
+		return nil, fmt.Errorf("field '%s' not found", field)
+	}
+	return val, nil
 }
 
 // setValue sets a value at a JSONPath
