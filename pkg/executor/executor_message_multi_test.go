@@ -75,6 +75,27 @@ type mockStateMachine struct {
 	id string
 }
 
+func (m *mockStateMachine) MergeInputs(processor *states.JSONPathProcessor, processedInput interface{}, result interface{}) (op2 interface{}, op4 error) {
+	resumeInput := map[string]interface{}{
+		"__received_message__": map[string]interface{}{
+			"correlation_key":   "dummy_correlation_key",
+			"correlation_value": "dummy_correlation_value",
+			"data":              "request.Data",
+		},
+	}
+
+	if processedInput != nil {
+		if inputMap, ok := processedInput.(map[string]interface{}); ok {
+			for k, v := range inputMap {
+				if k != "__received_message__" {
+					resumeInput[k] = v
+				}
+			}
+		}
+	}
+	return processedInput, nil
+}
+
 func (m *mockStateMachine) GetStartAt() string                         { return "" }
 func (m *mockStateMachine) GetState(name string) (states.State, error) { return nil, nil }
 func (m *mockStateMachine) IsTimeout(startTime time.Time) bool         { return false }
