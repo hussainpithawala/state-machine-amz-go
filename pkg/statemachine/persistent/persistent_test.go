@@ -394,6 +394,11 @@ States:
 	mergedMap, ok := merged.(map[string]interface{})
 	require.True(t, ok)
 
+	// Should contain original input data
+	require.Equal(t, "ORD-123", mergedMap["orderId"])
+	require.Equal(t, "CUST-456", mergedMap["customerId"])
+	require.Equal(t, 100.0, mergedMap["orderAmount"])
+
 	// Should contain message data
 	message, ok := mergedMap["__received_message__"].(map[string]interface{})
 	require.True(t, ok)

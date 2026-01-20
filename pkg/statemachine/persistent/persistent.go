@@ -455,17 +455,7 @@ func (sm *StateMachine) MergeInputs(processor *states.JSONPathProcessor,
 
 	// Apply result path
 	output, err = processor.ApplyResultPath(processedInput, output, states.StringPtr("$."))
-	if err != nil {
-		return nil, fmt.Errorf("failed to apply result path: %w", err)
-	}
-
-	// Apply output path
-	output, err = processor.ApplyOutputPath(output, states.StringPtr("$."))
-	if err != nil {
-		return nil, fmt.Errorf("failed to apply output path: %w", err)
-	}
-
-	return output, nil
+	return output, err
 }
 
 // ProcessTimeoutTrigger processes a timeout trigger from the scheduled task
