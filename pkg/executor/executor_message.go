@@ -268,18 +268,9 @@ func (e *BaseExecutor) resumeExecutionWithMessage(ctx context.Context, sm StateM
 
 	processor := states.JSONPathProcessor{}
 	mergedInput, err := sm.MergeInputs(&processor, exec.Input, resumeInput)
-
-	// Merge with existing input if needed
-	//if exec.Input != nil {
-	//	if inputMap, ok := exec.Input.(map[string]interface{}); ok {
-	//		for k, v := range inputMap {
-	//			if k != "__received_message__" {
-	//				resumeInput[k] = v
-	//			}
-	//		}
-	//	}
-	//}
-
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge inputs: %w", err)
+	}
 	// Update execution status and input
 	exec.Input = mergedInput
 

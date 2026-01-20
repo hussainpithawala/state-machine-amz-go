@@ -75,7 +75,7 @@ type mockStateMachine struct {
 	id string
 }
 
-func (m *mockStateMachine) MergeInputs(processor *states.JSONPathProcessor, processedInput interface{}, result interface{}) (op2 interface{}, op4 error) {
+func (m *mockStateMachine) MergeInputs(processor *states.JSONPathProcessor, processedInput, result interface{}) (op2 interface{}, op4 error) {
 	resumeInput := map[string]interface{}{
 		"__received_message__": map[string]interface{}{
 			"correlation_key":   "dummy_correlation_key",

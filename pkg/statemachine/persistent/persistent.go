@@ -493,6 +493,10 @@ func (pm *StateMachine) ProcessTimeoutTrigger(ctx context.Context, correlationID
 	processor := states.JSONPathProcessor{}
 	mergedInput, err := pm.MergeInputs(&processor, executionRecord.Input, timeoutInput)
 
+	if err != nil {
+		return fmt.Errorf("failed to merge inputs: %w", err)
+	}
+
 	// Create executionRecord context for resumption
 	execCtx := execution.Execution{
 		ID:             executionRecord.ExecutionID,
