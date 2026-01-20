@@ -515,3 +515,232 @@ States:
 	// Both original and result data should be present
 	require.Equal(t, "approved", mergedMap["status"])
 }
+
+func TestMergeInputs_ArrayInputs(t *testing.T) {
+	definition := []byte(`
+StartAt: FirstState
+States:
+  FirstState:
+    Type: Pass
+    End: true
+`)
+
+	manager := &repository.Manager{}
+	sm, err := New(definition, false, "test-sm", manager)
+	require.NoError(t, err)
+
+	processor := &states.JSONPathProcessor{}
+
+	// Test with array of maps in processed input
+	processedInput := map[string]interface{}{
+		"orders": []map[string]interface{}{
+			{
+				"orderId": "ORD-001",
+				"amount":  100.0,
+				"status":  "pending",
+			},
+			{
+				"orderId": "ORD-002",
+				"amount":  200.0,
+				"status":  "pending",
+			},
+		},
+		"customerId": "CUST-123",
+	}
+
+	// Result containing array processing results
+	result := map[string]interface{}{
+		"processedOrders": []map[string]interface{}{
+			{
+				"orderId": "ORD-001",
+				"status":  "approved",
+			},
+			{
+				"orderId": "ORD-002",
+				"status":  "approved",
+			},
+		},
+		"totalProcessed": 2,
+	}
+
+	merged, err := sm.MergeInputs(processor, processedInput, result)
+	require.NoError(t, err)
+	require.NotNil(t, merged)
+
+	mergedMap, ok := merged.(map[string]interface{})
+	require.True(t, ok)
+
+	// Should contain processed orders array
+	processedOrders, ok := mergedMap["processedOrders"].([]map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, processedOrders, 2)
+	require.Equal(t, "ORD-001", processedOrders[0]["orderId"])
+	require.Equal(t, "approved", processedOrders[0]["status"])
+	require.Equal(t, "ORD-002", processedOrders[1]["orderId"])
+	require.Equal(t, "approved", processedOrders[1]["status"])
+
+	// Should contain total processed count
+	require.Equal(t, 2, mergedMap["totalProcessed"])
+}
+
+func TestMergeInputs_ArrayOfInterfaces(t *testing.T) {
+	definition := []byte(`
+StartAt: FirstState
+States:
+  FirstState:
+    Type: Pass
+    End: true
+`)
+
+	manager := &repository.Manager{}
+	sm, err := New(definition, false, "test-sm", manager)
+	require.NoError(t, err)
+
+	processor := &states.JSONPathProcessor{}
+
+	// Test with []interface{} array type
+	processedInput := map[string]interface{}{
+		"items": []interface{}{
+			map[string]interface{}{
+				"id":   "ITEM-001",
+				"name": "Product A",
+			},
+			map[string]interface{}{
+				"id":   "ITEM-002",
+				"name": "Product B",
+			},
+		},
+	}
+
+	result := map[string]interface{}{
+		"validatedItems": []interface{}{
+			map[string]interface{}{
+				"id":      "ITEM-001",
+				"valid":   true,
+				"message": "OK",
+			},
+			map[string]interface{}{
+				"id":      "ITEM-002",
+				"valid":   false,
+				"message": "Out of stock",
+			},
+		},
+	}
+
+	merged, err := sm.MergeInputs(processor, processedInput, result)
+	require.NoError(t, err)
+	require.NotNil(t, merged)
+
+	mergedMap, ok := merged.(map[string]interface{})
+	require.True(t, ok)
+
+	// Should contain validated items array
+	validatedItems, ok := mergedMap["validatedItems"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, validatedItems, 2)
+
+	item1, ok := validatedItems[0].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "ITEM-001", item1["id"])
+	require.Equal(t, true, item1["valid"])
+
+	item2, ok := validatedItems[1].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "ITEM-002", item2["id"])
+	require.Equal(t, false, item2["valid"])
+}
+
+func TestMergeInputs_EmptyArrays(t *testing.T) {
+	definition := []byte(`
+StartAt: FirstState
+States:
+  FirstState:
+    Type: Pass
+    End: true
+`)
+
+	manager := &repository.Manager{}
+	sm, err := New(definition, false, "test-sm", manager)
+	require.NoError(t, err)
+
+	processor := &states.JSONPathProcessor{}
+
+	processedInput := map[string]interface{}{
+		"orders": []map[string]interface{}{},
+	}
+
+	result := map[string]interface{}{
+		"processedOrders": []map[string]interface{}{},
+		"count":           0,
+	}
+
+	merged, err := sm.MergeInputs(processor, processedInput, result)
+	require.NoError(t, err)
+	require.NotNil(t, merged)
+
+	mergedMap, ok := merged.(map[string]interface{})
+	require.True(t, ok)
+
+	// Should handle empty arrays correctly
+	processedOrders, ok := mergedMap["processedOrders"].([]map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, processedOrders, 0)
+	require.Equal(t, 0, mergedMap["count"])
+}
+
+func TestMergeInputs_MixedArrayTypes(t *testing.T) {
+	definition := []byte(`
+StartAt: FirstState
+States:
+  FirstState:
+    Type: Pass
+    End: true
+`)
+
+	manager := &repository.Manager{}
+	sm, err := New(definition, false, "test-sm", manager)
+	require.NoError(t, err)
+
+	processor := &states.JSONPathProcessor{}
+
+	// Mixed primitive and complex types in arrays
+	processedInput := map[string]interface{}{
+		"tags":   []interface{}{"electronics", "sale", "featured"},
+		"prices": []interface{}{100.0, 200.0, 150.0},
+		"products": []map[string]interface{}{
+			{
+				"id":    "PROD-001",
+				"price": 100.0,
+			},
+		},
+	}
+
+	result := map[string]interface{}{
+		"discountedPrices": []interface{}{90.0, 180.0, 135.0},
+		"summary": map[string]interface{}{
+			"totalProducts": 1,
+			"avgDiscount":   10.0,
+		},
+	}
+
+	merged, err := sm.MergeInputs(processor, processedInput, result)
+	require.NoError(t, err)
+	require.NotNil(t, merged)
+
+	mergedMap, ok := merged.(map[string]interface{})
+	require.True(t, ok)
+
+	// Should contain discounted prices
+	discountedPrices, ok := mergedMap["discountedPrices"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, discountedPrices, 3)
+	require.Equal(t, 90.0, discountedPrices[0])
+	require.Equal(t, 180.0, discountedPrices[1])
+	require.Equal(t, 135.0, discountedPrices[2])
+
+	// Should contain summary
+	summary, ok := mergedMap["summary"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, 1, summary["totalProducts"])
+	require.Equal(t, 10.0, summary["avgDiscount"])
+}
