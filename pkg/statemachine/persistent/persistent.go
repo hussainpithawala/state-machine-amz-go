@@ -192,7 +192,11 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 
 		currentStateName = *nextState
 		execCtx.CurrentState = currentStateName
-		execCtx.Input = output
+		mergeOutput, errMerge := pm.MergeInputs(&states.JSONPathProcessor{}, output, execCtx.Input)
+		if errMerge != nil {
+			return execCtx, errMerge
+		}
+		execCtx.Input = mergeOutput
 	}
 }
 

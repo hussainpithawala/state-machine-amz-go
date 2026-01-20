@@ -9,27 +9,36 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.1.6
+## 🆕 What's New in v1.1.7
+
+**🔥 CRITICAL Bug Fix** - State transition input preservation fixed!
+
+**What's Fixed in v1.1.7**: Fixed a **critical bug** where execution input was being completely replaced instead of merged during state transitions, causing loss of original execution context. This affected all multi-state workflows.
+
+**The Issue:**
+- State output **replaced** execution input instead of merging
+- Original execution context lost between state transitions
+- Choice states failed due to missing variables from previous states
+- Message states couldn't correlate due to lost context
+- Similar to v1.1.3 bug but during state-to-state transitions
+
+**The Fix:**
+- Applied `MergeInputs` logic to state transitions (same as message correlation)
+- Preserves complete execution context across all states
+- Original input + all previous outputs available to every state
+- Consistent merge behavior across the entire workflow lifecycle
+
+**Impact**: **CRITICAL - Immediate upgrade strongly recommended for ALL users with multi-state workflows.**
+
+**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.7.md)**
+
+---
+
+## 🔄 Previous Release - v1.1.6
 
 **🚀 Enhancement** - Improved message input merging with better nil handling and comprehensive test coverage!
 
-**What's New in v1.1.6**: Enhanced the `MergeInputs` method introduced in v1.1.5 with critical improvements for nil handling, simplified JSONPath processing, and comprehensive test coverage including array inputs.
-
-**Key Improvements:**
-- Proper nil input/result handling with early returns
-- Removed unnecessary OutputPath processing to preserve all merged data
-- Enhanced ResultPath behavior for better merging
-- 12 comprehensive unit tests covering all edge cases including arrays
-
-**Benefits:**
-- ✅ Graceful handling of nil inputs during message correlation
-- ✅ All merged data preserved without filtering
-- ✅ Robust support for array data structures (`[]map[string]interface{}` and `[]interface{}`)
-- ✅ 100% test coverage for merge scenarios
-
-**No Breaking Changes** - Fully backward-compatible enhancement.
-
-**Impact**: All Message State users benefit from improved stability and edge case handling. Highly recommended upgrade from v1.1.5.
+Enhanced the `MergeInputs` method with critical improvements for nil handling, simplified JSONPath processing, and comprehensive test coverage including array inputs.
 
 **[📖 Read the full release notes →](RELEASE_NOTES_v1.1.6.md)**
 
@@ -976,6 +985,7 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] **JSONPath Array Handling (v1.1.4)** - Support for []map[string]interface{}
 - [x] **Message Input Merging (v1.1.5)** - Proper JSONPath processing for Message states
 - [x] **Enhanced Merge Logic (v1.1.6)** - Improved nil handling and comprehensive test coverage
+- [x] **State Transition Fix (v1.1.7)** - CRITICAL fix for input preservation during state transitions
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring
