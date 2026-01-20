@@ -441,6 +441,26 @@ func (pm *StateMachine) cancelTimeoutTask(ctx context.Context, correlationID str
 	return nil
 }
 
+func (sm *StateMachine) MergeInputs(processor *states.JSONPathProcessor,
+	processedInput interface{}, result interface{}) (op2 interface{}, op4 error) {
+	var output interface{} = result
+	var err error
+
+	// Apply result path
+	output, err = processor.ApplyResultPath(processedInput, output, states.StringPtr("$"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply result path: %w", err)
+	}
+
+	// Apply output path
+	output, err = processor.ApplyOutputPath(output, states.StringPtr("$"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply output path: %w", err)
+	}
+
+	return output, nil
+}
+
 // ProcessTimeoutTrigger processes a timeout trigger from the scheduled task
 func (pm *StateMachine) ProcessTimeoutTrigger(ctx context.Context, correlationID string) error {
 	// Get the correlation record
@@ -470,6 +490,9 @@ func (pm *StateMachine) ProcessTimeoutTrigger(ctx context.Context, correlationID
 		"state_name":          correlation.StateName,
 	}
 
+	processor := states.JSONPathProcessor{}
+	mergedInput, err := pm.MergeInputs(&processor, executionRecord.Input, timeoutInput)
+
 	// Create executionRecord context for resumption
 	execCtx := execution.Execution{
 		ID:             executionRecord.ExecutionID,
@@ -477,7 +500,7 @@ func (pm *StateMachine) ProcessTimeoutTrigger(ctx context.Context, correlationID
 		Name:           executionRecord.Name,
 		Status:         executionRecord.Status,
 		CurrentState:   executionRecord.CurrentState,
-		Input:          timeoutInput,
+		Input:          mergedInput,
 		StartTime:      *executionRecord.StartTime,
 	}
 

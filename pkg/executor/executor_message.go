@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
 )
@@ -265,22 +266,25 @@ func (e *BaseExecutor) resumeExecutionWithMessage(ctx context.Context, sm StateM
 		},
 	}
 
+	processor := states.JSONPathProcessor{}
+	mergedInput, err := sm.MergeInputs(&processor, exec.Input, resumeInput)
+
 	// Merge with existing input if needed
-	if exec.Input != nil {
-		if inputMap, ok := exec.Input.(map[string]interface{}); ok {
-			for k, v := range inputMap {
-				if k != "__received_message__" {
-					resumeInput[k] = v
-				}
-			}
-		}
-	}
+	//if exec.Input != nil {
+	//	if inputMap, ok := exec.Input.(map[string]interface{}); ok {
+	//		for k, v := range inputMap {
+	//			if k != "__received_message__" {
+	//				resumeInput[k] = v
+	//			}
+	//		}
+	//	}
+	//}
 
 	// Update execution status and input
-	exec.Input = resumeInput
+	exec.Input = mergedInput
 
 	// Use the state machine to resume execution
-	_, err := sm.ResumeExecution(ctx, exec)
+	_, err = sm.ResumeExecution(ctx, exec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resume execution: %w", err)
 	}

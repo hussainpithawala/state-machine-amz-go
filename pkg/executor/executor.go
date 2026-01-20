@@ -19,6 +19,7 @@ type StateMachineInterface interface {
 	ResumeExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error)
 	FindWaitingExecutionsByCorrelation(ctx context.Context, correlationKey string, correlationValue interface{}) ([]*repository.ExecutionRecord, error)
 	GetID() string
+	MergeInputs(processor *states.JSONPathProcessor, processedInput interface{}, result interface{}) (op2 interface{}, op4 error)
 }
 
 // Executor defines the interface for executing state machines

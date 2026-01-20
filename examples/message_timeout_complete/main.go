@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/handler"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
@@ -321,6 +322,8 @@ func HandlePaymentWebhook(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	processor := states.JSONPathProcessor{}
+	mergedInput, err := sm.MergeInputs(&processor, execRecord.Input, resumeInput)
 	// Create execution context for resumption
 	execCtx := &execution.Execution{
 		ID:             execRecord.ExecutionID,
@@ -328,7 +331,7 @@ func HandlePaymentWebhook(w http.ResponseWriter, r *http.Request) {
 		Name:           execRecord.Name,
 		Status:         execRecord.Status,
 		CurrentState:   execRecord.CurrentState,
-		Input:          resumeInput,
+		Input:          mergedInput,
 		StartTime:      *execRecord.StartTime,
 	}
 
@@ -507,9 +510,9 @@ func ExampleRunAPIServer() {
 		}
 	})
 
-	log.Println("🌐 Starting API server on :7070")
+	log.Println("🌐 Starting API server on :6565")
 	log.Println("   Payment webhook: POST /webhook/payment")
-	log.Fatal(http.ListenAndServe(":7070", nil))
+	log.Fatal(http.ListenAndServe(":6565", nil))
 }
 
 // Main function showing complete setup
