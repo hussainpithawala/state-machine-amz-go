@@ -9,23 +9,38 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.1.4
+## 🆕 What's New in v1.1.5
+
+**🐛 Bug Fix** - Message input merging with JSONPath processing fixed!
+
+**What's Fixed in v1.1.5**: Fixed a bug where message inputs were not properly merged with existing execution inputs during Message state resumption. The previous implementation used naive map merging without respecting JSONPath `ResultPath` and `OutputPath` transformations.
+
+**The Issue:**
+- Message data overwrote original execution input instead of merging
+- No JSONPath processing (`ResultPath`/`OutputPath`) during resumption
+- Executor layer performing state machine responsibilities (violated separation of concerns)
+- Inconsistent behavior between message arrival and timeout paths
+
+**The Fix:**
+- Added `MergeInputs` interface method to `StateMachineInterface`
+- Implemented proper JSONPath processing in persistent state machine
+- Refactored executor to delegate input merging to state machine
+- Updated timeout handling to use same merge logic
+- Enhanced test coverage with mock implementations
+
+**Breaking Change**: `StateMachineInterface` now requires implementing `MergeInputs` method. Custom implementations must be updated.
+
+**Impact**: Affects users with Message States, webhook handlers, and timeout-based workflows where execution context preservation is critical.
+
+**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.5.md)**
+
+---
+
+## 🔄 Previous Release - v1.1.4
 
 **🐛 Bug Fix** - JSONPath array handling for `[]map[string]interface{}` fixed!
 
 **What's Fixed in v1.1.4**: Enhanced JSONPath processing to properly handle `[]map[string]interface{}` array types during value extraction. Previously, only `[]interface{}` arrays were supported, causing Choice state conditions and JSONPath expressions to fail with common Go data structures.
-
-**The Issue:**
-- JSONPath expressions with array indexing failed for `[]map[string]interface{}` types
-- Choice states couldn't evaluate conditions on array elements
-- Error: `"cannot index non-array"` even though data was an array
-
-**The Fix:**
-- Enhanced array type handling in `internal/states/jsonpath.go`
-- Now supports both `[]interface{}` and `[]map[string]interface{}` arrays
-- Proper bounds checking for both array types
-
-**Impact**: Affects users with Choice states using array indexing or workflows processing `[]map[string]interface{}` data structures.
 
 **[📖 Read the full release notes →](RELEASE_NOTES_v1.1.4.md)**
 
@@ -950,6 +965,7 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] **Async Task Cancellation (v1.1.1)** - Automatic timeout cancellation
 - [x] **Critical Bug Fix (v1.1.3)** - State execution chain input propagation
 - [x] **JSONPath Array Handling (v1.1.4)** - Support for []map[string]interface{}
+- [x] **Message Input Merging (v1.1.5)** - Proper JSONPath processing for Message states
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring
