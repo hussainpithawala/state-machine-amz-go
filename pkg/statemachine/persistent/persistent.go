@@ -446,14 +446,21 @@ func (sm *StateMachine) MergeInputs(processor *states.JSONPathProcessor,
 	var output interface{} = result
 	var err error
 
+	if processedInput == nil {
+		return output, nil
+	}
+	if result == nil {
+		return processedInput, nil
+	}
+
 	// Apply result path
-	output, err = processor.ApplyResultPath(processedInput, output, states.StringPtr("$"))
+	output, err = processor.ApplyResultPath(processedInput, output, states.StringPtr("$."))
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply result path: %w", err)
 	}
 
 	// Apply output path
-	output, err = processor.ApplyOutputPath(output, states.StringPtr("$"))
+	output, err = processor.ApplyOutputPath(output, states.StringPtr("$."))
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply output path: %w", err)
 	}
