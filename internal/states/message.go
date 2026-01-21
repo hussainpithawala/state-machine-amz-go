@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
+
+const ReceivedMessageBase = "__received_message__"
 
 // MessageState represents a state that pauses execution and waits for an external message
 type MessageState struct {
@@ -248,7 +252,8 @@ func (s *MessageState) executeTimeout(ctx context.Context, originalInput, effect
 func (s *MessageState) checkForReceivedMessage(input interface{}) (messageData *MessageData, isResume bool) {
 	// Check if input is a map containing message metadata
 	if inputMap, ok := input.(map[string]interface{}); ok {
-		if msgData, exists := inputMap["__received_message__"]; exists {
+		received_message_key := fmt.Sprintf("%s_%s", ReceivedMessageBase, s.Name)
+		if msgData, exists := inputMap[received_message_key]; exists {
 			// Try to parse as MessageData
 			if msgMap, ok := msgData.(map[string]interface{}); ok {
 				messageData = &MessageData{
@@ -277,8 +282,11 @@ func (s *MessageState) checkForReceivedMessage(input interface{}) (messageData *
 // This is used to determine if we're executing the timeout boundary event
 func (s *MessageState) checkForTimeout(input interface{}) (timeoutData map[string]interface{}, isTimeout bool) {
 	// Check if input is a map containing timeout metadata
+
+	trigger_key := fmt.Sprintf("%s_%d", types.TriggerTimeoutBase, s.Name)
+
 	if inputMap, ok := input.(map[string]interface{}); ok {
-		if _, exists := inputMap["__timeout_trigger__"]; exists {
+		if _, exists := inputMap[trigger_key]; exists {
 			return inputMap, true
 		}
 	}
