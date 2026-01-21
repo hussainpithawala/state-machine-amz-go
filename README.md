@@ -9,26 +9,36 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.1.7
+## 🆕 What's New in v1.1.8
+
+**🐛 Bug Fix** - State-specific message and timeout correlation keys!
+
+**What's Fixed in v1.1.8**: Fixed message correlation and timeout trigger classification to use **state-specific keys** instead of global keys, preventing cross-state interference in workflows with multiple Message states.
+
+**The Issue:**
+- `__received_message__` and `__timeout_trigger__` were global keys
+- Multiple Message states in same workflow could interfere with each other
+- Timeout triggers used wrong format specifier (`%d` instead of `%s`)
+- Messages/timeouts could be incorrectly matched to wrong states
+
+**The Fix:**
+- Message keys now state-specific: `__received_message___{StateName}`
+- Timeout keys now state-specific: `__timeout_trigger___{StateName}`
+- Fixed format specifier from `%d` to `%s` for state names
+- Each Message state has isolated correlation context
+- Improved Makefile linting with auto-install capability
+
+**Impact**: **Important upgrade for workflows with multiple Message states. Ensures proper isolation and prevents state interference.**
+
+**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.8.md)**
+
+---
+
+## 🔄 Previous Release - v1.1.7
 
 **🔥 CRITICAL Bug Fix** - State transition input preservation fixed!
 
 **What's Fixed in v1.1.7**: Fixed a **critical bug** where execution input was being completely replaced instead of merged during state transitions, causing loss of original execution context. This affected all multi-state workflows.
-
-**The Issue:**
-- State output **replaced** execution input instead of merging
-- Original execution context lost between state transitions
-- Choice states failed due to missing variables from previous states
-- Message states couldn't correlate due to lost context
-- Similar to v1.1.3 bug but during state-to-state transitions
-
-**The Fix:**
-- Applied `MergeInputs` logic to state transitions (same as message correlation)
-- Preserves complete execution context across all states
-- Original input + all previous outputs available to every state
-- Consistent merge behavior across the entire workflow lifecycle
-
-**Impact**: **CRITICAL - Immediate upgrade strongly recommended for ALL users with multi-state workflows.**
 
 **[📖 Read the full release notes →](RELEASE_NOTES_v1.1.7.md)**
 
@@ -986,6 +996,7 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] **Message Input Merging (v1.1.5)** - Proper JSONPath processing for Message states
 - [x] **Enhanced Merge Logic (v1.1.6)** - Improved nil handling and comprehensive test coverage
 - [x] **State Transition Fix (v1.1.7)** - CRITICAL fix for input preservation during state transitions
+- [x] **State-Specific Correlation (v1.1.8)** - Isolated message/timeout keys per Message state
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring

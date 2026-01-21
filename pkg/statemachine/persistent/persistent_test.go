@@ -374,9 +374,10 @@ States:
 		"orderAmount": 100.0,
 	}
 
+	receivedMessageKey := fmt.Sprintf("%s_%s", states.ReceivedMessageBase, "WaitForMessage")
 	// Message received from external system
 	result := map[string]interface{}{
-		"__received_message__": map[string]interface{}{
+		receivedMessageKey: map[string]interface{}{
 			"correlation_key":   "orderId",
 			"correlation_value": "ORD-123",
 			"data": map[string]interface{}{
@@ -399,8 +400,9 @@ States:
 	require.Equal(t, "CUST-456", mergedMap["customerId"])
 	require.Equal(t, 100.0, mergedMap["orderAmount"])
 
+	receivedMessageKey = fmt.Sprintf("%s_%s", states.ReceivedMessageBase, "WaitForMessage")
 	// Should contain message data
-	message, ok := mergedMap["__received_message__"].(map[string]interface{})
+	message, ok := mergedMap[receivedMessageKey].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "orderId", message["correlation_key"])
 	require.Equal(t, "ORD-123", message["correlation_value"])

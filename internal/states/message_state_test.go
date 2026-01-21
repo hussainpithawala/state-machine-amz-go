@@ -3,11 +3,14 @@ package states_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
+	// Third-party imports
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	// Project-specific/Internal imports
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 )
@@ -126,11 +129,12 @@ func TestMessageState_PostMessageExecution(t *testing.T) {
 	messageState := states.NewMessageState("WaitForPayment", "payment_confirmation")
 	next := "ProcessPayment"
 	messageState.Next = &next
+	receivedMessageKey := fmt.Sprintf("%s_%s", states.ReceivedMessageBase, messageState.Name)
 
 	// Simulate received message
 	input := map[string]interface{}{
 		"orderId": "ORD-123",
-		"__received_message__": map[string]interface{}{
+		receivedMessageKey: map[string]interface{}{
 			"correlation_key":   "payment_confirmation",
 			"correlation_value": "TXN-456",
 			"data": map[string]interface{}{

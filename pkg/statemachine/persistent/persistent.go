@@ -12,6 +12,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	statemachine2 "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
 const FAILED = "FAILED"
@@ -387,7 +388,8 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 	// Check if this is a timeout resumption
 	isTimeout := false
 	if inputMap, ok := execCtx.Input.(map[string]interface{}); ok {
-		if _, exists := inputMap["__timeout_trigger__"]; exists {
+		trigger_key := fmt.Sprintf("%s_%s", types.TriggerTimeoutBase, execCtx.CurrentState)
+		if _, exists := inputMap[trigger_key]; exists {
 			isTimeout = true
 		}
 	}

@@ -91,3 +91,5 @@ type ExecutionContext interface {
 	// GetTaskHandler retrieves a task handler for a resource
 	GetTaskHandler(resource string) (func(context.Context, interface{}) (interface{}, error), bool)
 }
+
+const TriggerTimeoutBase = "__timeout_trigger__"
