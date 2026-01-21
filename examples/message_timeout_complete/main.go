@@ -307,9 +307,10 @@ func HandlePaymentWebhook(w http.ResponseWriter, r *http.Request) {
 	execRecord := waitingExecs[0]
 	log.Printf("💳 Payment received for order %s, resuming execution %s", webhook.OrderID, execRecord.ExecutionID)
 
+	received_message_key := fmt.Sprintf("%s_%s", states.ReceivedMessageBase, execRecord.CurrentState)
 	// Prepare message data with received payment information
 	resumeInput := map[string]interface{}{
-		"__received_message__": map[string]interface{}{
+		received_message_key: map[string]interface{}{
 			"correlation_key":   "orderId",
 			"correlation_value": webhook.OrderID,
 			"data": map[string]interface{}{

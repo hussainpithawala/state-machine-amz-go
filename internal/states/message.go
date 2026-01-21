@@ -283,7 +283,7 @@ func (s *MessageState) checkForReceivedMessage(input interface{}) (messageData *
 func (s *MessageState) checkForTimeout(input interface{}) (timeoutData map[string]interface{}, isTimeout bool) {
 	// Check if input is a map containing timeout metadata
 
-	trigger_key := fmt.Sprintf("%s_%d", types.TriggerTimeoutBase, s.Name)
+	trigger_key := fmt.Sprintf("%s_%s", types.TriggerTimeoutBase, s.Name)
 
 	if inputMap, ok := input.(map[string]interface{}); ok {
 		if _, exists := inputMap[trigger_key]; exists {

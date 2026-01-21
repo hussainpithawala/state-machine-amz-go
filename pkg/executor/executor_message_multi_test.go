@@ -76,8 +76,9 @@ type mockStateMachine struct {
 }
 
 func (m *mockStateMachine) MergeInputs(processor *states.JSONPathProcessor, processedInput, result interface{}) (op2 interface{}, op4 error) {
+	receivedMessageKey := fmt.Sprintf("%s_%s", states.ReceivedMessageBase, "dummy")
 	resumeInput := map[string]interface{}{
-		"__received_message__": map[string]interface{}{
+		receivedMessageKey: map[string]interface{}{
 			"correlation_key":   "dummy_correlation_key",
 			"correlation_value": "dummy_correlation_value",
 			"data":              "request.Data",
@@ -87,7 +88,7 @@ func (m *mockStateMachine) MergeInputs(processor *states.JSONPathProcessor, proc
 	if processedInput != nil {
 		if inputMap, ok := processedInput.(map[string]interface{}); ok {
 			for k, v := range inputMap {
-				if k != "__received_message__" {
+				if k != receivedMessageKey {
 					resumeInput[k] = v
 				}
 			}

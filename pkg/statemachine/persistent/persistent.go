@@ -388,7 +388,7 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 	// Check if this is a timeout resumption
 	isTimeout := false
 	if inputMap, ok := execCtx.Input.(map[string]interface{}); ok {
-		trigger_key := fmt.Sprintf("%s_%d", types.TriggerTimeoutBase, execCtx.CurrentState)
+		trigger_key := fmt.Sprintf("%s_%s", types.TriggerTimeoutBase, execCtx.CurrentState)
 		if _, exists := inputMap[trigger_key]; exists {
 			isTimeout = true
 		}

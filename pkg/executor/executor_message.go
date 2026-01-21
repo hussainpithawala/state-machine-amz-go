@@ -258,8 +258,9 @@ func compareCorrelationValues(stored, incoming interface{}) bool {
 // resumeExecutionWithMessage resumes a paused execution with the received message
 func (e *BaseExecutor) resumeExecutionWithMessage(ctx context.Context, sm StateMachineInterface, exec *execution.Execution, request *MessageRequest) (*MessageResponse, error) {
 	// Create input for resumption that includes the message data
+	received_message_key := fmt.Sprintf("%s_%s", states.ReceivedMessageBase, exec.CurrentState)
 	resumeInput := map[string]interface{}{
-		"__received_message__": map[string]interface{}{
+		received_message_key: map[string]interface{}{
 			"correlation_key":   request.CorrelationKey,
 			"correlation_value": request.CorrelationValue,
 			"data":              request.Data,
