@@ -9,26 +9,34 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.1.8
+## 🆕 What's New in v1.1.9
+
+**🔥 CRITICAL Bug Fix** - Timeout trigger generation now uses state-specific keys!
+
+**What's Fixed in v1.1.9**: Fixed a **critical bug** in `ProcessTimeoutTrigger` where timeout events were generated with hardcoded `__timeout_trigger__` key instead of state-specific keys like `__timeout_trigger___WaitForPayment`, breaking the timeout detection logic introduced in v1.1.8.
+
+**The Issue:**
+- v1.1.8 introduced state-specific timeout **detection** (`__timeout_trigger___{StateName}`)
+- But `ProcessTimeoutTrigger` still **generated** timeouts with old global key `__timeout_trigger__`
+- Result: Timeouts were triggered but **never detected** by Message states
+- Workflows with timeouts would hang indefinitely waiting for events that already occurred
+
+**The Fix:**
+- `ProcessTimeoutTrigger` now generates state-specific timeout keys: `__timeout_trigger___{StateName}`
+- Timeout generation and detection now properly aligned
+- Timeouts work correctly in workflows with multiple Message states
+
+**Impact**: **CRITICAL - Immediate upgrade required for ALL users using Message state timeouts. Without this fix, timeouts don't work at all.**
+
+**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.9.md)**
+
+---
+
+## 🔄 Previous Release - v1.1.8
 
 **🐛 Bug Fix** - State-specific message and timeout correlation keys!
 
 **What's Fixed in v1.1.8**: Fixed message correlation and timeout trigger classification to use **state-specific keys** instead of global keys, preventing cross-state interference in workflows with multiple Message states.
-
-**The Issue:**
-- `__received_message__` and `__timeout_trigger__` were global keys
-- Multiple Message states in same workflow could interfere with each other
-- Timeout triggers used wrong format specifier (`%d` instead of `%s`)
-- Messages/timeouts could be incorrectly matched to wrong states
-
-**The Fix:**
-- Message keys now state-specific: `__received_message___{StateName}`
-- Timeout keys now state-specific: `__timeout_trigger___{StateName}`
-- Fixed format specifier from `%d` to `%s` for state names
-- Each Message state has isolated correlation context
-- Improved Makefile linting with auto-install capability
-
-**Impact**: **Important upgrade for workflows with multiple Message states. Ensures proper isolation and prevents state interference.**
 
 **[📖 Read the full release notes →](RELEASE_NOTES_v1.1.8.md)**
 
@@ -997,6 +1005,7 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] **Enhanced Merge Logic (v1.1.6)** - Improved nil handling and comprehensive test coverage
 - [x] **State Transition Fix (v1.1.7)** - CRITICAL fix for input preservation during state transitions
 - [x] **State-Specific Correlation (v1.1.8)** - Isolated message/timeout keys per Message state
+- [x] **Timeout Trigger Generation Fix (v1.1.9)** - CRITICAL fix for timeout event generation with state-specific keys
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring

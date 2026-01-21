@@ -4,9 +4,14 @@ package persistent
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
+	// Third-party imports
+	"github.com/davecgh/go-spew/spew"
+
+	// Project-specific/Internal imports
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
@@ -392,6 +397,9 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 		if _, exists := inputMap[trigger_key]; exists {
 			isTimeout = true
 		}
+		log.Printf("Info: timeout condition is %v :\n", isTimeout)
+		log.Printf("Info: inputMap is %v\n", inputMap)
+		spew.Dump(inputMap)
 	}
 
 	// Update correlation status
@@ -484,13 +492,13 @@ func (pm *StateMachine) ProcessTimeoutTrigger(ctx context.Context, correlationID
 	if err != nil {
 		return fmt.Errorf("failed to get executionRecord: %w", err)
 	}
-
+	triggerKey := fmt.Sprintf("%s_%s", types.TriggerTimeoutBase, executionRecord.CurrentState)
 	// Prepare timeout input
 	timeoutInput := map[string]interface{}{
-		"__timeout_trigger__": true,
-		"correlation_id":      correlationID,
-		"execution_id":        correlation.ExecutionID,
-		"state_name":          correlation.StateName,
+		triggerKey:       true,
+		"correlation_id": correlationID,
+		"execution_id":   correlation.ExecutionID,
+		"state_name":     correlation.StateName,
 	}
 
 	processor := states.JSONPathProcessor{}
