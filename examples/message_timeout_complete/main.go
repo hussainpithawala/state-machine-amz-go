@@ -422,7 +422,7 @@ func ExampleTestTimeoutScenario() {
 	    "WaitForPayment": {
 	      "Type": "Message",
 	      "CorrelationKey": "orderId",
-	      "TimeoutSeconds": 10,
+	      "TimeoutSeconds": 5,
 	      "TimeoutPath": "PaymentTimeout",
 	      "Next": "ProcessPayment"
 	    },
