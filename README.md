@@ -9,24 +9,33 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.1.9
+## 🆕 What's New in v1.2.0
+
+**🧪 Testing Enhancement** - Comprehensive failure scenario test coverage!
+
+**What's New in v1.2.0**: Added comprehensive unit tests for execution failure scenarios, validating that executions are properly marked as `FAILED` with correct error information, end times, and history tracking when failures occur.
+
+**Test Coverage:**
+- ✅ **Fail State Handling** - Validates failure when a Fail state is encountered during execution
+- ✅ **Task State Error Handling** - Validates failure when a Task state execution errors (e.g., database connection errors)
+- ✅ **PostgreSQL Integration** - Uses real PostgreSQL GORM repository for realistic persistence testing
+- ✅ **Comprehensive Validation** - Verifies status, error fields, timestamps, and history tracking
+
+**Benefits:**
+- 🛡️ Increased confidence in failure handling logic
+- 📊 Better test coverage for critical error paths
+- 🔍 Early detection of regressions in failure scenarios
+- 📝 Living documentation of expected failure behavior
+
+**[📖 Read the full release notes →](RELEASE_NOTES_v1.2.0.md)**
+
+---
+
+## 🔄 Previous Release - v1.1.9
 
 **🔥 CRITICAL Bug Fix** - Timeout trigger generation now uses state-specific keys!
 
 **What's Fixed in v1.1.9**: Fixed a **critical bug** in `ProcessTimeoutTrigger` where timeout events were generated with hardcoded `__timeout_trigger__` key instead of state-specific keys like `__timeout_trigger___WaitForPayment`, breaking the timeout detection logic introduced in v1.1.8.
-
-**The Issue:**
-- v1.1.8 introduced state-specific timeout **detection** (`__timeout_trigger___{StateName}`)
-- But `ProcessTimeoutTrigger` still **generated** timeouts with old global key `__timeout_trigger__`
-- Result: Timeouts were triggered but **never detected** by Message states
-- Workflows with timeouts would hang indefinitely waiting for events that already occurred
-
-**The Fix:**
-- `ProcessTimeoutTrigger` now generates state-specific timeout keys: `__timeout_trigger___{StateName}`
-- Timeout generation and detection now properly aligned
-- Timeouts work correctly in workflows with multiple Message states
-
-**Impact**: **CRITICAL - Immediate upgrade required for ALL users using Message state timeouts. Without this fix, timeouts don't work at all.**
 
 **[📖 Read the full release notes →](RELEASE_NOTES_v1.1.9.md)**
 
@@ -1006,6 +1015,7 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] **State Transition Fix (v1.1.7)** - CRITICAL fix for input preservation during state transitions
 - [x] **State-Specific Correlation (v1.1.8)** - Isolated message/timeout keys per Message state
 - [x] **Timeout Trigger Generation Fix (v1.1.9)** - CRITICAL fix for timeout event generation with state-specific keys
+- [x] **Comprehensive Failure Testing (v1.2.0)** - Enhanced test coverage for execution failure scenarios
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring

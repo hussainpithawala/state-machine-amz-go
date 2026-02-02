@@ -18,7 +18,7 @@ type FailState struct {
 func (s *FailState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	// Fail states always return an error
 	errMsg := fmt.Sprintf("State machine failed at state '%s' with error: %s", s.Name, s.Error)
-	if s.HasCause {
+	if s.Cause != "" {
 		errMsg += fmt.Sprintf(" (cause: %s)", s.Cause)
 	}
 
