@@ -171,13 +171,13 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 		execCtx.History = append(execCtx.History, *history)
 		saveHistory(ctx, execCtx, pm, history)
 
-		execCtx.CurrentState = currentStateName
-		pm.persistExecution(ctx, execCtx)
-
 		if err != nil {
 			execCtx.MarkFailed(err)
 			execCtx.EndTime = time.Now()
+			pm.persistExecution(ctx, execCtx)
 			return execCtx, err
+		} else {
+			pm.persistExecution(ctx, execCtx)
 		}
 
 		if state.IsEnd() {
