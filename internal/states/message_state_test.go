@@ -398,6 +398,138 @@ func TestMessageState_Timeout(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestMessageState_TimeoutExecution(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name           string
+		setupState     func() *states.MessageState
+		input          map[string]interface{}
+		expectedNext   *string
+		expectError    bool
+		validateResult func(t *testing.T, result interface{})
+	}{
+		{
+			name: "timeout with TimeoutPath",
+			setupState: func() *states.MessageState {
+				state := states.NewMessageState("WaitForConfirmation", "confirmation_key")
+				next := "ProcessConfirmation"
+				state.Next = &next
+				timeout := 300
+				state.TimeoutSeconds = &timeout
+				timeoutPath := "HandleTimeout"
+				state.TimeoutPath = &timeoutPath
+				return state
+			},
+			input: map[string]interface{}{
+				"__timeout_trigger___WaitForConfirmation": true,
+				"orderId": "ORD-123",
+			},
+			expectedNext: func() *string {
+				s := "HandleTimeout"
+				return &s
+			}(),
+			expectError: false,
+			validateResult: func(t *testing.T, result interface{}) {
+				resultMap, ok := result.(map[string]interface{})
+				require.True(t, ok, "result should be a map")
+				assert.Equal(t, "TIMEOUT", resultMap["status"])
+				assert.Contains(t, resultMap["message"], "timed out")
+			},
+		},
+		{
+			name: "timeout without TimeoutPath",
+			setupState: func() *states.MessageState {
+				state := states.NewMessageState("WaitForConfirmation", "confirmation_key")
+				next := "ProcessConfirmation"
+				state.Next = &next
+				timeout := 300
+				state.TimeoutSeconds = &timeout
+				return state
+			},
+			input: map[string]interface{}{
+				"__timeout_trigger___WaitForConfirmation": true,
+				"orderId": "ORD-123",
+			},
+			expectedNext: nil,
+			expectError:  true,
+			validateResult: func(t *testing.T, result interface{}) {
+				resultMap, ok := result.(map[string]interface{})
+				require.True(t, ok, "result should be a map")
+				assert.Equal(t, "TIMEOUT", resultMap["status"])
+			},
+		},
+		{
+			name: "timeout with ResultPath preserves original input",
+			setupState: func() *states.MessageState {
+				state := states.NewMessageState("WaitForConfirmation", "confirmation_key")
+				next := "ProcessConfirmation"
+				state.Next = &next
+				timeout := 300
+				state.TimeoutSeconds = &timeout
+				timeoutPath := "HandleTimeout"
+				state.TimeoutPath = &timeoutPath
+
+				// Apply ResultPath to merge timeout result back
+				resultPath := "$.timeoutInfo"
+				state.ResultPath = &resultPath
+
+				return state
+			},
+			input: map[string]interface{}{
+				"__timeout_trigger___WaitForConfirmation": true,
+				"userId":  "USER-456",
+				"orderId": "ORD-123",
+				"amount":  100.00,
+			},
+			expectedNext: func() *string {
+				s := "HandleTimeout"
+				return &s
+			}(),
+			expectError: false,
+			validateResult: func(t *testing.T, result interface{}) {
+				resultMap, ok := result.(map[string]interface{})
+				require.True(t, ok, "result should be a map")
+
+				// Verify original input is preserved (this validates the fix)
+				assert.Equal(t, "USER-456", resultMap["userId"])
+				assert.Equal(t, "ORD-123", resultMap["orderId"])
+				assert.Equal(t, 100.00, resultMap["amount"])
+
+				// Verify timeout info is merged at ResultPath
+				timeoutInfo, ok := resultMap["timeoutInfo"].(map[string]interface{})
+				require.True(t, ok, "timeoutInfo should be present")
+				assert.Equal(t, "TIMEOUT", timeoutInfo["status"])
+				assert.Contains(t, timeoutInfo["message"], "timed out")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := tt.setupState()
+			result, nextState, err := state.Execute(ctx, tt.input)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			if tt.expectedNext != nil {
+				require.NotNil(t, nextState)
+				assert.Equal(t, *tt.expectedNext, *nextState)
+			} else if !tt.expectError {
+				assert.Nil(t, nextState)
+			}
+
+			if tt.validateResult != nil && result != nil {
+				tt.validateResult(t, result)
+			}
+		})
+	}
+}
+
 // Benchmark tests
 func BenchmarkMessageState_Execute(b *testing.B) {
 	ctx := context.Background()
