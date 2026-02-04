@@ -103,7 +103,7 @@ func (s *MessageState) Execute(ctx context.Context, input interface{}) (result i
 
 	// Check if this is a timeout resumption
 	if _, isTimeout := s.checkForTimeout(effectiveInput); isTimeout {
-		return s.executeTimeout(ctx, input, effectiveInput, processor)
+		return s.executeTimeout(ctx, effectiveInput, processor)
 	}
 
 	// Check if this is a resume operation (post-message)
@@ -209,7 +209,7 @@ func (s *MessageState) executePostMessage(ctx context.Context, originalInput, ef
 }
 
 // executeTimeout handles the timeout scenario
-func (s *MessageState) executeTimeout(ctx context.Context, originalInput, effectiveInput interface{}, processor PathProcessor) (result interface{}, nextState *string, err error) {
+func (s *MessageState) executeTimeout(ctx context.Context, originalInput interface{}, processor PathProcessor) (result interface{}, nextState *string, err error) {
 	// Create timeout result
 	timeoutResult := map[string]interface{}{
 		"status":  "TIMEOUT",

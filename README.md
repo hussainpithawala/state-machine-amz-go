@@ -9,23 +9,29 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.2.0
+## 🆕 What's New in v1.2.1
+
+**🐛 Bug Fix** - Message state timeout input preservation fixed!
+
+**What's Fixed in v1.2.1**: Fixed a critical bug in Message state timeout handling where `executeTimeout` was incorrectly using `effectiveInput` instead of `originalInput` for ResultPath merging, causing loss of original execution context during timeout scenarios.
+
+**The Fix:**
+- ✅ **Input Preservation** - Original execution input now preserved during timeout scenarios
+- ✅ **ResultPath Handling** - Timeout results correctly merged with original input
+- ✅ **Test Coverage** - New comprehensive timeout execution tests added
+- ✅ **Backward Compatible** - No breaking changes, safe to upgrade
+
+**Impact:** Users with Message states that have both InputPath and ResultPath configured with timeout handling.
+
+**[📖 Read the full release notes →](RELEASE_NOTES_v1.2.1.md)**
+
+---
+
+## 🔄 Previous Release - v1.2.0
 
 **🧪 Testing Enhancement** - Comprehensive failure scenario test coverage!
 
 **What's New in v1.2.0**: Added comprehensive unit tests for execution failure scenarios, validating that executions are properly marked as `FAILED` with correct error information, end times, and history tracking when failures occur.
-
-**Test Coverage:**
-- ✅ **Fail State Handling** - Validates failure when a Fail state is encountered during execution
-- ✅ **Task State Error Handling** - Validates failure when a Task state execution errors (e.g., database connection errors)
-- ✅ **PostgreSQL Integration** - Uses real PostgreSQL GORM repository for realistic persistence testing
-- ✅ **Comprehensive Validation** - Verifies status, error fields, timestamps, and history tracking
-
-**Benefits:**
-- 🛡️ Increased confidence in failure handling logic
-- 📊 Better test coverage for critical error paths
-- 🔍 Early detection of regressions in failure scenarios
-- 📝 Living documentation of expected failure behavior
 
 **[📖 Read the full release notes →](RELEASE_NOTES_v1.2.0.md)**
 
@@ -1016,6 +1022,7 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] **State-Specific Correlation (v1.1.8)** - Isolated message/timeout keys per Message state
 - [x] **Timeout Trigger Generation Fix (v1.1.9)** - CRITICAL fix for timeout event generation with state-specific keys
 - [x] **Comprehensive Failure Testing (v1.2.0)** - Enhanced test coverage for execution failure scenarios
+- [x] **Message State Timeout Fix (v1.2.1)** - Bug fix for timeout input preservation with ResultPath
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring
