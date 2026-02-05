@@ -9,172 +9,6 @@
 
 A powerful, production-ready state machine implementation for Go that's fully compatible with Amazon States Language. Build complex workflows using YAML/JSON definitions and execute them locally with native Go functions or integrate with external services.
 
-## 🆕 What's New in v1.2.1
-
-**🐛 Bug Fix** - Message state timeout input preservation fixed!
-
-**What's Fixed in v1.2.1**: Fixed a critical bug in Message state timeout handling where `executeTimeout` was incorrectly using `effectiveInput` instead of `originalInput` for ResultPath merging, causing loss of original execution context during timeout scenarios.
-
-**The Fix:**
-- ✅ **Input Preservation** - Original execution input now preserved during timeout scenarios
-- ✅ **ResultPath Handling** - Timeout results correctly merged with original input
-- ✅ **Test Coverage** - New comprehensive timeout execution tests added
-- ✅ **Backward Compatible** - No breaking changes, safe to upgrade
-
-**Impact:** Users with Message states that have both InputPath and ResultPath configured with timeout handling.
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.2.1.md)**
-
----
-
-## 🔄 Previous Release - v1.2.0
-
-**🧪 Testing Enhancement** - Comprehensive failure scenario test coverage!
-
-**What's New in v1.2.0**: Added comprehensive unit tests for execution failure scenarios, validating that executions are properly marked as `FAILED` with correct error information, end times, and history tracking when failures occur.
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.2.0.md)**
-
----
-
-## 🔄 Previous Release - v1.1.9
-
-**🔥 CRITICAL Bug Fix** - Timeout trigger generation now uses state-specific keys!
-
-**What's Fixed in v1.1.9**: Fixed a **critical bug** in `ProcessTimeoutTrigger` where timeout events were generated with hardcoded `__timeout_trigger__` key instead of state-specific keys like `__timeout_trigger___WaitForPayment`, breaking the timeout detection logic introduced in v1.1.8.
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.9.md)**
-
----
-
-## 🔄 Previous Release - v1.1.8
-
-**🐛 Bug Fix** - State-specific message and timeout correlation keys!
-
-**What's Fixed in v1.1.8**: Fixed message correlation and timeout trigger classification to use **state-specific keys** instead of global keys, preventing cross-state interference in workflows with multiple Message states.
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.8.md)**
-
----
-
-## 🔄 Previous Release - v1.1.7
-
-**🔥 CRITICAL Bug Fix** - State transition input preservation fixed!
-
-**What's Fixed in v1.1.7**: Fixed a **critical bug** where execution input was being completely replaced instead of merged during state transitions, causing loss of original execution context. This affected all multi-state workflows.
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.7.md)**
-
----
-
-## 🔄 Previous Release - v1.1.6
-
-**🚀 Enhancement** - Improved message input merging with better nil handling and comprehensive test coverage!
-
-Enhanced the `MergeInputs` method with critical improvements for nil handling, simplified JSONPath processing, and comprehensive test coverage including array inputs.
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.6.md)**
-
----
-
-## 🔄 Previous Release - v1.1.5
-
-**🐛 Bug Fix** - Message input merging with JSONPath processing fixed!
-
-**What's Fixed in v1.1.5**: Fixed a bug where message inputs were not properly merged with existing execution inputs during Message state resumption. Added `MergeInputs` interface method for proper separation of concerns.
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.5.md)**
-
----
-
-## 🔄 Previous Release - v1.1.4
-
-**🐛 Bug Fix** - JSONPath array handling for `[]map[string]interface{}` fixed!
-
-**What's Fixed in v1.1.4**: Enhanced JSONPath processing to properly handle `[]map[string]interface{}` array types during value extraction. Previously, only `[]interface{}` arrays were supported, causing Choice state conditions and JSONPath expressions to fail with common Go data structures.
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.4.md)**
-
----
-
-## 🔄 Previous Release - v1.1.3
-
-**🔥 CRITICAL Bug Fix** - State execution chain input propagation fixed!
-
-Resolved a **critical bug** where output from one state was not being passed as input to the next state in multi-state workflows. This caused subsequent states to receive incorrect input data, breaking the entire state machine execution flow.
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.3.md)**
-
----
-
-## 🔄 Previous Release - v1.1.2
-
-**Critical Bug Fix** - ExecutionContext moved to types package for proper context management! 🔧
-
-Resolved a critical issue where `ExecutionContext` and its registry needed to be accessible at the Background context level. The type has been relocated from `internal/states` to `pkg/types` to enable proper context propagation across the application.
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.2.md)**
-
----
-
-## 🔄 Previous Release - v1.1.1
-
-**Asynchronous Task Cancellation** - Automatic timeout cancellation when messages arrive! 🎯
-
-Building on v1.1.0's BPMN-style boundary timer events with Redis-backed async task scheduling, when a Message state enters a waiting state, it schedules a timeout task in Redis that will trigger if no correlated message arrives within the specified timeout period.
-
-**What's New in v1.1.1**: If the message arrives before the timeout expires, the message is correlated and the scheduled timeout task is automatically cancelled. If no message arrives, the timeout task executes as scheduled. This prevents unnecessary processing and keeps queues clean.
-
-**Key Benefits:**
-- 🧹 **Clean Queues** - No orphaned timeout tasks cluttering Redis
-- ⚡ **Reduced Load** - Lower CPU and queue processing overhead
-- 🎯 **Race Condition Handling** - Proper handling of message-vs-timeout races
-- 📊 **Better Observability** - Accurate task counts in Asynqmon
-
-**[📖 Read the full release notes →](RELEASE_NOTES_v1.1.1.md)**
-
----
-
-## 🚀 Previous Release - v1.1.0
-
-**Distributed Queue Execution** - Scale your state machine executions across multiple workers with Redis-backed task queues!
-
-```go
-// Configure distributed queue
-queueConfig := &queue.Config{
-    RedisAddr:   "localhost:6379",
-    Concurrency: 10,
-    Queues: map[string]int{
-        "critical": 6,  // High priority
-        "default":  3,
-        "low":      1,
-    },
-}
-
-queueClient, _ := queue.NewClient(queueConfig)
-sm.SetQueueClient(queueClient)
-
-// Execute batch in distributed mode - tasks processed across workers
-batchOpts := &statemachine.BatchExecutionOptions{
-    NamePrefix:  "distributed-batch",
-    Concurrency: 10,
-    Mode:        "distributed",  // NEW: distributed, concurrent, sequential
-}
-
-results, _ := sm.ExecuteBatch(ctx, filter, "", batchOpts)
-```
-
-**Key Features:**
-- ⚡ **Leader-Worker Architecture** - Separate task generation from execution
-- 🔄 **Priority Queues** - Route critical tasks to high-priority workers
-- 📊 **Performance Optimizations** - 96% faster execution saves (265ms → <10ms)
-- 🎯 **Queue Statistics** - Monitor pending, active, and failed tasks
-- 🔗 **REST API Framework** - New [state-machine-amz-gin](https://github.com/hussainpithawala/state-machine-amz-gin) for HTTP API
-
-Process millions of tasks efficiently! Perfect for high-throughput order processing, ETL pipelines, batch jobs, and distributed workflows.
-
-**[📖 Read the full release notes →](RELEASE_NOTES.md)**
-
 ## ✨ Features
 
 - 🚀 **AWS Step Functions Compatible** - Use identical state definitions as AWS Step Functions ([Amazon States Language](https://states-language.net/))
@@ -187,8 +21,8 @@ Process millions of tasks efficiently! Perfect for high-throughput order process
 - 📩 **Message Correlation** - Pause workflows and resume with external asynchronous messages
 - 🔗 **Execution Chaining** - Chain multiple state machines together for complex multi-stage workflows
 - 📦 **Batch Execution** - Execute chained workflows in batch mode with filtering and concurrency control
-- 🌐 **Distributed Queue** - Redis-backed task queue for horizontal scaling across workers (NEW in v1.1.0)
-- 🎯 **REST API** - Complete HTTP API via [state-machine-amz-gin](https://github.com/hussainpithawala/state-machine-amz-gin) (NEW in v1.1.0)
+- 🌐 **Distributed Queue** - Redis-backed task queue for horizontal scaling across workers
+- 🎯 **REST API** - Complete HTTP API via [state-machine-amz-gin](https://github.com/hussainpithawala/state-machine-amz-gin)
 - 🏗️ **Clean Architecture** - Separation between state machine logic and persistence
 - 📊 **Execution History** - Complete audit trail with state-by-state tracking
 - 🧪 **Test-Friendly** - Easy mocking and comprehensive testing support
@@ -468,8 +302,7 @@ WaitForPayment:
   Next: "ProcessOrder"
 ```
 
-**Message State Timeouts** (v1.1.0): BPMN-style boundary timer events with Redis-backed async task scheduling
-**NEW in v1.1.1**: Scheduled timeout tasks are automatically cancelled when correlated messages arrive, preventing unnecessary processing and keeping queues clean.
+**Message State Timeouts**: BPMN-style boundary timer events with Redis-backed async task scheduling. Scheduled timeout tasks are automatically cancelled when correlated messages arrive, preventing unnecessary processing and keeping queues clean.
 </details>
 
 ## 💾 Persistence Backends
@@ -564,8 +397,7 @@ ProcessPayment:
 
 Enable your workflows to wait for external events with BPMN-style boundary timer events.
 
-**Message State Timeouts** (v1.1.0): Uses Redis-backed async task scheduling for distributed timeout processing
-**Timeout Cancellation** (v1.1.1): Automatically cancels scheduled tasks when messages arrive
+Uses Redis-backed async task scheduling for distributed timeout processing with automatic cancellation when messages arrive.
 
 **1. Define a Message State with Timeout:**
 ```yaml
@@ -600,8 +432,8 @@ HandleTimeout:
 ```
 
 **How it works:**
-1. **Message State Entered** (v1.1.0) → Timeout task scheduled in Redis queue with unique ID, timer starts
-2. **Message Arrives Before Timeout** (v1.1.1) → Message is correlated, scheduled timeout task automatically cancelled from Redis ✅
+1. **Message State Entered** → Timeout task scheduled in Redis queue with unique ID, timer starts
+2. **Message Arrives Before Timeout** → Message is correlated, scheduled timeout task automatically cancelled from Redis ✅
 3. **Timeout Expires (No Message)** → Scheduled timeout task executes, workflow transitions to TimeoutPath ⏰
 4. **Race Conditions** → Handled gracefully with correlation status tracking (idempotent)
 5. **Clean Queues** → No orphaned tasks after message correlation 🧹
@@ -609,9 +441,9 @@ HandleTimeout:
 **Architecture Benefits:**
 - Distributed timeout processing across multiple workers
 - Redis persistence for reliability
-- Automatic cleanup when messages are correlated (v1.1.1)
+- Automatic cleanup when messages are correlated
 
-### Execution Chaining (NEW in v1.0.8)
+### Execution Chaining
 
 Build complex multi-stage workflows by chaining state machine executions together!
 
@@ -657,7 +489,7 @@ execB, _ := stateMachineB.Execute(ctx, nil,
 
 **[📖 Full Documentation](examples/chained_postgres_gorm/CHAINED_EXECUTION_README.md)**
 
-### Batch Chained Execution (NEW in v1.0.9)
+### Batch Chained Execution
 
 Execute chained workflows in batch mode by filtering source executions!
 
@@ -722,7 +554,7 @@ log.Printf("Batch complete: %d/%d succeeded", completedCount, len(results))
 
 **[📖 Full Documentation](examples/batch_chained_postgres_gorm/BATCH_CHAINED_EXECUTION_README.md)**
 
-### Distributed Queue Execution (NEW in v1.1.0)
+### Distributed Queue Execution
 
 Scale your state machine executions horizontally with Redis-backed task queues!
 
@@ -1009,20 +841,11 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] Statistics and analytics
 - [x] Message Pause and Resume (MessageState)
 - [x] GORM & PostgreSQL correlation support
-- [x] **Execution Chaining (v1.0.8)** - Chain state machines together
-- [x] **Batch Chained Execution (v1.0.9)** - Batch processing with filtering
-- [x] **Distributed Queue Execution (v1.1.0)** - Redis-backed task queues
-- [x] **REST API Framework (v1.1.0)** - Complete HTTP API via Gin
-- [x] **Async Task Cancellation (v1.1.1)** - Automatic timeout cancellation
-- [x] **Critical Bug Fix (v1.1.3)** - State execution chain input propagation
-- [x] **JSONPath Array Handling (v1.1.4)** - Support for []map[string]interface{}
-- [x] **Message Input Merging (v1.1.5)** - Proper JSONPath processing for Message states
-- [x] **Enhanced Merge Logic (v1.1.6)** - Improved nil handling and comprehensive test coverage
-- [x] **State Transition Fix (v1.1.7)** - CRITICAL fix for input preservation during state transitions
-- [x] **State-Specific Correlation (v1.1.8)** - Isolated message/timeout keys per Message state
-- [x] **Timeout Trigger Generation Fix (v1.1.9)** - CRITICAL fix for timeout event generation with state-specific keys
-- [x] **Comprehensive Failure Testing (v1.2.0)** - Enhanced test coverage for execution failure scenarios
-- [x] **Message State Timeout Fix (v1.2.1)** - Bug fix for timeout input preservation with ResultPath
+- [x] Execution Chaining - Chain state machines together
+- [x] Batch Chained Execution - Batch processing with filtering
+- [x] Distributed Queue Execution - Redis-backed task queues
+- [x] REST API Framework - Complete HTTP API via Gin
+- [x] Async Task Cancellation - Automatic timeout cancellation
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring
