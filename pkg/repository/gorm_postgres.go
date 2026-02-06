@@ -116,76 +116,53 @@ func parseGormConfig(options map[string]interface{}) *GormConfig {
 
 // Initialize creates tables and indexes using GORM AutoMigrate
 func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
-	// Migrate tables in correct order (parent tables first)
 	migrator := r.db.Migrator()
 
-	// Step 0: Migrate state_machines table
-	if !migrator.HasTable(&StateMachineModel{}) {
-		if err := migrator.CreateTable(&StateMachineModel{}); err != nil {
-			return fmt.Errorf("failed to create state_machines table: %w", err)
+	// Migrate tables in correct order (parent tables first)
+	tables := []struct {
+		model     interface{}
+		tableName string
+	}{
+		{&StateMachineModel{}, "state_machines"},
+		{&ExecutionModel{}, "executions"},
+		{&StateHistoryModel{}, "state_history"},
+		{&ExecutionStatisticsModel{}, "statistics"},
+		{&MessageCorrelationModel{}, "message_correlations"},
+	}
+
+	for _, table := range tables {
+		if err := r.migrateTable(ctx, migrator, table.model, table.tableName); err != nil {
+			return err
 		}
-	} else {
-		if err := r.db.WithContext(ctx).AutoMigrate(&StateMachineModel{}); err != nil {
-			return fmt.Errorf("failed to update state_machines table schema: %w", err)
+
+		// Add foreign key constraints after state_history table is migrated
+		if table.tableName == "state_history" {
+			if err := r.addForeignKeyConstraints(ctx); err != nil {
+				// Log warning but don't fail if constraint already exists
+				fmt.Printf("Warning: could not add foreign key constraints: %v\n", err)
+			}
 		}
 	}
 
-	// Step 1: Migrate executions table first (no dependencies)
-	if !migrator.HasTable(&ExecutionModel{}) {
-		if err := migrator.CreateTable(&ExecutionModel{}); err != nil {
-			return fmt.Errorf("failed to create executions table: %w", err)
-		}
-	} else {
-		if err := r.db.WithContext(ctx).AutoMigrate(&ExecutionModel{}); err != nil {
-			return fmt.Errorf("failed to update executions table schema: %w", err)
-		}
-	}
-
-	// Step 2: Migrate state_history table (depends on executions)
-	if !migrator.HasTable(&StateHistoryModel{}) {
-		if err := migrator.CreateTable(&StateHistoryModel{}); err != nil {
-			return fmt.Errorf("failed to create state_history table: %w", err)
-		}
-	} else {
-		if err := r.db.WithContext(ctx).AutoMigrate(&StateHistoryModel{}); err != nil {
-			return fmt.Errorf("failed to update state_history table schema: %w", err)
-		}
-	}
-
-	// Step 3: Add foreign key constraint manually after both tables exist
-	if err := r.addForeignKeyConstraints(ctx); err != nil {
-		// Log warning but don't fail if constraint already exists
-		// This is safe because constraint might already exist from previous run
-		fmt.Printf("Warning: could not add foreign key constraints: %v\n", err)
-	}
-
-	// Step 4: Migrate statistics table (independent)
-	if !migrator.HasTable(&ExecutionStatisticsModel{}) {
-		if err := migrator.CreateTable(&ExecutionStatisticsModel{}); err != nil {
-			return fmt.Errorf("failed to create statistics table: %w", err)
-		}
-	} else {
-		if err := r.db.WithContext(ctx).AutoMigrate(&ExecutionStatisticsModel{}); err != nil {
-			return fmt.Errorf("failed to update statistics table schema: %w", err)
-		}
-	}
-
-	// Step 5: Migrate message_correlations table
-	if !migrator.HasTable(&MessageCorrelationModel{}) {
-		if err := migrator.CreateTable(&MessageCorrelationModel{}); err != nil {
-			return fmt.Errorf("failed to create message_correlations table: %w", err)
-		}
-	} else {
-		if err := r.db.WithContext(ctx).AutoMigrate(&MessageCorrelationModel{}); err != nil {
-			return fmt.Errorf("failed to update message_correlations table schema: %w", err)
-		}
-	}
-
-	// Step 6: Create additional indexes for better performance
+	// Create additional indexes for better performance
 	if err := r.createAdditionalIndexes(ctx); err != nil {
 		return fmt.Errorf("failed to create additional indexes: %w", err)
 	}
 
+	return nil
+}
+
+// migrateTable handles table creation or schema updates
+func (r *GormPostgresRepository) migrateTable(ctx context.Context, migrator gorm.Migrator, model interface{}, tableName string) error {
+	if !migrator.HasTable(model) {
+		if err := migrator.CreateTable(model); err != nil {
+			return fmt.Errorf("failed to create %s table: %w", tableName, err)
+		}
+	} else {
+		if err := r.db.WithContext(ctx).AutoMigrate(model); err != nil {
+			return fmt.Errorf("failed to update %s table schema: %w", tableName, err)
+		}
+	}
 	return nil
 }
 
