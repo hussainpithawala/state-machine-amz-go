@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"crypto/tls"
 	"fmt"
 	"time"
 
@@ -15,6 +16,7 @@ type Config struct {
 	Concurrency   int
 	Queues        map[string]int
 	RetryPolicy   *RetryPolicy
+	TlsConfig     *tls.Config
 }
 
 // RetryPolicy defines retry behavior for failed tasks
@@ -64,9 +66,10 @@ func (c *Config) Validate() error {
 // GetRedisClientOpt returns asynq Redis client options
 func (c *Config) GetRedisClientOpt() asynq.RedisClientOpt {
 	return asynq.RedisClientOpt{
-		Addr:     c.RedisAddr,
-		Password: c.RedisPassword,
-		DB:       c.RedisDB,
+		Addr:      c.RedisAddr,
+		Password:  c.RedisPassword,
+		DB:        c.RedisDB,
+		TLSConfig: c.TlsConfig,
 	}
 }
 
