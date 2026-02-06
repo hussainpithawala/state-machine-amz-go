@@ -68,7 +68,7 @@ type ExecutionModel struct {
 	Input          JSONB     `gorm:"type:jsonb"`
 	Output         JSONB     `gorm:"type:jsonb"`
 	Status         string    `gorm:"size:50;not null;index:idx_status"`
-	StartTime      time.Time `gorm:"not null;index:idx_start_time"`
+	StartTime      time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_start_time"`
 	EndTime        time.Time `gorm:"index:idx_end_time"`
 	CurrentState   string    `gorm:"size:255;not null"`
 	Error          string    `gorm:"type:text"`
@@ -95,20 +95,21 @@ func (e *ExecutionModel) BeforeCreate(tx *gorm.DB) error {
 
 // StateHistoryModel represents the state_history table
 type StateHistoryModel struct {
-	ID             string    `gorm:"primaryKey;size:255;not null"`
-	ExecutionID    string    `gorm:"size:255;not null;index:idx_execution_id"`
-	StateName      string    `gorm:"size:255;not null;index:idx_state_name"`
-	StateType      string    `gorm:"size:50;not null"`
-	Input          JSONB     `gorm:"type:jsonb"`
-	Output         JSONB     `gorm:"type:jsonb"`
-	Status         string    `gorm:"size:50;not null;index:idx_state_status"`
-	StartTime      time.Time `gorm:"not null;index:idx_state_start_time"`
-	EndTime        time.Time `gorm:"index:idx_state_end_time"`
-	Error          string    `gorm:"type:text"`
-	RetryCount     int       `gorm:"default:0;not null"`
-	SequenceNumber int       `gorm:"not null;index:idx_sequence"`
-	Metadata       JSONB     `gorm:"type:jsonb;default:'{}'"`
-	CreatedAt      time.Time `gorm:"autoCreateTime"`
+	ID                 string    `gorm:"primaryKey;size:255;not null"`
+	ExecutionID        string    `gorm:"size:255;not null;index:idx_execution_id"`
+	StateName          string    `gorm:"size:255;not null;index:idx_state_name"`
+	StateType          string    `gorm:"size:50;not null"`
+	Input              JSONB     `gorm:"type:jsonb"`
+	Output             JSONB     `gorm:"type:jsonb"`
+	Status             string    `gorm:"size:50;not null;index:idx_state_status"`
+	ExecutionStartTime time.Time `gorm:"not null;default:'2000-01-01 00:00:00';index:idx_state_execution_start_time"`
+	StartTime          time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_state_start_time"`
+	EndTime            time.Time `gorm:"index:idx_state_end_time"`
+	Error              string    `gorm:"type:text"`
+	RetryCount         int       `gorm:"default:0;not null"`
+	SequenceNumber     int       `gorm:"not null;index:idx_sequence"`
+	Metadata           JSONB     `gorm:"type:jsonb;default:'{}'"`
+	CreatedAt          time.Time `gorm:"autoCreateTime"`
 }
 
 // TableName specifies the table name for StateHistoryModel
@@ -131,7 +132,7 @@ func (s *StateHistoryModel) BeforeCreate(tx *gorm.DB) error {
 type MessageCorrelationModel struct {
 	ID                 string    `gorm:"primaryKey;size:255;not null"`
 	ExecutionID        string    `gorm:"size:255;not null;index:idx_message_correlations_execution_id"`
-	ExecutionStartTime time.Time `gorm:"not null"`
+	ExecutionStartTime time.Time `gorm:"not null;default:'2000-01-01 00:00:00'"`
 	StateMachineID     string    `gorm:"size:255;not null"`
 	StateName          string    `gorm:"size:255;not null"`
 	CorrelationKey     string    `gorm:"size:255;not null;index:idx_message_correlations_correlation_key"`

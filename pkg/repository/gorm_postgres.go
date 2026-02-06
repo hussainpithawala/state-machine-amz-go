@@ -117,23 +117,39 @@ func parseGormConfig(options map[string]interface{}) *GormConfig {
 // Initialize creates tables and indexes using GORM AutoMigrate
 func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 	// Migrate tables in correct order (parent tables first)
+	migrator := r.db.Migrator()
 
 	// Step 0: Migrate state_machines table
-	err := r.db.WithContext(ctx).AutoMigrate(&StateMachineModel{})
-	if err != nil {
-		return fmt.Errorf("failed to migrate state_machines table: %w", err)
+	if !migrator.HasTable(&StateMachineModel{}) {
+		if err := migrator.CreateTable(&StateMachineModel{}); err != nil {
+			return fmt.Errorf("failed to create state_machines table: %w", err)
+		}
+	} else {
+		if err := r.db.WithContext(ctx).AutoMigrate(&StateMachineModel{}); err != nil {
+			return fmt.Errorf("failed to update state_machines table schema: %w", err)
+		}
 	}
 
 	// Step 1: Migrate executions table first (no dependencies)
-	err = r.db.WithContext(ctx).AutoMigrate(&ExecutionModel{})
-	if err != nil {
-		return fmt.Errorf("failed to migrate executions table: %w", err)
+	if !migrator.HasTable(&ExecutionModel{}) {
+		if err := migrator.CreateTable(&ExecutionModel{}); err != nil {
+			return fmt.Errorf("failed to create executions table: %w", err)
+		}
+	} else {
+		if err := r.db.WithContext(ctx).AutoMigrate(&ExecutionModel{}); err != nil {
+			return fmt.Errorf("failed to update executions table schema: %w", err)
+		}
 	}
 
 	// Step 2: Migrate state_history table (depends on executions)
-	err = r.db.WithContext(ctx).AutoMigrate(&StateHistoryModel{})
-	if err != nil {
-		return fmt.Errorf("failed to migrate state_history table: %w", err)
+	if !migrator.HasTable(&StateHistoryModel{}) {
+		if err := migrator.CreateTable(&StateHistoryModel{}); err != nil {
+			return fmt.Errorf("failed to create state_history table: %w", err)
+		}
+	} else {
+		if err := r.db.WithContext(ctx).AutoMigrate(&StateHistoryModel{}); err != nil {
+			return fmt.Errorf("failed to update state_history table schema: %w", err)
+		}
 	}
 
 	// Step 3: Add foreign key constraint manually after both tables exist
@@ -144,15 +160,25 @@ func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 	}
 
 	// Step 4: Migrate statistics table (independent)
-	err = r.db.WithContext(ctx).AutoMigrate(&ExecutionStatisticsModel{})
-	if err != nil {
-		return fmt.Errorf("failed to migrate statistics table: %w", err)
+	if !migrator.HasTable(&ExecutionStatisticsModel{}) {
+		if err := migrator.CreateTable(&ExecutionStatisticsModel{}); err != nil {
+			return fmt.Errorf("failed to create statistics table: %w", err)
+		}
+	} else {
+		if err := r.db.WithContext(ctx).AutoMigrate(&ExecutionStatisticsModel{}); err != nil {
+			return fmt.Errorf("failed to update statistics table schema: %w", err)
+		}
 	}
 
 	// Step 5: Migrate message_correlations table
-	err = r.db.WithContext(ctx).AutoMigrate(&MessageCorrelationModel{})
-	if err != nil {
-		return fmt.Errorf("failed to migrate message_correlations table: %w", err)
+	if !migrator.HasTable(&MessageCorrelationModel{}) {
+		if err := migrator.CreateTable(&MessageCorrelationModel{}); err != nil {
+			return fmt.Errorf("failed to create message_correlations table: %w", err)
+		}
+	} else {
+		if err := r.db.WithContext(ctx).AutoMigrate(&MessageCorrelationModel{}); err != nil {
+			return fmt.Errorf("failed to update message_correlations table schema: %w", err)
+		}
 	}
 
 	// Step 6: Create additional indexes for better performance
@@ -694,9 +720,13 @@ func toStateHistoryModel(history *StateHistoryRecord) *StateHistoryModel {
 		StateName:      history.StateName,
 		StateType:      history.StateType,
 		Status:         history.Status,
-		StartTime:      *history.StartTime,
 		RetryCount:     history.RetryCount,
 		SequenceNumber: history.SequenceNumber,
+	}
+
+	// Handle ExecutionStartTime with nil check
+	if history.ExecutionStartTime != nil {
+		model.ExecutionStartTime = *history.ExecutionStartTime
 	}
 
 	if history.Input != nil {
