@@ -559,8 +559,15 @@ func (pm *StateMachine) SaveDefinition(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	// Use the explicit stateMachineID if it was provided to New
-	record.ID = pm.stateMachineID
+	if pm.stateMachineID != "" {
+		record.ID = pm.stateMachineID
+	}
+	if pm.statemachine.Name != "" {
+		record.Name = pm.statemachine.Name
+	}
+
 	return pm.repositoryManager.SaveStateMachine(ctx, record)
 }
 

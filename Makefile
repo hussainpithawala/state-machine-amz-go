@@ -15,6 +15,9 @@ POSTGRES_PASSWORD ?= postgres
 POSTGRES_DB ?= statemachine_test
 POSTGRES_DB_GORM ?= statemachine_test_gorm
 REDIS_ADDR ?= localhost:6379
+REDIS_PASSWORD ?= redispassword
+REDIS_SECURED_ADDR ?= localhost:7380
+REDIS_SECURED_PASSWORD ?= redispassword
 
 # Test URLs
 POSTGRES_TEST_URL ?= postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
@@ -48,8 +51,12 @@ docker-up: ## Start PostgreSQL, Redis, and Asynqmon containers for testing
 	@echo "${GREEN}Creating additional test database...${RESET}"
 	@docker exec statemachine-postgres psql -U $(POSTGRES_USER) -c "CREATE DATABASE $(POSTGRES_DB_GORM);" 2>/dev/null || echo "Database $(POSTGRES_DB_GORM) already exists"
 	@echo "${GREEN}Waiting for Redis...${RESET}"
-	@until docker exec statemachine-redis redis-cli ping > /dev/null 2>&1; do \
+	@until docker exec statemachine-redis redis-cli -p 6379 > /dev/null 2>&1; do \
 		echo "Waiting for Redis..."; \
+		sleep 2; \
+	done
+	@until docker exec statemachine-redis-secured redis-cli --tls --insecure -p 7380 -a redispassword> /dev/null 2>&1; do \
+		echo "Waiting for Redis Secured..."; \
 		sleep 2; \
 	done
 	@echo "${GREEN}Test infrastructure ready!${RESET}"
@@ -111,8 +118,10 @@ test-examples: docker-up ## Run example programs
 	@echo "${GREEN}Creating additional test database...${RESET}"
 	@docker exec statemachine-postgres psql -U $(POSTGRES_USER) -c "CREATE DATABASE $(POSTGRES_DB_GORM);" 2>/dev/null || echo "Database $(POSTGRES_DB_GORM) already exists"
 	@DATABASE_URL=$(DATABASE_URL) \
-	 DATABASE_URL_GORM=$(DATABASE_URL_GORM) \
-	 find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' ! -path '*/message_timeout_complete/*' -name "*.go" -print0 | xargs -0 -n1 go run
+	DATABASE_URL_GORM=$(DATABASE_URL_GORM) \
+	REDIS_PASSWORD=$(REDIS_PASSWORD) \
+	REDIS_ADDRESS=$(REDIS_ADDRESS)
+	 find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' ! -path '*/message_timeout_complete/*' ! -path '*/test_tls_conn/*' ! -path '*/test_secure_redis/*' -name "*.go" -print0 | xargs -0 -n1 go run
 	@$(MAKE) docker-down
 
 install-lint: ## Install golangci-lint if not present

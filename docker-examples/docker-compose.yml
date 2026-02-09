@@ -20,7 +20,7 @@ services:
       -c max_connections=200
       -c shared_buffers=256MB
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -37,13 +37,58 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
     networks:
       - statemachine-network
 
+  redis-secured:
+    image: redis:7-alpine
+    container_name: statemachine-redis-secured
+    restart: always
+    ports:
+      - '7379:7379'
+      - '7380:7380'
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --requirepass redispassword
+      --timeout 300
+      --tcp-keepalive 60
+      --tcp-backlog 511
+      --maxclients 10000
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --port 7379
+      --tls-port 7380
+      --tls-cert-file /tls/redis.crt
+      --tls-key-file /tls/redis.key
+      --tls-ca-cert-file /tls/ca.crt
+      --tls-auth-clients no
+    volumes:
+      - redis_data:/data
+      - ./redis/tls:/tls:ro
+    environment:
+      - REDIS_PASSWORD=redispassword
+    healthcheck:
+      test: [ "CMD", "redis-cli", "--tls", "--insecure", "-a", "redispassword", "ping", '-p', '7380' ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - statemachine-network
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 512M
   asynqmon:
     image: hussainp/asynqmon:0.7.2
     container_name: statemachine-asynqmon
@@ -60,7 +105,7 @@ services:
     networks:
       - statemachine-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health" ]
       interval: 10s
       timeout: 5s
       retries: 3

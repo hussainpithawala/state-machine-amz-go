@@ -1,9 +1,11 @@
 package queue
 
 import (
+	"crypto/tls"
 	"testing"
 	"time"
 
+	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -11,9 +13,9 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
-	assert.Equal(t, "localhost:6379", config.RedisAddr)
-	assert.Equal(t, "", config.RedisPassword)
-	assert.Equal(t, 0, config.RedisDB)
+	assert.Equal(t, "localhost:6379", config.RedisClientOpt.Addr)
+	assert.Equal(t, "redispassword", config.RedisClientOpt.Password)
+	assert.Equal(t, 0, config.RedisClientOpt.DB)
 	assert.Equal(t, 10, config.Concurrency)
 	assert.NotNil(t, config.Queues)
 	assert.Equal(t, 6, config.Queues["critical"])
@@ -27,7 +29,10 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestConfig_Validate_Success(t *testing.T) {
 	config := &Config{
-		RedisAddr:   "localhost:6379",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr: "localhost:6379",
+			DB:   0,
+		},
 		Concurrency: 5,
 		Queues: map[string]int{
 			"default": 1,
@@ -40,7 +45,9 @@ func TestConfig_Validate_Success(t *testing.T) {
 
 func TestConfig_Validate_MissingRedisAddr(t *testing.T) {
 	config := &Config{
-		RedisAddr:   "",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			DB: 0,
+		},
 		Concurrency: 5,
 		Queues: map[string]int{
 			"default": 1,
@@ -54,7 +61,10 @@ func TestConfig_Validate_MissingRedisAddr(t *testing.T) {
 
 func TestConfig_Validate_InvalidConcurrency(t *testing.T) {
 	config := &Config{
-		RedisAddr:   "localhost:6379",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr: "localhost:6379",
+			DB:   0,
+		},
 		Concurrency: 0,
 		Queues: map[string]int{
 			"default": 1,
@@ -68,7 +78,10 @@ func TestConfig_Validate_InvalidConcurrency(t *testing.T) {
 
 func TestConfig_Validate_NegativeConcurrency(t *testing.T) {
 	config := &Config{
-		RedisAddr:   "localhost:6379",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr: "localhost:6379",
+			DB:   0,
+		},
 		Concurrency: -1,
 		Queues: map[string]int{
 			"default": 1,
@@ -82,7 +95,10 @@ func TestConfig_Validate_NegativeConcurrency(t *testing.T) {
 
 func TestConfig_Validate_NoQueues(t *testing.T) {
 	config := &Config{
-		RedisAddr:   "localhost:6379",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr: "localhost:6379",
+			DB:   0,
+		},
 		Concurrency: 5,
 		Queues:      map[string]int{},
 	}
@@ -94,7 +110,10 @@ func TestConfig_Validate_NoQueues(t *testing.T) {
 
 func TestConfig_Validate_NilQueues(t *testing.T) {
 	config := &Config{
-		RedisAddr:   "localhost:6379",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr: "localhost:6379",
+			DB:   0,
+		},
 		Concurrency: 5,
 		Queues:      nil,
 	}
@@ -106,7 +125,10 @@ func TestConfig_Validate_NilQueues(t *testing.T) {
 
 func TestConfig_Validate_AddsTimeoutQueue(t *testing.T) {
 	config := &Config{
-		RedisAddr:   "localhost:6379",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr: "localhost:6379",
+			DB:   0,
+		},
 		Concurrency: 5,
 		Queues: map[string]int{
 			"default": 3,
@@ -124,7 +146,10 @@ func TestConfig_Validate_AddsTimeoutQueue(t *testing.T) {
 
 func TestConfig_Validate_PreservesExistingTimeoutQueue(t *testing.T) {
 	config := &Config{
-		RedisAddr:   "localhost:6379",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr: "localhost:6379",
+			DB:   0,
+		},
 		Concurrency: 5,
 		Queues: map[string]int{
 			"default": 3,
@@ -143,14 +168,35 @@ func TestConfig_Validate_PreservesExistingTimeoutQueue(t *testing.T) {
 
 func TestConfig_GetRedisClientOpt(t *testing.T) {
 	config := &Config{
-		RedisAddr:     "redis.example.com:6380",
-		RedisPassword: "secret",
-		RedisDB:       2,
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr:     "redis.example.com:6379",
+			Password: "secret",
+			DB:       2,
+		},
 	}
 
 	opts := config.GetRedisClientOpt()
 
-	assert.Equal(t, "redis.example.com:6380", opts.Addr)
+	assert.Equal(t, "redis.example.com:6379", opts.Addr)
+	assert.Equal(t, "secret", opts.Password)
+	assert.Equal(t, 2, opts.DB)
+}
+
+func TestConfig_GetRedisClientOptWithTls(t *testing.T) {
+	config := &Config{
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr:     "redis.example.com:6379",
+			Password: "secret",
+			DB:       2,
+			TLSConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
+	opts := config.GetRedisClientOpt()
+
+	assert.Equal(t, "redis.example.com:6379", opts.Addr)
 	assert.Equal(t, "secret", opts.Password)
 	assert.Equal(t, 2, opts.DB)
 }
@@ -190,7 +236,9 @@ func TestConfig_WithCustomRetryPolicy(t *testing.T) {
 	}
 
 	config := &Config{
-		RedisAddr:   "localhost:6379",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr: "localhost:6379",
+		},
 		Concurrency: 5,
 		Queues: map[string]int{
 			"default": 1,
@@ -207,7 +255,9 @@ func TestConfig_WithCustomRetryPolicy(t *testing.T) {
 
 func TestConfig_WithoutRetryPolicy(t *testing.T) {
 	config := &Config{
-		RedisAddr:   "localhost:6379",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr: "localhost:6379",
+		},
 		Concurrency: 5,
 		Queues: map[string]int{
 			"default": 1,

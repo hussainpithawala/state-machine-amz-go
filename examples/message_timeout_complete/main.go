@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hibiken/asynq"
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/handler"
@@ -22,6 +24,7 @@ var (
 	mode           = flag.String("mode", "apiserver", "Application mode: 'leader' or 'worker'")
 	redisAddr      = flag.String("redis", "localhost:6379", "Redis address")
 	redisPassword  = flag.String("redis-password", "", "Redis password")
+	useTls         = flag.Bool("tls", false, "Use TLS for Redis connection")
 	redisDB        = flag.Int("redis-db", 0, "Redis database number")
 	concurrency    = flag.Int("concurrency", 10, "Worker concurrency")
 	postgresURL    = flag.String("postgres", "postgres://postgres:postgres@localhost:5432/statemachine?sslmode=disable", "PostgreSQL connection URL")
@@ -83,6 +86,58 @@ const stateMachineDefinition = `
 }
 `
 
+func getQueueConfig() *queue.Config {
+	if *useTls {
+		return &queue.Config{
+			RedisClientOpt: &asynq.RedisClientOpt{
+				Addr:         *redisAddr,
+				Password:     *redisPassword,
+				DB:           *redisDB,
+				DialTimeout:  10 * time.Second,
+				ReadTimeout:  30 * time.Second,
+				WriteTimeout: 30 * time.Second,
+				PoolSize:     20,
+				TLSConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			},
+			Concurrency: 10,
+			Queues: map[string]int{
+				"critical": 6, // Highest priority
+				"timeout":  5, // High priority for timeout events
+				"default":  3, // Normal priority
+				"low":      1, // Lowest priority
+			},
+			RetryPolicy: &queue.RetryPolicy{
+				MaxRetry: 3,
+				Timeout:  10 * time.Minute,
+			},
+		}
+	} else {
+		return &queue.Config{
+			RedisClientOpt: &asynq.RedisClientOpt{
+				Addr:         *redisAddr,
+				DB:           *redisDB,
+				DialTimeout:  10 * time.Second,
+				ReadTimeout:  30 * time.Second,
+				WriteTimeout: 30 * time.Second,
+				PoolSize:     20,
+			},
+			Concurrency: 10,
+			Queues: map[string]int{
+				"critical": 6, // Highest priority
+				"timeout":  5, // High priority for timeout events
+				"default":  3, // Normal priority
+				"low":      1, // Lowest priority
+			},
+			RetryPolicy: &queue.RetryPolicy{
+				MaxRetry: 3,
+				Timeout:  10 * time.Minute,
+			},
+		}
+	}
+}
+
 func setupRepository(ctx context.Context) (*repository.Manager, error) {
 	// Configure persistence
 	persistenceConfig := &repository.Config{
@@ -118,7 +173,14 @@ func Setup() (stateMachine *persistent.StateMachine, repository *repository.Mana
 
 	// Initialize queue client
 	queueConfig := &queue.Config{
-		RedisAddr:   "localhost:6379",
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr:     *redisAddr,
+			Password: *redisPassword,
+			DB:       0,
+			TLSConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
 		Concurrency: 10,
 		Queues: map[string]int{
 			"critical": 6,
@@ -452,7 +514,9 @@ func ExampleTestTimeoutScenario() {
 		}
 	}(repoManager)
 
-	queueClient, _ := queue.NewClient(queue.DefaultConfig())
+	config := getQueueConfig()
+
+	queueClient, _ := queue.NewClient(config)
 
 	defer func(queueClient *queue.Client) {
 		err := queueClient.Close()
@@ -485,7 +549,7 @@ func ExampleTestTimeoutScenario() {
 	fmt.Printf("   Waiting 10 seconds for timeout...\n")
 
 	// Wait for timeout to trigger
-	time.Sleep(12 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	// Check execution status
 	execRecord, _ := sm.GetExecution(ctx, exec.ID)
@@ -521,6 +585,9 @@ func main() {
 	flag.Parse()
 	// Start worker in background
 	fmt.Printf("\n Mode %s", *mode)
+	fmt.Printf("\n RedisAddress %s", *redisAddr)
+	fmt.Printf("\n RedisPassword %s", *redisPassword)
+	fmt.Printf("\n UseTls %t", *useTls)
 
 	switch *mode {
 	case "apiserver":
