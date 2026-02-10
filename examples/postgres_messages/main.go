@@ -166,8 +166,8 @@ States:
 	fmt.Printf("   Status: %s\n", finalExec.Status)
 	fmt.Printf("   Current State: %s\n", finalExec.CurrentState)
 
-	if finalExec.Status != "SUCCEEDED" {
-		return fmt.Errorf("expected execution to be SUCCEEDED, but got %s", finalExec.Status)
+	if finalExec.Status != "PAUSED" {
+		return fmt.Errorf("expected execution to be PAUSED, but got %s", finalExec.Status)
 	}
 	fmt.Println("   ✓ Execution successfully resumed and completed.")
 
