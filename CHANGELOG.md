@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.5] - 2026-02-10
+
+### Changed
+- **Input-Output Consistency**: Updated state machine execution to ensure consistent input-output flow.
+  - Set `execCtx.Output` to `execCtx.Input` when pausing execution to maintain input-output consistency.
+  - Modified state resume logic to use the previous execution's output as the next input.
+  - Switched state-machine repository and timeout handling to rely on `Output` instead of `Input`.
+- **Execution Handler Functions**: Added new execution handler functions to `executor.BaseExecutor` for improved execution control.
+- **Example Refinements**: Enhanced `examples/message_timeout_complete/main.go` with:
+  - Refined state machine definitions for better clarity.
+  - Added execution context to API setup methods.
+  - Improved timeout handling demonstrations.
+- **CI/CD Updates**: Upgraded Go version to 1.24 in GitHub workflows (`ci.yml` and `release.yml`).
+
+### Fixed
+- Resolved input-output mismatch issues during state transitions and execution pauses.
+- Improved timeout handling consistency across state executions.
+
 ## [1.2.4] - 2026-02-10
 
 ### Added
