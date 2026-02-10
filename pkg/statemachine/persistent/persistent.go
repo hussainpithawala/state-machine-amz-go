@@ -288,6 +288,8 @@ func (pm *StateMachine) handleWaitingState(
 
 	execCtx.Status = PAUSED
 	execCtx.CurrentState = currentStateName
+	// since we are going to pause the current execCtx.Output should be set to the input
+	execCtx.Output = execCtx.Input
 	pm.persistExecution(ctx, execCtx)
 
 	return execCtx, nil
@@ -431,8 +433,8 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 		pm.persistExecution(ctx, execCtx)
 	}
 
-	// Continue execution from the current state
-	return pm.RunExecution(ctx, execCtx.Input, execCtx)
+	// Continue execution from the current state and hence use the output of the previous execution as the input
+	return pm.RunExecution(ctx, execCtx.Output, execCtx)
 }
 
 // cancelTimeoutTask attempts to cancel a scheduled timeout task
@@ -502,7 +504,8 @@ func (pm *StateMachine) ProcessTimeoutTrigger(ctx context.Context, correlationID
 	}
 
 	processor := states.JSONPathProcessor{}
-	mergedInput, err := pm.MergeInputs(&processor, executionRecord.Input, timeoutInput)
+	// use last execution(s) output as the exec.Input
+	mergedInput, err := pm.MergeInputs(&processor, executionRecord.Output, timeoutInput)
 
 	if err != nil {
 		return fmt.Errorf("failed to merge inputs: %w", err)

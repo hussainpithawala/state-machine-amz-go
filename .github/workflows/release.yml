@@ -18,7 +18,7 @@ on:
         default: false
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.24'
   GOPROXY: 'https://proxy.golang.org,direct'
   GOSUMDB: 'sum.golang.org'
   MODULE_PATH: 'github.com/hussainpithawala/state-machine-amz-go'

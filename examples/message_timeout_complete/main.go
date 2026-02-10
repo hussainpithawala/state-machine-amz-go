@@ -9,15 +9,18 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/hibiken/asynq"
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/handler"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
 var (
@@ -39,13 +42,13 @@ const stateMachineDefinition = `
   "States": {
     "CreateOrder": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
+      "Resource": "create:order",
       "Next": "WaitForPayment"
     },
     "WaitForPayment": {
       "Type": "Message",
       "CorrelationKey": "orderId",
-      "CorrelationValuePath": "$.orderId",
+      "CorrelationValuePath": "$.order.orderId",
       "TimeoutSeconds": 15,
       "TimeoutPath": "PaymentTimeout",
       "Next": "ProcessPayment",
@@ -58,23 +61,23 @@ const stateMachineDefinition = `
     },
     "ProcessPayment": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
+      "Resource": "process:payment",
       "Next": "SendConfirmation"
     },
     "PaymentTimeout": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
+      "Resource": "payment:timeout",
       "Comment": "Handle payment timeout - cancel order",
       "Next": "SendTimeoutNotification"
     },
     "SendConfirmation": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
+      "Resource": "send:confirmation",
       "End": true
     },
     "SendTimeoutNotification": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
+      "Resource": "send:timeout-notification",
       "End": true
     },
     "HandleError": {
@@ -85,6 +88,104 @@ const stateMachineDefinition = `
   }
 }
 `
+
+func setupExecutor() *executor.BaseExecutor {
+	exec := executor.NewBaseExecutor()
+
+	// Register handler for ValidateOrder
+	exec.RegisterGoFunction("create:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+		log.Printf("→ Creating order: %v", input)
+		//time.Sleep(100 * time.Millisecond) // Simulate processing
+
+		// Add validation result to input
+		if inputMap, ok := input.(map[string]interface{}); ok {
+			inputMap["validationStatus"] = "VALID"
+			inputMap["order"] = map[string]interface{}{
+				"orderId":          "ORD-PREM-001",
+				"customerId":       "CUST-PREM-001",
+				"items":            []string{"premium_item_1", "premium_item_2"},
+				"quantity":         2,
+				"total":            750.00,
+				"premium_customer": true,
+				"payment_method":   "credit_card",
+				"shipping": map[string]interface{}{
+					"required": true,
+					"country":  "US",
+				},
+			}
+			return inputMap, nil
+		}
+		return input, nil
+	})
+
+	// Register handler for ProcessPayment
+	exec.RegisterGoFunction("process:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+		log.Printf("→ Processing payment: %v", input)
+		//time.Sleep(150 * time.Millisecond) // Simulate processing
+
+		if inputMap, ok := input.(map[string]interface{}); ok {
+			reflect.DeepEqual(map[string]interface{}{
+				"orderId":          "ORD-PREM-001",
+				"customerId":       "CUST-PREM-001",
+				"items":            []string{"premium_item_1", "premium_item_2"},
+				"quantity":         2,
+				"total":            750.00,
+				"premium_customer": true,
+				"payment_method":   "credit_card",
+				"shipping": map[string]interface{}{
+					"required": true,
+					"country":  "US",
+				},
+			}, inputMap["order"])
+
+			inputMap["paymentStatus"] = "COMPLETED"
+			inputMap["transactionId"] = fmt.Sprintf("TXN-%d", time.Now().Unix())
+			inputMap["processedAt"] = time.Now().Unix()
+			return inputMap, nil
+		}
+		return input, nil
+	})
+
+	// Register handler for ProcessPayment
+	exec.RegisterGoFunction("send:timeout-notification", func(ctx context.Context, input interface{}) (interface{}, error) {
+		log.Printf("→ Handling timeout-notification: %v", input)
+		//time.Sleep(150 * time.Millisecond) // Simulate processing
+
+		if inputMap, ok := input.(map[string]interface{}); ok {
+			reflect.DeepEqual(map[string]interface{}{
+				"orderId":          "ORD-PREM-001",
+				"customerId":       "CUST-PREM-001",
+				"items":            []string{"premium_item_1", "premium_item_2"},
+				"quantity":         2,
+				"total":            750.00,
+				"premium_customer": true,
+				"payment_method":   "credit_card",
+				"shipping": map[string]interface{}{
+					"required": true,
+					"country":  "US",
+				},
+			}, inputMap["order"])
+			return inputMap, nil
+		}
+		return input, nil
+	})
+
+	// Register handler for SendConfirmation
+	exec.RegisterGoFunction("send:confirmation", func(ctx context.Context, input interface{}) (interface{}, error) {
+		log.Printf("→ Sending confirmation: %v", input)
+		//time.Sleep(50 * time.Millisecond) // Simulate processing
+
+		if inputMap, ok := input.(map[string]interface{}); ok {
+			inputMap["confirmationStatus"] = "SENT"
+			inputMap["confirmedAt"] = time.Now().Unix()
+			return inputMap, nil
+		}
+		return input, nil
+	})
+
+	log.Println("Task executor configured with 4 handlers")
+	return exec
+}
 
 func getQueueConfig() *queue.Config {
 	if *useTls {
@@ -165,34 +266,14 @@ func setupRepository(ctx context.Context) (*repository.Manager, error) {
 }
 
 // Setup initializes all components
-func Setup() (stateMachine *persistent.StateMachine, repository *repository.Manager, queueClient *queue.Client, worker *queue.Worker, err error) {
+func Setup(baseExecutor *executor.BaseExecutor) (stateMachine *persistent.StateMachine, repository *repository.Manager, queueClient *queue.Client, worker *queue.Worker, err error) {
 	ctx := context.Background()
 
 	// Initialize repository
 	persistenceManager, err := setupRepository(ctx)
 
 	// Initialize queue client
-	queueConfig := &queue.Config{
-		RedisClientOpt: &asynq.RedisClientOpt{
-			Addr:     *redisAddr,
-			Password: *redisPassword,
-			DB:       0,
-			TLSConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-		Concurrency: 10,
-		Queues: map[string]int{
-			"critical": 6,
-			"timeout":  5, // High priority for timeout events
-			"default":  3,
-			"low":      1,
-		},
-		RetryPolicy: &queue.RetryPolicy{
-			MaxRetry: 3,
-			Timeout:  10 * time.Minute,
-		},
-	}
+	queueConfig := getQueueConfig()
 	queueClient, err = queue.NewClient(queueConfig)
 
 	if err != nil {
@@ -220,8 +301,7 @@ func Setup() (stateMachine *persistent.StateMachine, repository *repository.Mana
 
 	// Create execution handler
 	executionHandler := handler.NewExecutionHandler(persistenceManager, queueClient)
-	//executionHandler := handler.NewStateMachineExecutionHandler(repoManager, queueClient)
-
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(baseExecutor))
 	// Create worker
 	worker, err = queue.NewWorker(queueConfig, executionHandler)
 	if err != nil {
@@ -232,10 +312,10 @@ func Setup() (stateMachine *persistent.StateMachine, repository *repository.Mana
 }
 
 // Example 1: Start an execution that will wait for payment
-func ExampleStartExecution() {
+func ExampleStartExecution(baseExecutor *executor.BaseExecutor) {
 	ctx := context.Background()
 
-	sm, persistenceManager, queueClient, worker, err := Setup()
+	sm, persistenceManager, queueClient, worker, err := Setup(baseExecutor)
 
 	defer func() {
 		worker.Shutdown()
@@ -268,16 +348,21 @@ func ExampleStartExecution() {
 		"createdAt": time.Now().Unix(),
 	}
 
-	sm.SaveDefinition(ctx)
-	exec, err := sm.Execute(ctx, input)
+	saveError := sm.SaveDefinition(ctx)
+	if saveError != nil {
+		return
+	}
+
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(baseExecutor))
+	executionResult, err := sm.Execute(ctx, input)
 	if err != nil {
 		panic(err)
 	}
 
 	fmt.Printf("✅ Execution started:\n")
-	fmt.Printf("   ID: %s\n", exec.ID)
-	fmt.Printf("   Status: %s\n", exec.Status)
-	fmt.Printf("   Current State: %s\n", exec.CurrentState)
+	fmt.Printf("   ID: %s\n", executionResult.ID)
+	fmt.Printf("   Status: %s\n", executionResult.Status)
+	fmt.Printf("   Current State: %s\n", executionResult.CurrentState)
 	fmt.Printf("   Waiting for payment confirmation for order: ORD-12345\n")
 	fmt.Printf("   ⏰ Timeout will trigger at: %s\n", time.Now().Add(5*time.Minute).Format(time.RFC3339))
 	fmt.Printf("   💡 Two possible outcomes:\n")
@@ -286,8 +371,8 @@ func ExampleStartExecution() {
 }
 
 // Example 2: Worker process that handles both regular executions and timeouts
-func ExampleRunWorker() {
-	_, persistenceManager, queueClient, worker, err := Setup()
+func ExampleRunWorker(baseExecutor *executor.BaseExecutor) {
+	_, persistenceManager, queueClient, worker, err := Setup(baseExecutor)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -421,7 +506,7 @@ func HandlePaymentWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 // Example 4: Monitor executions and check for timeouts
-func ExampleMonitorExecutions() {
+func ExampleMonitorExecutions(exec *executor.BaseExecutor) {
 	ctx := context.Background()
 	repoManager, err2 := setupRepository(ctx)
 	if err2 != nil {
@@ -473,35 +558,10 @@ func ExampleMonitorExecutions() {
 }
 
 // Example 5: Test timeout scenario (for testing without waiting 5 minutes)
-func ExampleTestTimeoutScenario() {
+func ExampleTestTimeoutScenario(baseExecutor *executor.BaseExecutor) {
 	ctx := context.Background()
 
 	// Create state machine with short timeout for testing
-	testDefinition := `
-	{
-	  "StartAt": "WaitForPayment",
-	  "States": {
-	    "WaitForPayment": {
-	      "Type": "Message",
-	      "CorrelationKey": "orderId",
-	      "TimeoutSeconds": 5,
-	      "TimeoutPath": "PaymentTimeout",
-	      "Next": "ProcessPayment"
-	    },
-	    "ProcessPayment": {
-	      "Type": "Pass",
-	      "Result": "Payment processed",
-	      "End": true
-	    },
-	    "PaymentTimeout": {
-	      "Type": "Pass",
-	      "Result": "Payment timed out - order cancelled",
-	      "End": true
-	    }
-	  }
-	}
-	`
-
 	repoManager, err2 := setupRepository(ctx)
 	if err2 != nil {
 		fmt.Println(err2)
@@ -525,7 +585,8 @@ func ExampleTestTimeoutScenario() {
 		}
 	}(queueClient)
 
-	sm, err := persistent.New([]byte(testDefinition), true, "test-timeout-sm", repoManager)
+	sm, err := persistent.New([]byte(stateMachineDefinition), true, "test-timeout-sm", repoManager)
+
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -540,23 +601,25 @@ func ExampleTestTimeoutScenario() {
 
 	// Start execution
 	input := map[string]interface{}{"orderId": "TEST-001"}
-	exec, err := sm.Execute(ctx, input)
+
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(baseExecutor))
+	executionResult, err := sm.Execute(ctx, input)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("🧪 Test execution started: %s\n", exec.ID)
+	fmt.Printf("🧪 Test execution started: %s\n", executionResult.ID)
 	fmt.Printf("   Waiting 10 seconds for timeout...\n")
 
 	// Wait for timeout to trigger
 	time.Sleep(10 * time.Second)
 
 	// Check execution status
-	execRecord, _ := sm.GetExecution(ctx, exec.ID)
+	execRecord, _ := sm.GetExecution(ctx, executionResult.ID)
 	fmt.Printf("   Final status: %s\n", execRecord.Status)
 
 	// Get history to see the path taken
-	history, _ := sm.GetExecutionHistory(ctx, exec.ID)
+	history, _ := sm.GetExecutionHistory(ctx, executionResult.ID)
 	fmt.Printf("   States executed:\n")
 	for _, h := range history {
 		fmt.Printf("      - %s (%s)\n", h.StateName, h.Status)
@@ -564,7 +627,7 @@ func ExampleTestTimeoutScenario() {
 }
 
 // Example 6: API Server with payment webhook endpoint
-func ExampleRunAPIServer() {
+func ExampleRunAPIServer(exec *executor.BaseExecutor) {
 	http.HandleFunc("/webhook/payment", HandlePaymentWebhook)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -589,17 +652,20 @@ func main() {
 	fmt.Printf("\n RedisPassword %s", *redisPassword)
 	fmt.Printf("\n UseTls %t", *useTls)
 
+	// Setup task executor with handlers
+	baseExecutor := setupExecutor()
+
 	switch *mode {
 	case "apiserver":
-		ExampleRunAPIServer()
+		ExampleRunAPIServer(baseExecutor)
 	case "worker":
-		ExampleRunWorker()
+		ExampleRunWorker(baseExecutor)
 	case "ExampleStartExecution":
-		ExampleStartExecution()
+		ExampleStartExecution(baseExecutor)
 	case "ExampleMonitorExecutions":
-		ExampleMonitorExecutions()
+		ExampleMonitorExecutions(baseExecutor)
 	case "ExampleTestTimeoutScenario":
-		ExampleTestTimeoutScenario()
+		ExampleTestTimeoutScenario(baseExecutor)
 	default:
 		log.Fatalf("Invalid mode: %s. Use 'apiserver' or 'worker'", *mode)
 	}

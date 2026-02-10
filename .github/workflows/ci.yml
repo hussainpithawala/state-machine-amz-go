@@ -9,7 +9,7 @@ on:
   workflow_call:
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.24'
 
 jobs:
   lint:
@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: [ '1.23' ]
+        go-version: [ '1.24' ]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -69,7 +69,7 @@ jobs:
     needs: [ lint ]
     strategy:
       matrix:
-        go-version: [ '1.23' ]
+        go-version: [ '1.24' ]
 
     services:
       postgres:
@@ -158,7 +158,7 @@ jobs:
     needs: [ lint, test-unit ]
     strategy:
       matrix:
-        go-version: [ '1.23' ]
+        go-version: [ '1.24' ]
 
     services:
       postgres:
@@ -254,7 +254,7 @@ jobs:
     needs: [ lint ]
     strategy:
       matrix:
-        go-version: [ '1.23' ]
+        go-version: [ '1.24' ]
 
     services:
       postgres:
