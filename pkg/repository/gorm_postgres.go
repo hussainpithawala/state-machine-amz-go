@@ -1099,11 +1099,11 @@ func fromMessageCorrelationModel(model *MessageCorrelationModel) *MessageCorrela
 // GetExecutionOutput retrieves output from an execution (final or specific state)
 // If stateName is empty, returns the final execution output
 // If stateName is provided, returns the output of that specific state
-func (gr *GormPostgresRepository) GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error) {
+func (r *GormPostgresRepository) GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error) {
 	if stateName == "" {
 		// Get final execution output
 		var execution ExecutionModel
-		result := gr.db.WithContext(ctx).
+		result := r.db.WithContext(ctx).
 			Select("output").
 			Where("execution_id = ?", executionID).
 			First(&execution)
@@ -1120,7 +1120,7 @@ func (gr *GormPostgresRepository) GetExecutionOutput(ctx context.Context, execut
 
 	// Get specific state output (most recent if state was executed multiple times)
 	var stateHistory StateHistoryModel
-	result := gr.db.WithContext(ctx).
+	result := r.db.WithContext(ctx).
 		Select("output").
 		Where("execution_id = ? AND state_name = ?", executionID, stateName).
 		Order("sequence_number DESC").

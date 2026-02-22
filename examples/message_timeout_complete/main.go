@@ -95,7 +95,7 @@ func setupExecutor() *executor.BaseExecutor {
 	// Register handler for ValidateOrder
 	exec.RegisterGoFunction("create:order", func(ctx context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Creating order: %v", input)
-		//time.Sleep(100 * time.Millisecond) // Simulate processing
+		// time.Sleep(100 * time.Millisecond) // Simulate processing
 
 		// Add validation result to input
 		if inputMap, ok := input.(map[string]interface{}); ok {
@@ -121,7 +121,7 @@ func setupExecutor() *executor.BaseExecutor {
 	// Register handler for ProcessPayment
 	exec.RegisterGoFunction("process:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Processing payment: %v", input)
-		//time.Sleep(150 * time.Millisecond) // Simulate processing
+		// time.Sleep(150 * time.Millisecond) // Simulate processing
 
 		if inputMap, ok := input.(map[string]interface{}); ok {
 			reflect.DeepEqual(map[string]interface{}{
@@ -149,7 +149,7 @@ func setupExecutor() *executor.BaseExecutor {
 	// Register handler for ProcessPayment
 	exec.RegisterGoFunction("send:timeout-notification", func(ctx context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Handling timeout-notification: %v", input)
-		//time.Sleep(150 * time.Millisecond) // Simulate processing
+		// time.Sleep(150 * time.Millisecond) // Simulate processing
 
 		if inputMap, ok := input.(map[string]interface{}); ok {
 			reflect.DeepEqual(map[string]interface{}{
@@ -173,7 +173,7 @@ func setupExecutor() *executor.BaseExecutor {
 	// Register handler for SendConfirmation
 	exec.RegisterGoFunction("send:confirmation", func(ctx context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Sending confirmation: %v", input)
-		//time.Sleep(50 * time.Millisecond) // Simulate processing
+		// time.Sleep(50 * time.Millisecond) // Simulate processing
 
 		if inputMap, ok := input.(map[string]interface{}); ok {
 			inputMap["confirmationStatus"] = "SENT"
@@ -396,7 +396,7 @@ func ExampleRunWorker(baseExecutor *executor.BaseExecutor) {
 	go func() {
 		log.Println("🚀 Starting worker to process tasks...")
 		if err := worker.Run(); err != nil {
-			log.Fatalf("Worker failed: %v", err)
+			log.Printf("Worker failed: %v", err)
 		}
 	}()
 
@@ -497,12 +497,16 @@ func HandlePaymentWebhook(w http.ResponseWriter, r *http.Request) {
 	log.Printf("   Payment processed, timeout task cancelled")
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	err = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":       "payment_received",
 		"execution_id": execRecord.ExecutionID,
 		"order_id":     webhook.OrderID,
 		"message":      "Payment processed successfully",
 	})
+	if err != nil {
+		log.Printf("❌ Failed to write response: %v", err)
+		return
+	}
 }
 
 // Example 4: Monitor executions and check for timeouts
@@ -667,7 +671,6 @@ func main() {
 	case "ExampleTestTimeoutScenario":
 		ExampleTestTimeoutScenario(baseExecutor)
 	default:
-		log.Fatalf("Invalid mode: %s. Use 'apiserver' or 'worker'", *mode)
+		log.Printf("Invalid mode: %s. Use 'apiserver' or 'worker'", *mode)
 	}
-
 }

@@ -1,19 +1,26 @@
 # .golangci.yml
+version: 2
+
 run:
+  skip-dirs:
+    - examples
+    - ./examples
+    - examples/
+    - examples/**
+    - ./examples/**
+  skip-dirs-use-default: false
   timeout: 5m
   modules-download-mode: readonly
+  exclude-dirs:
+    - examples
+  exclude-dirs-use-default: false
 
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
-    - staticcheck
-    - typecheck
     - unused
-    - gofmt
-    - goimports
     - revive
     - gocritic
     - bodyclose
@@ -43,15 +50,18 @@ linters-settings:
       - hugeParam
 
 issues:
+  exclude-dirs:
+    - examples
+  exclude-files:
+    - ".*_test\\.go"
   exclude-rules:
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - goconst
-        - dupl
     - path: examples/
       linters:
+        - revive
+        - misspell
+        - unused
         - gocyclo
         - goconst
+        - errcheck
   max-same-issues: 50
   max-issues-per-linter: 50

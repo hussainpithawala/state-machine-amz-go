@@ -39,7 +39,7 @@ func main() {
 	// Setup repository manager
 	repoManager, err := setupRepository(ctx)
 	if err != nil {
-		log.Fatalf("Failed to setup repository: %v", err)
+		log.Printf("Failed to setup repository: %v", err)
 	}
 	defer func(repoManager *repository.Manager) {
 		err := repoManager.Close()
@@ -69,7 +69,7 @@ func main() {
 
 	allStateMachines, err := repoManager.ListStateMachines(ctx, nil)
 	if err != nil {
-		log.Fatalf("Failed to list state machines: %v", err)
+		log.Printf("Failed to list state machines: %v", err)
 	}
 
 	for i := 0; i < len(allStateMachines); i++ {
@@ -83,7 +83,7 @@ func main() {
 	case "worker":
 		runWorker(ctx, queueConfig, repoManager, exec)
 	default:
-		log.Fatalf("Invalid mode: %s. Use 'leader' or 'worker'", *mode)
+		log.Printf("Invalid mode: %s. Use 'leader' or 'worker'", *mode)
 	}
 }
 
@@ -94,13 +94,13 @@ func runLeader(ctx context.Context, queueConfig *queue.Config, repoManager *repo
 	// Load or create state machine
 	sm, err := getOrCreateStateMachine(ctx, repoManager)
 	if err != nil {
-		log.Fatalf("Failed to get state machine: %v", err)
+		log.Printf("Failed to get state machine: %v", err)
 	}
 
 	// Create queue client
 	queueClient, err := queue.NewClient(queueConfig)
 	if err != nil {
-		log.Fatalf("Failed to create queue client: %v", err)
+		log.Printf("Failed to create queue client: %v", err)
 	}
 	defer func(queueClient *queue.Client) {
 		err := queueClient.Close()
@@ -167,7 +167,7 @@ func runWorker(ctx context.Context, queueConfig *queue.Config, repoManager *repo
 	// Create queue client
 	queueClient, err := queue.NewClient(queueConfig)
 	if err != nil {
-		log.Fatalf("Failed to create queue client: %v", err)
+		log.Printf("Failed to create queue client: %v", err)
 	}
 	defer func(queueClient *queue.Client) {
 		err := queueClient.Close()
@@ -182,7 +182,7 @@ func runWorker(ctx context.Context, queueConfig *queue.Config, repoManager *repo
 	// Create worker with handler
 	worker, err := queue.NewWorker(queueConfig, handler)
 	if err != nil {
-		log.Fatalf("Failed to create worker: %v", err)
+		log.Printf("Failed to create worker: %v", err)
 	}
 
 	// Setup graceful shutdown
@@ -192,7 +192,7 @@ func runWorker(ctx context.Context, queueConfig *queue.Config, repoManager *repo
 	// Start worker in goroutine
 	go func() {
 		if err := worker.Run(); err != nil {
-			log.Fatalf("Worker failed: %v", err)
+			log.Printf("Worker failed: %v", err)
 		}
 	}()
 
@@ -298,7 +298,7 @@ func setupExecutor() *executor.BaseExecutor {
 	// Register handler for ValidateOrder
 	exec.RegisterGoFunction("validate:order", func(ctx context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Validating order: %v", input)
-		//time.Sleep(100 * time.Millisecond) // Simulate processing
+		// time.Sleep(100 * time.Millisecond) // Simulate processing
 
 		// Add validation result to input
 		if inputMap, ok := input.(map[string]interface{}); ok {
@@ -312,7 +312,7 @@ func setupExecutor() *executor.BaseExecutor {
 	// Register handler for ProcessPayment
 	exec.RegisterGoFunction("process:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Processing payment: %v", input)
-		//time.Sleep(150 * time.Millisecond) // Simulate processing
+		// time.Sleep(150 * time.Millisecond) // Simulate processing
 
 		if inputMap, ok := input.(map[string]interface{}); ok {
 			inputMap["paymentStatus"] = "COMPLETED"
@@ -326,7 +326,7 @@ func setupExecutor() *executor.BaseExecutor {
 	// Register handler for ShipOrder
 	exec.RegisterGoFunction("ship:order", func(ctx context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Shipping order: %v", input)
-		//time.Sleep(100 * time.Millisecond) // Simulate processing
+		// time.Sleep(100 * time.Millisecond) // Simulate processing
 
 		if inputMap, ok := input.(map[string]interface{}); ok {
 			inputMap["shippingStatus"] = "SHIPPED"
@@ -340,7 +340,7 @@ func setupExecutor() *executor.BaseExecutor {
 	// Register handler for SendConfirmation
 	exec.RegisterGoFunction("send:confirmation", func(ctx context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Sending confirmation: %v", input)
-		//time.Sleep(50 * time.Millisecond) // Simulate processing
+		// time.Sleep(50 * time.Millisecond) // Simulate processing
 
 		if inputMap, ok := input.(map[string]interface{}); ok {
 			inputMap["confirmationStatus"] = "SENT"

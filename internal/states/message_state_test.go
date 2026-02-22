@@ -15,6 +15,8 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 )
 
+const processConfirmation = "ProcessConfirmation"
+
 func TestMessageState_Creation(t *testing.T) {
 	messageState := states.NewMessageState("WaitForConfirmation", "user_confirmation")
 
@@ -25,6 +27,7 @@ func TestMessageState_Creation(t *testing.T) {
 }
 
 func TestMessageState_Validation(t *testing.T) {
+	const processPayment = "ProcessPayment"
 	tests := []struct {
 		name        string
 		setupState  func() *states.MessageState
@@ -35,7 +38,7 @@ func TestMessageState_Validation(t *testing.T) {
 			name: "valid state",
 			setupState: func() *states.MessageState {
 				state := states.NewMessageState("WaitForPayment", "payment_key")
-				next := "ProcessPayment"
+				next := processPayment
 				state.Next = &next
 				return state
 			},
@@ -45,7 +48,7 @@ func TestMessageState_Validation(t *testing.T) {
 			name: "missing correlation key",
 			setupState: func() *states.MessageState {
 				state := states.NewMessageState("WaitForPayment", "")
-				next := "ProcessPayment"
+				next := processPayment
 				state.Next = &next
 				return state
 			},
@@ -56,7 +59,7 @@ func TestMessageState_Validation(t *testing.T) {
 			name: "negative timeout",
 			setupState: func() *states.MessageState {
 				state := states.NewMessageState("WaitForPayment", "payment_key")
-				next := "ProcessPayment"
+				next := processPayment
 				state.Next = &next
 				timeout := -100
 				state.TimeoutSeconds = &timeout
@@ -377,7 +380,8 @@ func TestMessageState_CorrelationValueExtraction(t *testing.T) {
 
 func TestMessageState_Timeout(t *testing.T) {
 	messageState := states.NewMessageState("WaitForConfirmation", "confirmation_key")
-	next := "ProcessConfirmation"
+
+	next := processConfirmation
 	messageState.Next = &next
 	timeout := 300
 	messageState.TimeoutSeconds = &timeout
@@ -401,6 +405,7 @@ func TestMessageState_Timeout(t *testing.T) {
 func TestMessageState_TimeoutExecution(t *testing.T) {
 	ctx := context.Background()
 
+	const handleTimeOut = "HandleTimeout"
 	tests := []struct {
 		name           string
 		setupState     func() *states.MessageState
@@ -417,7 +422,7 @@ func TestMessageState_TimeoutExecution(t *testing.T) {
 				state.Next = &next
 				timeout := 300
 				state.TimeoutSeconds = &timeout
-				timeoutPath := "HandleTimeout"
+				timeoutPath := handleTimeOut
 				state.TimeoutPath = &timeoutPath
 				return state
 			},
@@ -426,7 +431,7 @@ func TestMessageState_TimeoutExecution(t *testing.T) {
 				"orderId": "ORD-123",
 			},
 			expectedNext: func() *string {
-				s := "HandleTimeout"
+				s := handleTimeOut
 				return &s
 			}(),
 			expectError: false,
@@ -467,7 +472,7 @@ func TestMessageState_TimeoutExecution(t *testing.T) {
 				state.Next = &next
 				timeout := 300
 				state.TimeoutSeconds = &timeout
-				timeoutPath := "HandleTimeout"
+				timeoutPath := handleTimeOut
 				state.TimeoutPath = &timeoutPath
 
 				// Apply ResultPath to merge timeout result back
@@ -483,7 +488,7 @@ func TestMessageState_TimeoutExecution(t *testing.T) {
 				"amount":  100.00,
 			},
 			expectedNext: func() *string {
-				s := "HandleTimeout"
+				s := handleTimeOut
 				return &s
 			}(),
 			expectError: false,

@@ -20,31 +20,32 @@ func getRedisAddr() string {
 
 func createTLSConfig() (*tls.Config, error) {
 	// Load CA certificate
-	//caCert, err := os.ReadFile("docker-examples/redis/tls/ca.crt")
-	//if err != nil {
+	// caCert, err := os.ReadFile("docker-examples/redis/tls/ca.crt")
+	// if err != nil {
 	//	return nil, fmt.Errorf("failed to read CA certificate: %w", err)
-	//}
+	// }
 
-	//caCertPool := x509.NewCertPool()
-	//if !caCertPool.AppendCertsFromPEM(caCert) {
+	// caCertPool := x509.NewCertPool()
+	// if !caCertPool.AppendCertsFromPEM(caCert) {
 	//	return nil, fmt.Errorf("failed to append CA certificate")
-	//}
+	// }
 
 	// Load client certificate and key
-	//cert, err := tls.LoadX509KeyPair("docker-examples/redis/tls/redis.crt", "docker-examples/redis/tls/redis.key")
-	//if err != nil {
+	// cert, err := tls.LoadX509KeyPair("docker-examples/redis/tls/redis.crt", "docker-examples/redis/tls/redis.key")
+	// if err != nil {
 	//	return nil, fmt.Errorf("failed to load client certificate: %w", err)
-	//}
+	// }
 
 	return &tls.Config{
-		//Certificates:       []tls.Certificate{cert},
-		//RootCAs:            caCertPool,
-		//ServerName:         "redis", // Must match CN in certificate
-		//MinVersion:         tls.VersionTLS12,
+		// Certificates:       []tls.Certificate{cert},
+		// RootCAs:            caCertPool,
+		// ServerName:         "redis", // Must match CN in certificate
+		// MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true,
 	}, nil
 }
-func createRedisClientOptTLS() asynq.RedisClientOpt {
+
+func _() asynq.RedisClientOpt {
 	password := os.Getenv("REDIS_PASSWORD")
 	if password == "" {
 		panic("REDIS_PASSWORD environment variable is not set")
@@ -120,7 +121,12 @@ func testRedisConnection(redisOpt asynq.RedisClientOpt) error {
 			DB:       redisOpt.DB,
 		})
 	}
-	defer rdb.Close()
+	defer func(rdb *redis.Client) {
+		err := rdb.Close()
+		if err != nil {
+			fmt.Println("Failed to close Redis client")
+		}
+	}(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -147,7 +153,12 @@ func testTLSConnection(redisOpt asynq.RedisClientOpt) error {
 	if err != nil {
 		return fmt.Errorf("❌ TLS connection failed: %w", err)
 	}
-	defer conn.Close()
+	defer func(conn *tls.Conn) {
+		err := conn.Close()
+		if err != nil {
+			fmt.Println("Failed to close TLS connection")
+		}
+	}(conn)
 
 	state := conn.ConnectionState()
 	fmt.Printf("✅ TLS connection successful\n")
@@ -278,7 +289,12 @@ func testTaskHandler(redisOpt asynq.RedisClientOpt) error {
 
 	// Enqueue a test task
 	client := asynq.NewClient(redisOpt)
-	defer client.Close()
+	defer func(client *asynq.Client) {
+		err := client.Close()
+		if err != nil {
+			fmt.Println("Failed to close Redis client")
+		}
+	}(client)
 
 	payload := map[string]interface{}{"test": "handler"}
 	payloadBytes, _ := json.Marshal(payload)
@@ -345,7 +361,12 @@ func testRedisMemory(redisOpt asynq.RedisClientOpt) error {
 			DB:       redisOpt.DB,
 		})
 	}
-	defer rdb.Close()
+	defer func(rdb *redis.Client) {
+		err := rdb.Close()
+		if err != nil {
+			fmt.Println("Failed to close Redis client")
+		}
+	}(rdb)
 
 	ctx := context.Background()
 	info, err := rdb.Info(ctx, "memory").Result()
@@ -397,10 +418,20 @@ func runSanityTests() {
 
 	// Create clients
 	client := asynq.NewClient(redisOpt)
-	defer client.Close()
+	defer func(client *asynq.Client) {
+		err := client.Close()
+		if err != nil {
+			fmt.Println("Failed to close Redis client")
+		}
+	}(client)
 
 	inspector := asynq.NewInspector(redisOpt)
-	defer inspector.Close()
+	defer func(inspector *asynq.Inspector) {
+		err := inspector.Close()
+		if err != nil {
+			fmt.Println("Failed to close Redis inspector")
+		}
+	}(inspector)
 
 	// Test 3: Enqueue Task
 	if err := testEnqueueTask(client); err != nil {

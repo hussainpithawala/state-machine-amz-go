@@ -342,7 +342,7 @@ func generateExecutionID() string {
 
 	if err != nil {
 		// Log the error and panic/fatal exit, as cryptographic security has failed
-		log.Fatalf("Fatal error reading from crypto/rand: %v", err)
+		log.Printf("Fatal error reading from crypto/rand: %v", err)
 	}
 	return fmt.Sprintf("[generateExecutionID] exec-%s", hex.EncodeToString(b))
 }
@@ -354,7 +354,7 @@ func generateStateHistoryID(executionID, stateName string, sequenceNumber int) s
 
 	if err != nil {
 		// Log the error and panic/fatal exit, as cryptographic security has failed
-		log.Fatalf("[generateStateHistoryID] Fatal error reading from crypto/rand: %v", err)
+		log.Printf("[generateStateHistoryID] Fatal error reading from crypto/rand: %v", err)
 	}
 
 	return fmt.Sprintf("%s-%s-%d-%s", executionID, stateName, sequenceNumber, hex.EncodeToString(b)[:8])

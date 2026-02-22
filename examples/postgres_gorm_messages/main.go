@@ -60,7 +60,12 @@ States:
 	if err != nil {
 		return err
 	}
-	defer persistenceManager.Close()
+	defer func(persistenceManager *repository.Manager) {
+		err := persistenceManager.Close()
+		if err != nil {
+			fmt.Println("Failed to close persistence manager")
+		}
+	}(persistenceManager)
 
 	// 3. Create persistent state machine
 

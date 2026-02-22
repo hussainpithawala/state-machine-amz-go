@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -449,7 +450,12 @@ func (ps *PostgresRepository) ListStateMachines(ctx context.Context, filter *Def
 	if err != nil {
 		return nil, fmt.Errorf("failed to list state machines: %w", err)
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close state machine rows: %v\n", err)
+		}
+	}(rows)
 
 	var records []*StateMachineRecord
 	for rows.Next() {
@@ -1447,7 +1453,12 @@ func (ps *PostgresRepository) ListLinkedExecutions(ctx context.Context, filter *
 	if err != nil {
 		return nil, fmt.Errorf("failed to list linked executions: %w", err)
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			log.Printf("Failed to close linked executions rows: %v\n", err)
+		}
+	}(rows)
 
 	var records []*LinkedExecutionRecord
 	for rows.Next() {
@@ -1516,7 +1527,6 @@ func (ps *PostgresRepository) CountLinkedExecutions(ctx context.Context, filter 
 		if !filter.CreatedBefore.IsZero() {
 			conditions = append(conditions, fmt.Sprintf("created_at <= $%d", argPos))
 			args = append(args, filter.CreatedBefore)
-			argPos++
 		}
 	}
 

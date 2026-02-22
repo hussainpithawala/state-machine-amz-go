@@ -42,7 +42,12 @@ func runBatchChainedExecutionExample() error {
 	if err != nil {
 		return fmt.Errorf("failed to create repository manager: %w", err)
 	}
-	defer repoManager.Close()
+	defer func(repoManager *repository.Manager) {
+		err := repoManager.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close repository manager: %v\n", err)
+		}
+	}(repoManager)
 
 	// Initialize the database schema
 	if err := repoManager.Initialize(ctx); err != nil {

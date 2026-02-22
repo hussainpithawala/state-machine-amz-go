@@ -48,7 +48,12 @@ func main() {
 			InsecureSkipVerify: true,
 		},
 	})
-	defer rdb.Close()
+	defer func(rdb *redis.Client) {
+		err := rdb.Close()
+		if err != nil {
+			fmt.Println("Failed to close Redis client")
+		}
+	}(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -87,7 +92,12 @@ func main() {
 		fmt.Printf("❌ TLS dial failed: %v\n", err)
 		return
 	}
-	defer conn.Close()
+	defer func(conn *tls.Conn) {
+		err := conn.Close()
+		if err != nil {
+			fmt.Println("Failed to close TLS connection")
+		}
+	}(conn)
 
 	state := conn.ConnectionState()
 	fmt.Printf("✅ TLS Version: %s\n", tlsVersionString(state.Version))

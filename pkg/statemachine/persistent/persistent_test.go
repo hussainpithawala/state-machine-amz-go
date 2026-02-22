@@ -3,6 +3,7 @@ package persistent
 import (
 	"context"
 	"fmt"
+	"log"
 	"testing"
 	"time"
 
@@ -791,7 +792,12 @@ func TestExecute_FailState_MarkedAsFailed(t *testing.T) {
 	if err != nil {
 		t.Skipf("Skipping test: PostgreSQL not available: %v", err)
 	}
-	defer repo.Close()
+	defer func(repo *repository.GormPostgresRepository) {
+		err := repo.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close PostgreSQL repository: %v\n", err)
+		}
+	}(repo)
 
 	ctx := context.Background()
 	err = repo.Initialize(ctx)
@@ -854,7 +860,12 @@ func TestExecute_TaskStateError_MarkedAsFailed(t *testing.T) {
 	if err != nil {
 		t.Skipf("Skipping test: PostgreSQL not available: %v", err)
 	}
-	defer repo.Close()
+	defer func(repo *repository.GormPostgresRepository) {
+		err := repo.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close PostgreSQL repository: %v\n", err)
+		}
+	}(repo)
 
 	ctx := context.Background()
 	err = repo.Initialize(ctx)

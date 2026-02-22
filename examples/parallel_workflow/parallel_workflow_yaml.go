@@ -423,7 +423,7 @@ func testSimpleWorkflow() {
 	// Create state machine from definition
 	sm, err := statemachine.New([]byte(simpleWorkflowYAML), false)
 	if err != nil {
-		log.Fatalf("Failed to create state machine: %v", err)
+		log.Printf("Failed to create state machine: %v", err)
 	}
 
 	// Create execution context
@@ -455,7 +455,7 @@ func testParallelWorkflow() {
 	// Create state machine from definition
 	sm, err := statemachine.New([]byte(parallelWorkflowYAML), false)
 	if err != nil {
-		log.Fatalf("Failed to create state machine: %v", err)
+		log.Printf("Failed to create state machine: %v", err)
 	}
 
 	// Create execution context
@@ -493,7 +493,7 @@ func testChoiceWorkflow() {
 	// Create state machine from definition
 	sm, err := statemachine.New([]byte(choiceWorkflowYAML), false)
 	if err != nil {
-		log.Fatalf("Failed to create state machine: %v", err)
+		log.Printf("Failed to create state machine: %v", err)
 	}
 
 	// Test different scenarios
