@@ -677,7 +677,6 @@ func (pm *StateMachine) ExecuteBatch(
 			return pm.executeBatchSequential(ctx, stringExecutionIDs, sourceStateName, opts, execOpts...)
 		}
 		return pm.executeBatchConcurrent(ctx, stringExecutionIDs, sourceStateName, opts, execOpts...)
-
 	}
 	// Retrieve source execution IDs based on filter
 	sourceExecutionIDs, err := pm.repositoryManager.ListExecutionIDs(ctx, filter)
@@ -694,7 +693,6 @@ func (pm *StateMachine) ExecuteBatch(
 		return pm.executeBatchSequential(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
 	}
 	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
-
 }
 
 // executeBatchSequential executes chained executions sequentially
