@@ -49,3 +49,5 @@ build
 /docker-examples/redis/tls/redis.crt
 /docker-examples/redis/tls/redis.key
 /redis/
+
+pkg/.DS_Store
