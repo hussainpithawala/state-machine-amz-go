@@ -2,13 +2,6 @@
 version: 2
 
 run:
-  skip-dirs:
-    - examples
-    - ./examples
-    - examples/
-    - examples/**
-    - ./examples/**
-  skip-dirs-use-default: false
   timeout: 5m
   modules-download-mode: readonly
   exclude-dirs:
@@ -51,6 +44,10 @@ linters-settings:
 issues:
   exclude-dirs:
     - examples
+    - ./examples
+    - examples/
+    - examples/**
+    - ./examples/**
   exclude-files:
     - ".*_test\\.go"
   exclude-rules:
