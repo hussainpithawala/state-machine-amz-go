@@ -215,8 +215,8 @@ func (pm *Manager) ListExecutions(ctx context.Context, filter *ExecutionFilter) 
 // ListNonLinkedExecutions lists executions that have no linked executions matching the filter criteria
 // This allows finding executions that don't have specific types of linked executions
 // For example: executions with no SUCCEEDED linked executions from a specific state
-func (pm *Manager) ListNonLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) ([]*ExecutionRecord, error) {
-	return pm.repository.ListNonLinkedExecutions(ctx, filter)
+func (pm *Manager) ListNonLinkedExecutions(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error) {
+	return pm.repository.ListNonLinkedExecutions(ctx, executionFilter, linkedExecutionFilter)
 }
 
 func (pm *Manager) CountExecutions(ctx context.Context, filter *ExecutionFilter) (int64, error) {

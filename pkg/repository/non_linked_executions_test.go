@@ -186,7 +186,7 @@ func TestListNonLinkedExecutions_GormPostgres(t *testing.T) {
 
 	// Test: List non-linked executions
 	filter := &LinkedExecutionFilter{}
-	nonLinked, err := repo.ListNonLinkedExecutions(ctx, filter)
+	nonLinked, err := repo.ListNonLinkedExecutions(ctx, &ExecutionFilter{}, filter)
 	if err != nil {
 		t.Fatalf("Failed to list non-linked executions: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestListNonLinkedExecutions_GormPostgres(t *testing.T) {
 	filterWithTransformer := &LinkedExecutionFilter{
 		InputTransformerName: "Transform1",
 	}
-	nonLinkedTransformer, err := repo.ListNonLinkedExecutions(ctx, filterWithTransformer)
+	nonLinkedTransformer, err := repo.ListNonLinkedExecutions(ctx, &Execution{}, filterWithTransformer)
 	if err != nil {
 		t.Fatalf("Failed to list non-linked executions with transformer filter: %v", err)
 	}

@@ -1590,37 +1590,37 @@ func (ps *PostgresRepository) CountLinkedExecutions(ctx context.Context, filter 
 // ListNonLinkedExecutions lists executions that have no linked executions matching the filter criteria
 // This allows finding executions that don't have specific types of linked executions
 // For example: executions with no SUCCEEDED linked executions from a specific state
-func (ps *PostgresRepository) ListNonLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) ([]*ExecutionRecord, error) {
+func (ps *PostgresRepository) ListNonLinkedExecutions(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error) {
 	// Build the subquery for filtered linked executions
 	var subConditions []string
 	var args []interface{}
 	argPos := 1
 
 	// Build subquery conditions
-	if filter != nil {
-		if filter.SourceStateName != "" {
+	if linkedExecutionFilter != nil {
+		if linkedExecutionFilter.SourceStateName != "" {
 			subConditions = append(subConditions, fmt.Sprintf("le.source_state_name = $%d", argPos))
-			args = append(args, filter.SourceStateName)
+			args = append(args, linkedExecutionFilter.SourceStateName)
 			argPos++
 		}
-		if filter.InputTransformerName != "" {
+		if linkedExecutionFilter.InputTransformerName != "" {
 			subConditions = append(subConditions, fmt.Sprintf("le.input_transformer_name = $%d", argPos))
-			args = append(args, filter.InputTransformerName)
+			args = append(args, linkedExecutionFilter.InputTransformerName)
 			argPos++
 		}
-		if filter.TargetStateMachineName != "" {
+		if linkedExecutionFilter.TargetStateMachineName != "" {
 			subConditions = append(subConditions, fmt.Sprintf("le.target_state_machine_name = $%d", argPos))
-			args = append(args, filter.TargetStateMachineName)
+			args = append(args, linkedExecutionFilter.TargetStateMachineName)
 			argPos++
 		}
-		if !filter.CreatedAfter.IsZero() {
+		if !linkedExecutionFilter.CreatedAfter.IsZero() {
 			subConditions = append(subConditions, fmt.Sprintf("le.created_at >= $%d", argPos))
-			args = append(args, filter.CreatedAfter)
+			args = append(args, linkedExecutionFilter.CreatedAfter)
 			argPos++
 		}
-		if !filter.CreatedBefore.IsZero() {
+		if !linkedExecutionFilter.CreatedBefore.IsZero() {
 			subConditions = append(subConditions, fmt.Sprintf("le.created_at <= $%d", argPos))
-			args = append(args, filter.CreatedBefore)
+			args = append(args, linkedExecutionFilter.CreatedBefore)
 			argPos++
 		}
 	}
@@ -1652,20 +1652,20 @@ func (ps *PostgresRepository) ListNonLinkedExecutions(ctx context.Context, filte
 
 	// Apply execution filters
 	var execConditions []string
-	if filter != nil {
-		if filter.SourceStateMachineID != "" {
+	if linkedExecutionFilter != nil {
+		if linkedExecutionFilter.SourceStateMachineID != "" {
 			execConditions = append(execConditions, fmt.Sprintf("e.state_machine_id = $%d", argPos))
-			args = append(args, filter.SourceStateMachineID)
+			args = append(args, linkedExecutionFilter.SourceStateMachineID)
 			argPos++
 		}
-		if filter.SourceExecutionID != "" {
+		if linkedExecutionFilter.SourceExecutionID != "" {
 			execConditions = append(execConditions, fmt.Sprintf("e.execution_id = $%d", argPos))
-			args = append(args, filter.SourceExecutionID)
+			args = append(args, linkedExecutionFilter.SourceExecutionID)
 			argPos++
 		}
-		if filter.SourceExecutionStatus != "" {
+		if linkedExecutionFilter.SourceExecutionStatus != "" {
 			execConditions = append(execConditions, fmt.Sprintf("e.status = $%d", argPos))
-			args = append(args, filter.SourceExecutionStatus)
+			args = append(args, linkedExecutionFilter.SourceExecutionStatus)
 			argPos++
 		}
 
@@ -1678,17 +1678,35 @@ func (ps *PostgresRepository) ListNonLinkedExecutions(ctx context.Context, filte
 	baseQuery += " ORDER BY e.start_time DESC"
 
 	// Add pagination
-	if filter != nil {
-		if filter.Limit > 0 {
+	if executionFilter != nil {
+		if executionFilter.Limit > 0 {
 			baseQuery += fmt.Sprintf(" LIMIT $%d", argPos)
-			args = append(args, filter.Limit)
+			args = append(args, executionFilter.Limit)
 			argPos++
 		}
-		if filter.Offset > 0 {
+		if executionFilter.Offset > 0 {
 			baseQuery += fmt.Sprintf(" OFFSET $%d", argPos)
-			args = append(args, filter.Offset)
+			args = append(args, executionFilter.Offset)
 			argPos++
 		}
+		if executionFilter.Name != "" {
+			baseQuery += fmt.Sprintf(" AND e.name = $%d", argPos)
+			args = append(args, fmt.Sprintf("name ILIKE $%d", argPos))
+			argPos++
+		}
+
+		if !executionFilter.StartAfter.IsZero() {
+			baseQuery += fmt.Sprintf(" AND e.start_time >= $%d", argPos)
+			args = append(args, fmt.Sprintf("start_time >= $%d", argPos))
+			argPos++
+		}
+
+		if !executionFilter.StartBefore.IsZero() {
+			baseQuery += fmt.Sprintf(" AND e.start_before <= $%d", argPos)
+			args = append(args, fmt.Sprintf("start_time <= $%d", argPos))
+			argPos++
+		}
+
 	}
 
 	rows, err := ps.db.QueryContext(ctx, baseQuery, args...)

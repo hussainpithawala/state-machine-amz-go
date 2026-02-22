@@ -322,6 +322,7 @@ type ExecutionConfig struct {
 	SourceStateName      string                                 // Optional: specific state to get output from
 	InputTransformerName string                                 // Optional: name of registered transformer
 	InputTransformer     func(interface{}) (interface{}, error) // Optional: transform source output to input
+	applyUniqueness      bool                                   // Optional: apply uniqueness to execution parameters
 }
 
 // WithExecutionName sets the execution name

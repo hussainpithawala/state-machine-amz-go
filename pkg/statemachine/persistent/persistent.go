@@ -412,8 +412,8 @@ func (pm *StateMachine) ListExecutions(ctx context.Context, filter *repository.E
 	return pm.repositoryManager.ListExecutions(ctx, filter)
 }
 
-func (pm *StateMachine) ListNonLinkedExecutions(ctx context.Context, linkedExecutionFilter repository.LinkedExecutionFilter) ([]*repository.ExecutionRecord, error) {
-	return pm.repositoryManager.ListNonLinkedExecutions(ctx, &linkedExecutionFilter)
+func (pm *StateMachine) ListNonLinkedExecutions(ctx context.Context, executionFilter repository.ExecutionFilter, linkedExecutionFilter repository.LinkedExecutionFilter) ([]*repository.ExecutionRecord, error) {
+	return pm.repositoryManager.ListNonLinkedExecutions(ctx, &executionFilter, &linkedExecutionFilter)
 }
 
 func (pm *StateMachine) CountExecutions(ctx context.Context, filter *repository.ExecutionFilter) (int64, error) {
