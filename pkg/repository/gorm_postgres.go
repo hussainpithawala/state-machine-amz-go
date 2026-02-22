@@ -970,6 +970,98 @@ func (r *GormPostgresRepository) SaveLinkedExecution(ctx context.Context, linked
 	return nil
 }
 
+// ListLinkedExecutions lists linked executions with filtering and pagination
+func (r *GormPostgresRepository) ListLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) ([]*LinkedExecutionRecord, error) {
+	var models []LinkedExecutionModel
+
+	query := r.db.WithContext(ctx)
+
+	// Apply filters
+	if filter != nil {
+		if filter.SourceStateMachineID != "" {
+			query = query.Where("source_state_machine_id = ?", filter.SourceStateMachineID)
+		}
+		if filter.SourceExecutionID != "" {
+			query = query.Where("source_execution_id = ?", filter.SourceExecutionID)
+		}
+		if filter.SourceStateName != "" {
+			query = query.Where("source_state_name = ?", filter.SourceStateName)
+		}
+		if filter.TargetStateMachineName != "" {
+			query = query.Where("target_state_machine_name = ?", filter.TargetStateMachineName)
+		}
+		if filter.TargetExecutionID != "" {
+			query = query.Where("target_execution_id = ?", filter.TargetExecutionID)
+		}
+		if !filter.CreatedAfter.IsZero() {
+			query = query.Where("created_at >= ?", filter.CreatedAfter)
+		}
+		if !filter.CreatedBefore.IsZero() {
+			query = query.Where("created_at <= ?", filter.CreatedBefore)
+		}
+
+		// Apply pagination
+		if filter.Limit > 0 {
+			query = query.Limit(filter.Limit)
+		}
+		if filter.Offset > 0 {
+			query = query.Offset(filter.Offset)
+		}
+	}
+
+	// Order by created_at descending
+	result := query.Order("created_at DESC").Find(&models)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to list linked executions: %w", result.Error)
+	}
+
+	records := make([]*LinkedExecutionRecord, len(models))
+	for i := range models {
+		records[i] = fromLinkedExecutionModel(&models[i])
+	}
+
+	return records, nil
+}
+
+// CountLinkedExecutions returns the count of linked executions matching the filter
+func (r *GormPostgresRepository) CountLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) (int64, error) {
+	var count int64
+
+	query := r.db.WithContext(ctx).Model(&LinkedExecutionModel{})
+
+	// Apply filters
+	if filter != nil {
+		if filter.SourceStateMachineID != "" {
+			query = query.Where("source_state_machine_id = ?", filter.SourceStateMachineID)
+		}
+		if filter.SourceExecutionID != "" {
+			query = query.Where("source_execution_id = ?", filter.SourceExecutionID)
+		}
+		if filter.SourceStateName != "" {
+			query = query.Where("source_state_name = ?", filter.SourceStateName)
+		}
+		if filter.TargetStateMachineName != "" {
+			query = query.Where("target_state_machine_name = ?", filter.TargetStateMachineName)
+		}
+		if filter.TargetExecutionID != "" {
+			query = query.Where("target_execution_id = ?", filter.TargetExecutionID)
+		}
+		if !filter.CreatedAfter.IsZero() {
+			query = query.Where("created_at >= ?", filter.CreatedAfter)
+		}
+		if !filter.CreatedBefore.IsZero() {
+			query = query.Where("created_at <= ?", filter.CreatedBefore)
+		}
+	}
+
+	result := query.Count(&count)
+	if result.Error != nil {
+		return 0, fmt.Errorf("failed to count linked executions: %w", result.Error)
+	}
+
+	return count, nil
+}
+
 func toMessageCorrelationModel(record *MessageCorrelationRecord) *MessageCorrelationModel {
 	model := &MessageCorrelationModel{
 		ID:               record.ID,

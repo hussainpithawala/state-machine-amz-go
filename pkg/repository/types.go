@@ -75,6 +75,19 @@ type BatchExecutionFilter struct {
 	SourceStateName string // Optional: specific state to get output from in source executions
 }
 
+// LinkedExecutionFilter defines filters for querying linked executions
+type LinkedExecutionFilter struct {
+	SourceStateMachineID   string    // Filter by source state machine ID
+	SourceExecutionID      string    // Filter by source execution ID
+	SourceStateName        string    // Filter by source state name
+	TargetStateMachineName string    // Filter by target state machine name
+	TargetExecutionID      string    // Filter by target execution ID
+	CreatedAfter           time.Time // Filter linked executions created after this time
+	CreatedBefore          time.Time // Filter linked executions created before this time
+	Limit                  int       // Maximum number of results
+	Offset                 int       // Offset for pagination
+}
+
 // Statistics represents aggregated execution statistics
 type Statistics struct {
 	StateMachineID string
@@ -145,6 +158,12 @@ type Repository interface {
 
 	// SaveLinkedExecution saves a linked execution record
 	SaveLinkedExecution(ctx context.Context, linkedExec *LinkedExecutionRecord) error
+
+	// ListLinkedExecutions lists linked executions with filtering and pagination
+	ListLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) ([]*LinkedExecutionRecord, error)
+
+	// CountLinkedExecutions returns the count of linked executions matching the filter
+	CountLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) (int64, error)
 }
 
 // ExtendedRepository defines additional repository capabilities

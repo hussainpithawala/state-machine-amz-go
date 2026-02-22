@@ -231,6 +231,16 @@ func (pm *Manager) SaveLinkedExecution(ctx context.Context, linkedExec *LinkedEx
 	return pm.repository.SaveLinkedExecution(ctx, linkedExec)
 }
 
+// ListLinkedExecutions lists linked executions with filtering
+func (pm *Manager) ListLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) ([]*LinkedExecutionRecord, error) {
+	return pm.repository.ListLinkedExecutions(ctx, filter)
+}
+
+// CountLinkedExecutions returns the count of linked executions matching the filter
+func (pm *Manager) CountLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) (int64, error) {
+	return pm.repository.CountLinkedExecutions(ctx, filter)
+}
+
 // Helper function to generate unique history IDs
 func generateHistoryID(executionID, stateName string, timestamp time.Time) string {
 	return fmt.Sprintf("%s-%s-%d", executionID, stateName, timestamp.UnixNano())

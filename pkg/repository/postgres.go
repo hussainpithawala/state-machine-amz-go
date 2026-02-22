@@ -1371,3 +1371,167 @@ func (ps *PostgresRepository) SaveLinkedExecution(ctx context.Context, linkedExe
 
 	return nil
 }
+
+// ListLinkedExecutions lists linked executions with filtering and pagination
+func (ps *PostgresRepository) ListLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) ([]*LinkedExecutionRecord, error) {
+	var conditions []string
+	var args []interface{}
+	argPos := 1
+
+	// Build WHERE clause
+	if filter != nil {
+		if filter.SourceStateMachineID != "" {
+			conditions = append(conditions, fmt.Sprintf("source_state_machine_id = $%d", argPos))
+			args = append(args, filter.SourceStateMachineID)
+			argPos++
+		}
+		if filter.SourceExecutionID != "" {
+			conditions = append(conditions, fmt.Sprintf("source_execution_id = $%d", argPos))
+			args = append(args, filter.SourceExecutionID)
+			argPos++
+		}
+		if filter.SourceStateName != "" {
+			conditions = append(conditions, fmt.Sprintf("source_state_name = $%d", argPos))
+			args = append(args, filter.SourceStateName)
+			argPos++
+		}
+		if filter.TargetStateMachineName != "" {
+			conditions = append(conditions, fmt.Sprintf("target_state_machine_name = $%d", argPos))
+			args = append(args, filter.TargetStateMachineName)
+			argPos++
+		}
+		if filter.TargetExecutionID != "" {
+			conditions = append(conditions, fmt.Sprintf("target_execution_id = $%d", argPos))
+			args = append(args, filter.TargetExecutionID)
+			argPos++
+		}
+		if !filter.CreatedAfter.IsZero() {
+			conditions = append(conditions, fmt.Sprintf("created_at >= $%d", argPos))
+			args = append(args, filter.CreatedAfter)
+			argPos++
+		}
+		if !filter.CreatedBefore.IsZero() {
+			conditions = append(conditions, fmt.Sprintf("created_at <= $%d", argPos))
+			args = append(args, filter.CreatedBefore)
+			argPos++
+		}
+	}
+
+	// Build query
+	query := `
+		SELECT id, source_state_machine_id, source_execution_id, source_state_name,
+		       input_transformer_name, target_state_machine_name, target_execution_id, created_at
+		FROM linked_executions
+	`
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	// Apply pagination
+	if filter != nil {
+		if filter.Limit > 0 {
+			query += fmt.Sprintf(" LIMIT $%d", argPos)
+			args = append(args, filter.Limit)
+			argPos++
+		}
+		if filter.Offset > 0 {
+			query += fmt.Sprintf(" OFFSET $%d", argPos)
+			args = append(args, filter.Offset)
+		}
+	}
+
+	rows, err := ps.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list linked executions: %w", err)
+	}
+	defer rows.Close()
+
+	var records []*LinkedExecutionRecord
+	for rows.Next() {
+		record := &LinkedExecutionRecord{}
+		err := rows.Scan(
+			&record.ID,
+			&record.SourceStateMachineID,
+			&record.SourceExecutionID,
+			&record.SourceStateName,
+			&record.InputTransformerName,
+			&record.TargetStateMachineName,
+			&record.TargetExecutionID,
+			&record.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan linked execution: %w", err)
+		}
+		records = append(records, record)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating linked executions: %w", err)
+	}
+
+	return records, nil
+}
+
+// CountLinkedExecutions returns the count of linked executions matching the filter
+func (ps *PostgresRepository) CountLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) (int64, error) {
+	var conditions []string
+	var args []interface{}
+	argPos := 1
+
+	// Build WHERE clause
+	if filter != nil {
+		if filter.SourceStateMachineID != "" {
+			conditions = append(conditions, fmt.Sprintf("source_state_machine_id = $%d", argPos))
+			args = append(args, filter.SourceStateMachineID)
+			argPos++
+		}
+		if filter.SourceExecutionID != "" {
+			conditions = append(conditions, fmt.Sprintf("source_execution_id = $%d", argPos))
+			args = append(args, filter.SourceExecutionID)
+			argPos++
+		}
+		if filter.SourceStateName != "" {
+			conditions = append(conditions, fmt.Sprintf("source_state_name = $%d", argPos))
+			args = append(args, filter.SourceStateName)
+			argPos++
+		}
+		if filter.TargetStateMachineName != "" {
+			conditions = append(conditions, fmt.Sprintf("target_state_machine_name = $%d", argPos))
+			args = append(args, filter.TargetStateMachineName)
+			argPos++
+		}
+		if filter.TargetExecutionID != "" {
+			conditions = append(conditions, fmt.Sprintf("target_execution_id = $%d", argPos))
+			args = append(args, filter.TargetExecutionID)
+			argPos++
+		}
+		if !filter.CreatedAfter.IsZero() {
+			conditions = append(conditions, fmt.Sprintf("created_at >= $%d", argPos))
+			args = append(args, filter.CreatedAfter)
+			argPos++
+		}
+		if !filter.CreatedBefore.IsZero() {
+			conditions = append(conditions, fmt.Sprintf("created_at <= $%d", argPos))
+			args = append(args, filter.CreatedBefore)
+			argPos++
+		}
+	}
+
+	// Build query
+	query := "SELECT COUNT(*) FROM linked_executions"
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	var count int64
+	err := ps.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count linked executions: %w", err)
+	}
+
+	return count, nil
+}

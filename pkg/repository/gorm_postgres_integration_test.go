@@ -1015,6 +1015,271 @@ func (suite *GormPostgresIntegrationTestSuite) TestQueryLinkedExecutionsBySource
 	}
 }
 
+// TestListLinkedExecutionsByFilter tests listing linked executions with various filters
+func (suite *GormPostgresIntegrationTestSuite) TestListLinkedExecutionsByFilter() {
+	// Setup: Create multiple linked execution records with different attributes
+	baseTime := time.Now().Add(-2 * time.Hour)
+
+	// Create source and target executions
+	for i := 1; i <= 3; i++ {
+		sourceStartTime := baseTime.Add(time.Duration(i) * time.Minute)
+		sourceExec := &ExecutionRecord{
+			ExecutionID:    fmt.Sprintf("exec-source-%03d", i),
+			StateMachineID: fmt.Sprintf("sm-source-%d", i%2+1), // sm-source-1 or sm-source-2
+			Name:           "source-execution",
+			Input:          map[string]interface{}{"data": "source"},
+			Status:         "SUCCEEDED",
+			StartTime:      &sourceStartTime,
+			CurrentState:   "Final",
+		}
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, sourceExec))
+
+		targetStartTime := baseTime.Add(time.Duration(i+3) * time.Minute)
+		targetExec := &ExecutionRecord{
+			ExecutionID:    fmt.Sprintf("exec-target-%03d", i),
+			StateMachineID: "sm-target",
+			Name:           "target-execution",
+			Input:          map[string]interface{}{"data": "target"},
+			Status:         "RUNNING",
+			StartTime:      &targetStartTime,
+			CurrentState:   "Processing",
+		}
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, targetExec))
+
+		linkedExec := &LinkedExecutionRecord{
+			ID:                     fmt.Sprintf("link-filter-%03d", i),
+			SourceStateMachineID:   fmt.Sprintf("sm-source-%d", i%2+1),
+			SourceExecutionID:      fmt.Sprintf("exec-source-%03d", i),
+			SourceStateName:        fmt.Sprintf("State-%d", i%2+1),
+			InputTransformerName:   "",
+			TargetStateMachineName: "TargetMachine",
+			TargetExecutionID:      fmt.Sprintf("exec-target-%03d", i),
+			CreatedAt:              baseTime.Add(time.Duration(i+6) * time.Minute),
+		}
+		require.NoError(suite.T(), suite.repository.SaveLinkedExecution(suite.ctx, linkedExec))
+	}
+
+	// Test 1: Filter by source execution ID
+	filter := &LinkedExecutionFilter{
+		SourceExecutionID: "exec-source-001",
+	}
+	links, err := suite.repository.ListLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), links, 1)
+	assert.Equal(suite.T(), "exec-source-001", links[0].SourceExecutionID)
+
+	// Test 2: Filter by source state machine ID
+	filter = &LinkedExecutionFilter{
+		SourceStateMachineID: "sm-source-1",
+	}
+	links, err = suite.repository.ListLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), links, 2) // Records 1 and 3 (i%2+1 = 1)
+
+	// Test 3: Filter by target state machine name
+	filter = &LinkedExecutionFilter{
+		TargetStateMachineName: "TargetMachine",
+	}
+	links, err = suite.repository.ListLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), links, 3)
+
+	// Test 4: Filter by source state name
+	filter = &LinkedExecutionFilter{
+		SourceStateName: "State-1",
+	}
+	links, err = suite.repository.ListLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), links, 2)
+
+	// Test 5: Filter by time range
+	filter = &LinkedExecutionFilter{
+		CreatedAfter:  baseTime.Add(7 * time.Minute),
+		CreatedBefore: baseTime.Add(9 * time.Minute),
+	}
+	links, err = suite.repository.ListLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), links, 2) // Records 1 and 2
+
+	// Test 6: Pagination
+	filter = &LinkedExecutionFilter{
+		Limit:  2,
+		Offset: 1,
+	}
+	links, err = suite.repository.ListLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), links, 2)
+
+	// Test 7: Combined filters
+	filter = &LinkedExecutionFilter{
+		SourceStateMachineID: "sm-source-1",
+		SourceStateName:      "State-1",
+	}
+	links, err = suite.repository.ListLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), links, 2)
+
+	// Test 8: No results
+	filter = &LinkedExecutionFilter{
+		SourceExecutionID: "exec-source-999",
+	}
+	links, err = suite.repository.ListLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), links, 0)
+
+	// Test 9: Nil filter (returns all)
+	links, err = suite.repository.ListLinkedExecutions(suite.ctx, nil)
+	require.NoError(suite.T(), err)
+	assert.Len(suite.T(), links, 3)
+}
+
+// TestCountLinkedExecutionsByFilter tests counting linked executions with various filters
+func (suite *GormPostgresIntegrationTestSuite) TestCountLinkedExecutionsByFilter() {
+	// Setup: Create multiple linked execution records
+	baseTime := time.Now().Add(-1 * time.Hour)
+
+	for i := 1; i <= 5; i++ {
+		sourceStartTime := baseTime.Add(time.Duration(i) * time.Minute)
+		sourceExec := &ExecutionRecord{
+			ExecutionID:    fmt.Sprintf("exec-count-source-%03d", i),
+			StateMachineID: fmt.Sprintf("sm-count-%d", i%3+1), // sm-count-1, sm-count-2, or sm-count-3
+			Name:           "count-source",
+			Input:          map[string]interface{}{},
+			Status:         "SUCCEEDED",
+			StartTime:      &sourceStartTime,
+			CurrentState:   "Final",
+		}
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, sourceExec))
+
+		targetStartTime := baseTime.Add(time.Duration(i+5) * time.Minute)
+		targetExec := &ExecutionRecord{
+			ExecutionID:    fmt.Sprintf("exec-count-target-%03d", i),
+			StateMachineID: "sm-count-target",
+			Name:           "count-target",
+			Input:          map[string]interface{}{},
+			Status:         "RUNNING",
+			StartTime:      &targetStartTime,
+			CurrentState:   "Processing",
+		}
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, targetExec))
+
+		linkedExec := &LinkedExecutionRecord{
+			ID:                     fmt.Sprintf("link-count-%03d", i),
+			SourceStateMachineID:   fmt.Sprintf("sm-count-%d", i%3+1),
+			SourceExecutionID:      fmt.Sprintf("exec-count-source-%03d", i),
+			SourceStateName:        "",
+			InputTransformerName:   "",
+			TargetStateMachineName: fmt.Sprintf("Target-%d", i%2+1), // Target-1 or Target-2
+			TargetExecutionID:      fmt.Sprintf("exec-count-target-%03d", i),
+			CreatedAt:              baseTime.Add(time.Duration(i+10) * time.Minute),
+		}
+		require.NoError(suite.T(), suite.repository.SaveLinkedExecution(suite.ctx, linkedExec))
+	}
+
+	// Test 1: Count all
+	count, err := suite.repository.CountLinkedExecutions(suite.ctx, nil)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), int64(5), count)
+
+	// Test 2: Count by source state machine ID
+	filter := &LinkedExecutionFilter{
+		SourceStateMachineID: "sm-count-1",
+	}
+	count, err = suite.repository.CountLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), int64(2), count) // Records 1 and 4 (i%3+1 = 1)
+
+	// Test 3: Count by target state machine name
+	filter = &LinkedExecutionFilter{
+		TargetStateMachineName: "Target-1",
+	}
+	count, err = suite.repository.CountLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), int64(3), count) // Records 1, 3, 5 (i%2+1 = 1)
+
+	// Test 4: Count with time range
+	filter = &LinkedExecutionFilter{
+		CreatedAfter:  baseTime.Add(12 * time.Minute),
+		CreatedBefore: baseTime.Add(14 * time.Minute),
+	}
+	count, err = suite.repository.CountLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), int64(2), count) // Records 2 and 3
+
+	// Test 5: Count with multiple filters
+	filter = &LinkedExecutionFilter{
+		SourceStateMachineID:   "sm-count-1",
+		TargetStateMachineName: "Target-1",
+	}
+	count, err = suite.repository.CountLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), int64(1), count) // Only record 1 matches both
+
+	// Test 6: Count with no matches
+	filter = &LinkedExecutionFilter{
+		SourceExecutionID: "exec-count-source-999",
+	}
+	count, err = suite.repository.CountLinkedExecutions(suite.ctx, filter)
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), int64(0), count)
+}
+
+// TestListLinkedExecutionsOrdering tests that results are ordered by created_at DESC
+func (suite *GormPostgresIntegrationTestSuite) TestListLinkedExecutionsOrdering() {
+	baseTime := time.Now().Add(-30 * time.Minute)
+
+	// Create linked executions with specific timestamps
+	for i := 1; i <= 3; i++ {
+		sourceStartTime := baseTime
+		sourceExec := &ExecutionRecord{
+			ExecutionID:    fmt.Sprintf("exec-order-source-%03d", i),
+			StateMachineID: "sm-order-source",
+			Name:           "order-source",
+			Input:          map[string]interface{}{},
+			Status:         "SUCCEEDED",
+			StartTime:      &sourceStartTime,
+			CurrentState:   "Final",
+		}
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, sourceExec))
+
+		targetStartTime := baseTime
+		targetExec := &ExecutionRecord{
+			ExecutionID:    fmt.Sprintf("exec-order-target-%03d", i),
+			StateMachineID: "sm-order-target",
+			Name:           "order-target",
+			Input:          map[string]interface{}{},
+			Status:         "RUNNING",
+			StartTime:      &targetStartTime,
+			CurrentState:   "Processing",
+		}
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, targetExec))
+
+		linkedExec := &LinkedExecutionRecord{
+			ID:                     fmt.Sprintf("link-order-%03d", i),
+			SourceStateMachineID:   "sm-order-source",
+			SourceExecutionID:      fmt.Sprintf("exec-order-source-%03d", i),
+			SourceStateName:        "",
+			InputTransformerName:   "",
+			TargetStateMachineName: "OrderTarget",
+			TargetExecutionID:      fmt.Sprintf("exec-order-target-%03d", i),
+			CreatedAt:              baseTime.Add(time.Duration(i*10) * time.Minute), // 10, 20, 30 minutes
+		}
+		require.NoError(suite.T(), suite.repository.SaveLinkedExecution(suite.ctx, linkedExec))
+	}
+
+	// List all and verify ordering (most recent first)
+	links, err := suite.repository.ListLinkedExecutions(suite.ctx, &LinkedExecutionFilter{
+		SourceStateMachineID: "sm-order-source",
+	})
+	require.NoError(suite.T(), err)
+	require.Len(suite.T(), links, 3)
+
+	// Verify descending order by created_at
+	assert.Equal(suite.T(), "link-order-003", links[0].ID) // Most recent
+	assert.Equal(suite.T(), "link-order-002", links[1].ID)
+	assert.Equal(suite.T(), "link-order-001", links[2].ID) // Oldest
+}
+
 // Helper function to create time pointers
 func timePtr(t time.Time) *time.Time {
 	return &t
