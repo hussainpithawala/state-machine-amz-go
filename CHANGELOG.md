@@ -1,6 +1,30 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.2.7] - 2026-02-23
+
+### Added
+- `ListNonLinkedExecutions` function for querying executions without specific linked conditions
+- `WithUniqueness` option to enforce unique execution parameters for batch executions
+- `SourceExecutionStatus` and `InputTransformerName` filters in `LinkedExecutionFilter`
+- Rerun functionality for filtered batch executions
+- Comprehensive integration tests for `ListNonLinkedExecutions` with various filtering scenarios
+- Documentation for usage and performance considerations of enhanced filtering
+
+### Changed
+- Refactored `ListNonLinkedExecutions` to modularize query building and execution
+- Expanded `ListNonLinkedExecutions` to support separate `ExecutionFilter` and `LinkedExecutionFilter` parameters
+- Enhanced input transformations for batch executions with additional fields
+- Updated execution logic to support improved summary outputs
+- Improved SQL queries to handle JOIN operations for status-based filtering
+- Improved separation of concerns, readability, and maintainability across the codebase
+
+### Improved
+- SQL query construction abstracted into dedicated builder and helper methods
+- Enhanced filtering flexibility and query readability
+- Simplified main functions by delegating responsibility to specialized components
+- Updated helpers for result scanning and JSON unmarshalling
+
 
 ## [1.2.6] - 2026-02-22
 
