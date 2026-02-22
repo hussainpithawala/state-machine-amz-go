@@ -1,4 +1,4 @@
-// jsonpath.go - Simplified but correct implementation
+// Package states provides state machine state implementations and JSONPath processing.
 package states
 
 import (
@@ -161,7 +161,7 @@ func (p *JSONPathProcessor) setValue(data interface{}, path string, value interf
 	parts := splitPath(strings.TrimPrefix(strings.TrimPrefix(path, "$"), "."))
 
 	// Start with the value and wrap it
-	var result interface{} = value
+	result := value
 	for i := len(parts) - 1; i >= 0; i-- {
 		part := parts[i]
 		if part == "" {
@@ -208,7 +208,7 @@ func (p *JSONPathProcessor) wrapValue(path string, value interface{}) (interface
 	parts := splitPath(strings.TrimPrefix(strings.TrimPrefix(path, "$"), "."))
 
 	// Start with the value and wrap it
-	var result interface{} = value
+	result := value
 	for i := len(parts) - 1; i >= 0; i-- {
 		part := parts[i]
 		if part == "" {
@@ -316,7 +316,7 @@ func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
 	return result
 }
 
-// Other helper methods...
+// ExpandParameters expands parameter values using JSONPath expressions.
 func (p *JSONPathProcessor) ExpandParameters(params map[string]interface{}, input interface{}) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 	for k, v := range params {
@@ -361,6 +361,7 @@ func (p *JSONPathProcessor) expandValue(value, input interface{}) (interface{}, 
 	}
 }
 
+// ToJSON converts a value to its JSON string representation.
 func (p *JSONPathProcessor) ToJSON(value interface{}) (string, error) {
 	bytes, err := json.Marshal(value)
 	if err != nil {
@@ -369,6 +370,7 @@ func (p *JSONPathProcessor) ToJSON(value interface{}) (string, error) {
 	return string(bytes), nil
 }
 
+// FromJSON parses a JSON string into a value.
 func (p *JSONPathProcessor) FromJSON(jsonStr string) (interface{}, error) {
 	var data interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
@@ -377,24 +379,28 @@ func (p *JSONPathProcessor) FromJSON(jsonStr string) (interface{}, error) {
 	return data, nil
 }
 
+// SetValue sets a value at the specified JSONPath.
 func (p *JSONPathProcessor) SetValue(data interface{}, path string, value interface{}) error {
 	_, err := p.setValue(data, path, value)
 	return err
 }
 
-// Export methods for testing
+// Get retrieves a value at the specified JSONPath.
 func (p *JSONPathProcessor) Get(data interface{}, path string) (interface{}, error) {
 	return p.getValue(data, path)
 }
 
+// Set sets a value at the specified JSONPath and returns the modified data.
 func (p *JSONPathProcessor) Set(data interface{}, path string, value interface{}) (interface{}, error) {
 	return p.setValue(data, path, value)
 }
 
+// ExpandValue expands a value using JSONPath expressions from input.
 func (p *JSONPathProcessor) ExpandValue(value, input interface{}) (interface{}, error) {
 	return p.expandValue(value, input)
 }
 
+// MergeMaps merges two maps, with values from b taking precedence over a.
 func (p *JSONPathProcessor) MergeMaps(a, b map[string]interface{}) map[string]interface{} {
 	return mergeMaps(a, b)
 }

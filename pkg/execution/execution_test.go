@@ -31,14 +31,14 @@ func (d *DemoExecutionContext) GetTaskHandler(resource string) (func(context.Con
 	return fn, exists
 }
 
-func Test_demo_execution_flow(t *testing.T) {
+func Test_demo_execution_flow(_ *testing.T) {
 	fmt.Println("=== Task Execution Flow Demo ===")
 
 	// Create execution context
 	execCtx := NewDemoExecutionContext()
 
 	// Register demo handlers
-	execCtx.RegisterHandler("greet", func(ctx context.Context, input interface{}) (interface{}, error) {
+	execCtx.RegisterHandler("greet", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("👋 Greeting handler called")
 		data := input.(map[string]interface{})
 		data["greeting"] = fmt.Sprintf("Hello, %s!", data["name"])
@@ -46,7 +46,7 @@ func Test_demo_execution_flow(t *testing.T) {
 		return data, nil
 	})
 
-	execCtx.RegisterHandler("process", func(ctx context.Context, input interface{}) (interface{}, error) {
+	execCtx.RegisterHandler("process", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("⚙️  Processing handler called")
 		data := input.(map[string]interface{})
 		data["processed"] = true
@@ -54,7 +54,7 @@ func Test_demo_execution_flow(t *testing.T) {
 		return data, nil
 	})
 
-	execCtx.RegisterHandler("validate", func(ctx context.Context, input interface{}) (interface{}, error) {
+	execCtx.RegisterHandler("validate", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("✅ Validation handler called")
 		data := input.(map[string]interface{})
 
@@ -137,7 +137,7 @@ func Test_demo_execution_flow(t *testing.T) {
 	fmt.Println("\n--- Demo 5: Task with Timeout ---")
 
 	// Register a slow handler
-	execCtx.RegisterHandler("slow", func(ctx context.Context, input interface{}) (interface{}, error) {
+	execCtx.RegisterHandler("slow", func(ctx context.Context, _ interface{}) (interface{}, error) {
 		fmt.Println("🐌 Slow handler starting...")
 
 		select {

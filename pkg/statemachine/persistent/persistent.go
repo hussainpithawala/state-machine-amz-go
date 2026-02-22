@@ -498,7 +498,7 @@ func (pm *StateMachine) cancelTimeoutTask(ctx context.Context, correlationID str
 
 func (sm *StateMachine) MergeInputs(processor *states.JSONPathProcessor,
 	processedInput interface{}, result interface{}) (op2 interface{}, op4 error) {
-	var output interface{} = result
+	output := result
 	var err error
 
 	if processedInput == nil {

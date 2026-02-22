@@ -24,14 +24,14 @@ import (
 )
 
 var (
-	mode           = flag.String("mode", "apiserver", "Application mode: 'leader' or 'worker'")
-	redisAddr      = flag.String("redis", "localhost:6379", "Redis address")
-	redisPassword  = flag.String("redis-password", "", "Redis password")
-	useTls         = flag.Bool("tls", false, "Use TLS for Redis connection")
-	redisDB        = flag.Int("redis-db", 0, "Redis database number")
-	concurrency    = flag.Int("concurrency", 10, "Worker concurrency")
-	postgresURL    = flag.String("postgres", "postgres://postgres:postgres@localhost:5432/statemachine?sslmode=disable", "PostgreSQL connection URL")
-	stateMachineID = flag.String("sm-id", "order-processing-sm", "State machine ID")
+	mode          = flag.String("mode", "apiserver", "Application mode: 'leader' or 'worker'")
+	redisAddr     = flag.String("redis", "localhost:6379", "Redis address")
+	redisPassword = flag.String("redis-password", "", "Redis password")
+	useTls        = flag.Bool("tls", false, "Use TLS for Redis connection")
+	redisDB       = flag.Int("redis-db", 0, "Redis database number")
+	_             = flag.Int("concurrency", 10, "Worker concurrency")
+	postgresURL   = flag.String("postgres", "postgres://postgres:postgres@localhost:5432/statemachine?sslmode=disable", "PostgreSQL connection URL")
+	_             = flag.String("sm-id", "order-processing-sm", "State machine ID")
 )
 
 // State machine definition with Message state and timeout handling
@@ -270,7 +270,7 @@ func Setup(baseExecutor *executor.BaseExecutor) (stateMachine *persistent.StateM
 	ctx := context.Background()
 
 	// Initialize repository
-	persistenceManager, err := setupRepository(ctx)
+	persistenceManager, _ := setupRepository(ctx)
 
 	// Initialize queue client
 	queueConfig := getQueueConfig()
@@ -301,7 +301,7 @@ func Setup(baseExecutor *executor.BaseExecutor) (stateMachine *persistent.StateM
 
 	// Create execution handler
 	executionHandler := handler.NewExecutionHandler(persistenceManager, queueClient)
-	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(baseExecutor))
+	_ = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(baseExecutor))
 	// Create worker
 	worker, err = queue.NewWorker(queueConfig, executionHandler)
 	if err != nil {
@@ -471,7 +471,7 @@ func HandlePaymentWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	processor := states.JSONPathProcessor{}
-	mergedInput, err := sm.MergeInputs(&processor, execRecord.Input, resumeInput)
+	mergedInput, _ := sm.MergeInputs(&processor, execRecord.Input, resumeInput)
 	// Create execution context for resumption
 	execCtx := &execution.Execution{
 		ID:             execRecord.ExecutionID,

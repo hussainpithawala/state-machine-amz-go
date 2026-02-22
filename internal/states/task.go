@@ -457,7 +457,7 @@ func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInp
 // processSuccessfulResult processes successful task results
 func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor,
 	processedInput interface{}, result interface{}) (op2 interface{}, op3 *string, op4 error) {
-	var output interface{} = result
+	output := result
 	var err error
 	// Apply result selector if provided
 	if t.ResultSelector != nil {

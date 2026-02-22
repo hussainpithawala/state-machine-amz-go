@@ -15,7 +15,7 @@ type FailState struct {
 }
 
 // Execute executes the Fail state
-func (s *FailState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
+func (s *FailState) Execute(_ context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	// Fail states always return an error
 	errMsg := fmt.Sprintf("State machine failed at state '%s' with error: %s", s.Name, s.Error)
 	if s.Cause != "" {
@@ -51,24 +51,24 @@ func (s *FailState) Validate() error {
 
 	// Fail states cannot have Next or End fields
 	// (they're implicitly end states)
-	if s.BaseState.Next != nil {
+	if s.Next != nil {
 		return fmt.Errorf("fail state '%s' cannot have Next field", s.Name)
 	}
 
-	if s.BaseState.End {
+	if s.End {
 		return fmt.Errorf("fail state '%s' cannot have End field (it's implicit)", s.Name)
 	}
 
 	// Fail states cannot have InputPath, ResultPath, or OutputPath
-	if s.BaseState.InputPath != nil {
+	if s.InputPath != nil {
 		return fmt.Errorf("fail state '%s' cannot have InputPath", s.Name)
 	}
 
-	if s.BaseState.ResultPath != nil {
+	if s.ResultPath != nil {
 		return fmt.Errorf("fail state '%s' cannot have ResultPath", s.Name)
 	}
 
-	if s.BaseState.OutputPath != nil {
+	if s.OutputPath != nil {
 		return fmt.Errorf("fail state '%s' cannot have OutputPath", s.Name)
 	}
 

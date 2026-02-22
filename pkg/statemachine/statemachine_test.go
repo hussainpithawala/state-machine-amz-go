@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testInputStr = "test"
+
 func TestNew_ValidDefinition(t *testing.T) {
 	definition := []byte(`{
 		"Comment": "A simple state machine",
@@ -252,7 +254,7 @@ func TestExecute_WithFail(t *testing.T) {
 
 	sm, _ := New(definition, true)
 	ctx := context.Background()
-	input := "test"
+	input := testInputStr
 
 	exec, err := sm.Execute(ctx, input)
 
@@ -279,7 +281,7 @@ func TestExecute_WithTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	input := "test"
+	input := testInputStr
 
 	startTime := time.Now()
 	exec, err := sm.Execute(ctx, input)
@@ -309,7 +311,7 @@ func TestExecute_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	input := "test"
+	input := testInputStr
 
 	exec, err := sm.Execute(ctx, input)
 
@@ -371,7 +373,7 @@ func TestExecute_WithExecutionName(t *testing.T) {
 
 	sm, _ := New(definition, true)
 	ctx := context.Background()
-	input := "test"
+	input := testInputStr
 
 	exec, err := sm.Execute(ctx, input, WithExecutionName("custom-execution"))
 
@@ -609,7 +611,7 @@ func TestExecute_ExecutionMetadata(t *testing.T) {
 
 	sm, _ := New(definition, true)
 	ctx := context.Background()
-	input := "test"
+	input := testInputStr
 
 	exec, err := sm.Execute(ctx, input)
 

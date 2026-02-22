@@ -12,7 +12,7 @@ type SucceedState struct {
 }
 
 // Execute executes the Succeed state
-func (s *SucceedState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
+func (s *SucceedState) Execute(_ context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	// Process input
 	processor := GetPathProcessor()
 	processedInput, err := processor.ApplyInputPath(input, s.InputPath)
@@ -52,16 +52,16 @@ func (s *SucceedState) Validate() error {
 
 	// Succeed states cannot have Next or End fields
 	// (they're implicitly end states)
-	if s.BaseState.Next != nil {
+	if s.Next != nil {
 		return fmt.Errorf("succeed state '%s' cannot have Next field", s.Name)
 	}
 
-	if s.BaseState.End {
+	if s.End {
 		return fmt.Errorf("succeed state '%s' cannot have End field (it's implicit)", s.Name)
 	}
 
 	// Succeed states cannot have ResultPath
-	if s.BaseState.ResultPath != nil {
+	if s.ResultPath != nil {
 		return fmt.Errorf("succeed state '%s' cannot have ResultPath", s.Name)
 	}
 

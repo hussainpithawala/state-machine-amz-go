@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// FAILED is the status constant for failed executions.
 const FAILED = "FAILED"
 
 // Execution represents a state machine execution instance

@@ -64,7 +64,7 @@ States:
 	// 2. Create state machine from definition
 	pm, err := persistent.New([]byte(yamlContent), false, "sm-1", persistenceManager)
 	if err != nil {
-		return fmt.Errorf("failed to create a peristent state machine: %w", err)
+		return fmt.Errorf("failed to create a persistent state machine: %w", err)
 	}
 
 	// 5. Create executor and register task handlers

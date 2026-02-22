@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testInput = "test"
+
 // MockTaskHandler is a mock implementation of TaskHandler for testing
 type MockTaskHandler struct {
 	ExecuteFunc            func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error)
@@ -72,7 +74,7 @@ func TestTaskState_Execute_Basic(t *testing.T) {
 	ctx := context.Background()
 
 	handler := &MockTaskHandler{
-		ExecuteFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 			return map[string]interface{}{
 				"result": "success",
 				"input":  input,
@@ -109,7 +111,7 @@ func TestTaskState_Execute_WithParameters(t *testing.T) {
 	ctx := context.Background()
 
 	handler := &MockTaskHandler{
-		ExecuteFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 			// Verify parameters were passed
 			return map[string]interface{}{
 				"params": parameters,
@@ -143,7 +145,7 @@ func TestTaskState_Execute_WithInputPath(t *testing.T) {
 	ctx := context.Background()
 
 	handler := &MockTaskHandler{
-		ExecuteFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 			return input, nil
 		},
 	}
@@ -178,7 +180,7 @@ func TestTaskState_Execute_WithResultPath(t *testing.T) {
 	ctx := context.Background()
 
 	handler := &MockTaskHandler{
-		ExecuteFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 			return "task-result", nil
 		},
 	}
@@ -211,7 +213,7 @@ func TestTaskState_Execute_WithOutputPath(t *testing.T) {
 	ctx := context.Background()
 
 	handler := &MockTaskHandler{
-		ExecuteFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 			return map[string]interface{}{
 				"result": "success",
 				"extra":  "data",
@@ -240,7 +242,7 @@ func TestTaskState_Execute_WithOutputPath(t *testing.T) {
 
 func TestTaskState_Execute_WithTimeout(t *testing.T) {
 	handler := &MockTaskHandler{
-		ExecuteFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 			// Simulate a long-running task
 			time.Sleep(3 * time.Second)
 			return input, nil
@@ -259,7 +261,7 @@ func TestTaskState_Execute_WithTimeout(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	input := "test"
+	input := testInput
 
 	_, _, err := state.Execute(ctx, input)
 
@@ -272,7 +274,7 @@ func TestTaskState_Execute_WithRetry_Success(t *testing.T) {
 	callCount := 0
 
 	handler := &MockTaskHandler{
-		ExecuteFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 			callCount++
 			// Fail on first attempt, succeed on second
 			if callCount == 1 {
@@ -300,7 +302,7 @@ func TestTaskState_Execute_WithRetry_Success(t *testing.T) {
 		TaskHandler: handler,
 	}
 
-	input := "test"
+	input := testInput
 
 	output, _, err := state.Execute(ctx, input)
 
@@ -314,7 +316,7 @@ func TestTaskState_Execute_WithRetry_ExhaustedAttempts(t *testing.T) {
 	callCount := 0
 
 	handler := &MockTaskHandler{
-		ExecuteFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 			callCount++
 			return nil, fmt.Errorf("PersistentError")
 		},
@@ -338,7 +340,7 @@ func TestTaskState_Execute_WithRetry_ExhaustedAttempts(t *testing.T) {
 		TaskHandler: handler,
 	}
 
-	input := "test"
+	input := testInput
 
 	_, _, err := state.Execute(ctx, input)
 
@@ -350,7 +352,7 @@ func TestTaskState_Execute_WithCatch(t *testing.T) {
 	ctx := context.Background()
 
 	handler := &MockTaskHandler{
-		ExecuteFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 			return nil, fmt.Errorf("CustomError")
 		},
 	}
@@ -390,7 +392,7 @@ func TestTaskState_Execute_WithResultSelector(t *testing.T) {
 	ctx := context.Background()
 
 	handler := &MockTaskHandler{
-		ExecuteFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 			return map[string]interface{}{
 				"statusCode": 200,
 				"body":       "success",
@@ -412,7 +414,7 @@ func TestTaskState_Execute_WithResultSelector(t *testing.T) {
 		TaskHandler: handler,
 	}
 
-	input := "test"
+	input := testInput
 
 	output, _, err := state.Execute(ctx, input)
 

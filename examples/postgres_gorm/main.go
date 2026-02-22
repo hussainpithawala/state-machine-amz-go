@@ -1,3 +1,4 @@
+// Package main demonstrates persistent state machine execution with GORM PostgreSQL.
 package main
 
 import (
@@ -75,7 +76,7 @@ States:
 	newBaseExecutor := executor.NewBaseExecutor()
 
 	// Register handlers for the resources defined in YAML
-	newBaseExecutor.RegisterGoFunction("process:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+	newBaseExecutor.RegisterGoFunction("process:order", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Processing order...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -87,7 +88,7 @@ States:
 		}, nil
 	})
 
-	newBaseExecutor.RegisterGoFunction("validate:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+	newBaseExecutor.RegisterGoFunction("validate:payment", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Validating payment...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -97,7 +98,7 @@ States:
 		}, nil
 	})
 
-	newBaseExecutor.RegisterGoFunction("send:notification", func(ctx context.Context, input interface{}) (interface{}, error) {
+	newBaseExecutor.RegisterGoFunction("send:notification", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Sending notification...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -143,12 +144,11 @@ States:
 	history, err := pm.GetExecutionHistory(ctx, executionInstance.ID)
 	if err != nil {
 		return fmt.Errorf("failed to get history: %w", err)
-	} else {
-		fmt.Println("\nExecution History:")
-		err := json.NewEncoder(os.Stdout).Encode(history)
-		if err != nil {
-			return fmt.Errorf("failed to marshal history: %w", err)
-		}
+	}
+	fmt.Println("\nExecution History:")
+	err = json.NewEncoder(os.Stdout).Encode(history)
+	if err != nil {
+		return fmt.Errorf("failed to marshal history: %w", err)
 	}
 
 	// Retrieve and display all execution records

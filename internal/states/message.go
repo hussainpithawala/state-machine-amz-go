@@ -8,6 +8,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
+// ReceivedMessageBase is the prefix for received message keys in state data.
 const ReceivedMessageBase = "__received_message__"
 
 // MessageState represents a state that pauses execution and waits for an external message
@@ -116,7 +117,7 @@ func (s *MessageState) Execute(ctx context.Context, input interface{}) (result i
 }
 
 // executePreMessage handles the pre-message phase
-func (s *MessageState) executePreMessage(ctx context.Context, originalInput, effectiveInput interface{}, processor PathProcessor) (result interface{}, nextState *string, err error) {
+func (s *MessageState) executePreMessage(_ context.Context, originalInput, effectiveInput interface{}, processor PathProcessor) (result interface{}, nextState *string, err error) {
 	// Extract correlation value from input
 	correlationValue := effectiveInput
 	if s.CorrelationValuePath != nil {
@@ -172,7 +173,7 @@ func (s *MessageState) executePreMessage(ctx context.Context, originalInput, eff
 }
 
 // executePostMessage handles the post-message phase (after message is received)
-func (s *MessageState) executePostMessage(ctx context.Context, originalInput, effectiveInput interface{}, messageData *MessageData, processor PathProcessor) (result interface{}, nextState *string, err error) {
+func (s *MessageState) executePostMessage(_ context.Context, originalInput, effectiveInput interface{}, messageData *MessageData, processor PathProcessor) (result interface{}, nextState *string, err error) {
 	// Process the received message data
 	messageResult := messageData.Data
 
@@ -209,7 +210,7 @@ func (s *MessageState) executePostMessage(ctx context.Context, originalInput, ef
 }
 
 // executeTimeout handles the timeout scenario
-func (s *MessageState) executeTimeout(ctx context.Context, originalInput interface{}, processor PathProcessor) (result interface{}, nextState *string, err error) {
+func (s *MessageState) executeTimeout(_ context.Context, originalInput interface{}, processor PathProcessor) (result interface{}, nextState *string, err error) {
 	// Create timeout result
 	timeoutResult := map[string]interface{}{
 		"status":  "TIMEOUT",
@@ -252,8 +253,8 @@ func (s *MessageState) executeTimeout(ctx context.Context, originalInput interfa
 func (s *MessageState) checkForReceivedMessage(input interface{}) (messageData *MessageData, isResume bool) {
 	// Check if input is a map containing message metadata
 	if inputMap, ok := input.(map[string]interface{}); ok {
-		received_message_key := fmt.Sprintf("%s_%s", ReceivedMessageBase, s.Name)
-		if msgData, exists := inputMap[received_message_key]; exists {
+		receivedMessageKey := fmt.Sprintf("%s_%s", ReceivedMessageBase, s.Name)
+		if msgData, exists := inputMap[receivedMessageKey]; exists {
 			// Try to parse as MessageData
 			if msgMap, ok := msgData.(map[string]interface{}); ok {
 				messageData = &MessageData{
@@ -283,10 +284,10 @@ func (s *MessageState) checkForReceivedMessage(input interface{}) (messageData *
 func (s *MessageState) checkForTimeout(input interface{}) (timeoutData map[string]interface{}, isTimeout bool) {
 	// Check if input is a map containing timeout metadata
 
-	trigger_key := fmt.Sprintf("%s_%s", types.TriggerTimeoutBase, s.Name)
+	triggerKey := fmt.Sprintf("%s_%s", types.TriggerTimeoutBase, s.Name)
 
 	if inputMap, ok := input.(map[string]interface{}); ok {
-		if _, exists := inputMap[trigger_key]; exists {
+		if _, exists := inputMap[triggerKey]; exists {
 			return inputMap, true
 		}
 	}
@@ -335,6 +336,7 @@ func (s *MessageState) Validate() (err error) {
 	return nil
 }
 
+// MarshalJSON implements custom JSON marshaling for MessageState.
 func (s *MessageState) MarshalJSON() (data []byte, err error) {
 	// Define only the custom fields (not BaseState!)
 	customFields := struct {

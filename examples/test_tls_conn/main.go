@@ -1,3 +1,4 @@
+// Package main tests TLS connections for Redis and PostgreSQL.
 package main
 
 import (

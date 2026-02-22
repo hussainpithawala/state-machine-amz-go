@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	_ "os"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -398,10 +397,10 @@ func tlsVersionString(version uint16) string {
 
 // Main test runner
 func runSanityTests() {
-	fmt.Println("🚀 Starting Asynq Sanity Tests...\n")
+	fmt.Println("🚀 Starting Asynq Sanity Tests...")
 
 	// Create Redis client options
-	//redisOpt := createRedisClientOptTLS()
+	// redisOpt := createRedisClientOptTLS()
 	redisOpt := createRedisClientOpt()
 	// Test 1: Redis Connection
 	if err := testRedisConnection(redisOpt); err != nil {

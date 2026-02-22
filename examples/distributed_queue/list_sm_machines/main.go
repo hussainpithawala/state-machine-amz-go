@@ -76,7 +76,7 @@ func printStateMachines(stateMachines []*repository.StateMachineRecord) {
 		fmt.Printf("      Created: %s\n", sm.CreatedAt.Format("2006-01-02 15:04:05"))
 		fmt.Printf("      Updated: %s\n", sm.UpdatedAt.Format("2006-01-02 15:04:05"))
 
-		if sm.Metadata != nil && len(sm.Metadata) > 0 {
+		if len(sm.Metadata) > 0 {
 			metadataJSON, _ := json.MarshalIndent(sm.Metadata, "      ", "  ")
 			fmt.Printf("      Metadata: %s\n", string(metadataJSON))
 		}
