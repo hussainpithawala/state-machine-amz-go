@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.6] - 2026-02-22
+
+### Added
+- **Linked Execution Framework**: Comprehensive system for tracking and querying relationships between state machine executions.
+  - `LinkedExecutionRecord` model and database schema for `linked_executions` table.
+  - `SaveLinkedExecution()` repository method to persist linked execution records.
+  - `ListLinkedExecutions()` repository method with filtering and pagination support.
+  - `CountLinkedExecutions()` repository method for counting linked executions.
+  - `LinkedExecutionFilter` type with multiple filter criteria (source/target execution IDs, state machine IDs, state names, timestamps).
+  - Automatic linked execution tracking when using `WithSourceExecutionID()` in chained executions.
+  - Database indexes on `source_state_machine_id`, `source_execution_id`, and `target_execution_id` for efficient querying.
+- **Comprehensive Test Coverage**:
+  - 330+ lines of linked execution tests in `pkg/statemachine/persistent/linked_execution_test.go`.
+  - 265 lines of PostgreSQL integration tests for linked executions.
+  - 265 lines of GORM integration tests for linked executions.
+  - Test scenarios covering creation, transformer handling, multiple chains, idempotency, filtering, pagination, and counting.
+- **Example Updates**: Enhanced `examples/chained_postgres_gorm/main.go` with linked execution queries and demonstrations.
+
+### Changed
+- **Code Quality Improvements**:
+  - Refactored function signatures to use placeholder parameters (`_`) for unused arguments across state implementations and tests.
+  - Added missing comments for public methods and constants to improve code documentation.
+  - Replaced `log.Fatalf` with `log.Printf` in examples and core logic to avoid abrupt exits and enable graceful error handling.
+  - Introduced deferred error handling for resource closures (repository managers, Redis clients, connections).
+  - Standardized error handling and message key generation across state implementations.
+  - Enhanced example applications with better input management and error handling.
+- **Linting & CI/CD Configuration**:
+  - Updated `.golangci.yml`: Fixed version format (string), moved `examples` exclusions from `skip-dirs` to `issues.exclude-dirs`, removed `revive` linter, disabled default linters.
+  - Updated `.github/workflows/ci.yml`: Updated Go version, switched to manual installation of `golangci-lint` v2.4.0, replaced GolangCI action with direct script execution.
+- **Repository Implementations**:
+  - Extended PostgreSQL repository with linked execution methods (+233 lines in `postgres.go`).
+  - Extended GORM repository with linked execution methods (+149 lines in `gorm_postgres.go`).
+  - Updated repository Manager to expose new linked execution methods.
+
+### Fixed
+- Addressed linter warnings: removed redundant type declarations and unused variables.
+- Improved logging consistency when errors occur during cleanup operations.
+- Enhanced marshaling and validation logic for state configurations.
+- Updated `.gitignore` to exclude `pkg/.DS_Store`.
+
 ## [1.2.5] - 2026-02-10
 
 ### Changed
