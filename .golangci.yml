@@ -1,14 +1,12 @@
 # .golangci.yml
-version: 2
+version: "2"  # Must be a string, not a number
 
 run:
   timeout: 5m
   modules-download-mode: readonly
-  exclude-dirs:
-    - examples
-  exclude-dirs-use-default: false
 
 linters:
+  default-enable: false
   enable:
     - errcheck
     - govet

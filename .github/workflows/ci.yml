@@ -20,16 +20,20 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: '1.24'  # or your project's Go version
           cache: true
 
+      - name: Install golangci-lint v2.4.0
+        run: |
+          # Install specific version directly
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.4.0
+          golangci-lint --version
+
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest
-          args: --timeout=5m --config=.golangci.yml
+        run: |
+          golangci-lint run --timeout=5m --config=.golangci.yml
 
   test-unit:
     name: Unit Tests
