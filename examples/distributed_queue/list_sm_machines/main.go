@@ -1,3 +1,4 @@
+// Package main lists all state machines from the repository.
 package main
 
 import (

@@ -26,6 +26,8 @@ type Execution struct {
 	Metadata       map[string]interface{}
 }
 
+// MarkFailed marks the execution as failed with the given error.
+
 func (e *Execution) MarkFailed(err error) {
 	e.Status = FAILED
 	e.Error = err

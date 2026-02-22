@@ -27,7 +27,7 @@ var (
 	mode          = flag.String("mode", "apiserver", "Application mode: 'leader' or 'worker'")
 	redisAddr     = flag.String("redis", "localhost:6379", "Redis address")
 	redisPassword = flag.String("redis-password", "", "Redis password")
-	useTls        = flag.Bool("tls", false, "Use TLS for Redis connection")
+	useTLS        = flag.Bool("tls", false, "Use TLS for Redis connection")
 	redisDB       = flag.Int("redis-db", 0, "Redis database number")
 	_             = flag.Int("concurrency", 10, "Worker concurrency")
 	postgresURL   = flag.String("postgres", "postgres://postgres:postgres@localhost:5432/statemachine?sslmode=disable", "PostgreSQL connection URL")
@@ -93,7 +93,7 @@ func setupExecutor() *executor.BaseExecutor {
 	exec := executor.NewBaseExecutor()
 
 	// Register handler for ValidateOrder
-	exec.RegisterGoFunction("create:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("create:order", func(_ context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Creating order: %v", input)
 		// time.Sleep(100 * time.Millisecond) // Simulate processing
 
@@ -119,7 +119,7 @@ func setupExecutor() *executor.BaseExecutor {
 	})
 
 	// Register handler for ProcessPayment
-	exec.RegisterGoFunction("process:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("process:payment", func(_ context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Processing payment: %v", input)
 		// time.Sleep(150 * time.Millisecond) // Simulate processing
 
@@ -147,7 +147,7 @@ func setupExecutor() *executor.BaseExecutor {
 	})
 
 	// Register handler for ProcessPayment
-	exec.RegisterGoFunction("send:timeout-notification", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("send:timeout-notification", func(_ context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Handling timeout-notification: %v", input)
 		// time.Sleep(150 * time.Millisecond) // Simulate processing
 
@@ -171,7 +171,7 @@ func setupExecutor() *executor.BaseExecutor {
 	})
 
 	// Register handler for SendConfirmation
-	exec.RegisterGoFunction("send:confirmation", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("send:confirmation", func(_ context.Context, input interface{}) (interface{}, error) {
 		log.Printf("→ Sending confirmation: %v", input)
 		// time.Sleep(50 * time.Millisecond) // Simulate processing
 
@@ -188,7 +188,7 @@ func setupExecutor() *executor.BaseExecutor {
 }
 
 func getQueueConfig() *queue.Config {
-	if *useTls {
+	if *useTLS {
 		return &queue.Config{
 			RedisClientOpt: &asynq.RedisClientOpt{
 				Addr:         *redisAddr,
@@ -214,28 +214,27 @@ func getQueueConfig() *queue.Config {
 				Timeout:  10 * time.Minute,
 			},
 		}
-	} else {
-		return &queue.Config{
-			RedisClientOpt: &asynq.RedisClientOpt{
-				Addr:         *redisAddr,
-				DB:           *redisDB,
-				DialTimeout:  10 * time.Second,
-				ReadTimeout:  30 * time.Second,
-				WriteTimeout: 30 * time.Second,
-				PoolSize:     20,
-			},
-			Concurrency: 10,
-			Queues: map[string]int{
-				"critical": 6, // Highest priority
-				"timeout":  5, // High priority for timeout events
-				"default":  3, // Normal priority
-				"low":      1, // Lowest priority
-			},
-			RetryPolicy: &queue.RetryPolicy{
-				MaxRetry: 3,
-				Timeout:  10 * time.Minute,
-			},
-		}
+	}
+	return &queue.Config{
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr:         *redisAddr,
+			DB:           *redisDB,
+			DialTimeout:  10 * time.Second,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+			PoolSize:     20,
+		},
+		Concurrency: 10,
+		Queues: map[string]int{
+			"critical": 6, // Highest priority
+			"timeout":  5, // High priority for timeout events
+			"default":  3, // Normal priority
+			"low":      1, // Lowest priority
+		},
+		RetryPolicy: &queue.RetryPolicy{
+			MaxRetry: 3,
+			Timeout:  10 * time.Minute,
+		},
 	}
 }
 
@@ -654,7 +653,7 @@ func main() {
 	fmt.Printf("\n Mode %s", *mode)
 	fmt.Printf("\n RedisAddress %s", *redisAddr)
 	fmt.Printf("\n RedisPassword %s", *redisPassword)
-	fmt.Printf("\n UseTls %t", *useTls)
+	fmt.Printf("\n UseTls %t", *useTLS)
 
 	// Setup task executor with handlers
 	baseExecutor := setupExecutor()

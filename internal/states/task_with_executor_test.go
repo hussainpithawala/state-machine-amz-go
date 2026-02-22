@@ -43,7 +43,7 @@ func TestTaskExecutor(t *testing.T) {
 	mockExecCtx := NewMockExecutionContext()
 
 	// Register a simple handler
-	mockExecCtx.RegisterHandler("arn:aws:lambda:us-east-1:123456789012:function:HelloWorld", func(ctx context.Context, input interface{}) (interface{}, error) {
+	mockExecCtx.RegisterHandler("arn:aws:lambda:us-east-1:123456789012:function:HelloWorld", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Printf("Executing HelloWorld with input: %v\n", input)
 
 		// Transform input
@@ -57,7 +57,7 @@ func TestTaskExecutor(t *testing.T) {
 	})
 
 	// Register a handler with business logic
-	mockExecCtx.RegisterHandler("arn:aws:states:::payment:process", func(ctx context.Context, input interface{}) (interface{}, error) {
+	mockExecCtx.RegisterHandler("arn:aws:states:::payment:process", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Printf("Processing payment with input: %v\n", input)
 
 		payment, ok := input.(map[string]interface{})
@@ -79,7 +79,7 @@ func TestTaskExecutor(t *testing.T) {
 	})
 
 	// Register a handler that returns errors for testing retry/catch
-	mockExecCtx.RegisterHandler("arn:aws:lambda:::error:generator", func(ctx context.Context, input interface{}) (interface{}, error) {
+	mockExecCtx.RegisterHandler("arn:aws:lambda:::error:generator", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Printf("Generating error with input: %v\n", input)
 
 		if m, ok := input.(map[string]interface{}); ok && m["should_fail"] == true {
@@ -92,7 +92,7 @@ func TestTaskExecutor(t *testing.T) {
 	})
 
 	// Register a timeout handler
-	mockExecCtx.RegisterHandler("arn:aws:lambda:::slow:operation", func(ctx context.Context, input interface{}) (interface{}, error) {
+	mockExecCtx.RegisterHandler("arn:aws:lambda:::slow:operation", func(ctx context.Context, _ interface{}) (interface{}, error) {
 		fmt.Printf("Starting slow operation\n")
 
 		select {
@@ -236,7 +236,7 @@ func TestTaskStateIntegration(t *testing.T) {
 
 	// Create mock execution context
 	mockExecCtx := NewMockExecutionContext()
-	mockExecCtx.RegisterHandler("arn:aws:lambda:function:TransformData", func(ctx context.Context, input interface{}) (interface{}, error) {
+	mockExecCtx.RegisterHandler("arn:aws:lambda:function:TransformData", func(_ context.Context, input interface{}) (interface{}, error) {
 		data, ok := input.(map[string]interface{})
 		if !ok {
 			return nil, fmt.Errorf("invalid input")
@@ -296,7 +296,7 @@ func TestTaskRetryLogic(t *testing.T) {
 	mockExecCtx := NewMockExecutionContext()
 
 	callCount := 0
-	mockExecCtx.RegisterHandler("arn:aws:lambda:function:FlakyService", func(ctx context.Context, input interface{}) (interface{}, error) {
+	mockExecCtx.RegisterHandler("arn:aws:lambda:function:FlakyService", func(_ context.Context, input interface{}) (interface{}, error) {
 		callCount++
 		fmt.Printf("FlakyService called %d times\n", callCount)
 
@@ -371,7 +371,7 @@ func TestTaskCatchLogic(t *testing.T) {
 	mockExecCtx := NewMockExecutionContext()
 
 	callCount := 0
-	mockExecCtx.RegisterHandler("arn:aws:lambda:function:AlwaysFails", func(ctx context.Context, input interface{}) (interface{}, error) {
+	mockExecCtx.RegisterHandler("arn:aws:lambda:function:AlwaysFails", func(_ context.Context, input interface{}) (interface{}, error) {
 		callCount++
 		return nil, fmt.Errorf("States.TaskFailed")
 	})
@@ -429,14 +429,14 @@ func TestTaskCatchLogic(t *testing.T) {
 }
 
 // Demo function showing real-world usage
-func TestExampleTaskExecutor(t *testing.T) {
+func TestExampleTaskExecutor(_ *testing.T) {
 	ctx := context.Background()
 
 	// 1. Create execution context and register handlers
 	mockExecCtx := NewMockExecutionContext()
 
 	// Register a payment processor
-	mockExecCtx.RegisterHandler("arn:aws:states:::payment:process", func(ctx context.Context, input interface{}) (interface{}, error) {
+	mockExecCtx.RegisterHandler("arn:aws:states:::payment:process", func(_ context.Context, input interface{}) (interface{}, error) {
 		payment := input.(map[string]interface{})
 
 		// Business logic here
@@ -447,7 +447,7 @@ func TestExampleTaskExecutor(t *testing.T) {
 	})
 
 	// Register an email sender
-	mockExecCtx.RegisterHandler("arn:aws:states:::email:send", func(ctx context.Context, input interface{}) (interface{}, error) {
+	mockExecCtx.RegisterHandler("arn:aws:states:::email:send", func(_ context.Context, input interface{}) (interface{}, error) {
 		email := input.(map[string]interface{})
 
 		// Send email logic here

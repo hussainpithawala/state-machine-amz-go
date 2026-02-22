@@ -16,7 +16,7 @@ func TestStateRegistry_RegisterAndGetTaskHandler(t *testing.T) {
 	r := NewStateRegistry()
 
 	called := false
-	handler := func(ctx context.Context, input interface{}) (interface{}, error) {
+	handler := func(_ context.Context, input interface{}) (interface{}, error) {
 		called = true
 		return input, nil
 	}
@@ -122,7 +122,7 @@ func TestBaseExecutor_ListExecutions(t *testing.T) {
 func TestBaseExecutor_RegisterGoFunction_RegistersHandlerWithExpectedARN(t *testing.T) {
 	e := NewBaseExecutor()
 
-	handler := func(ctx context.Context, input interface{}) (interface{}, error) {
+	handler := func(_ context.Context, input interface{}) (interface{}, error) {
 		return "ok", nil
 	}
 

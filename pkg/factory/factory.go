@@ -1,3 +1,4 @@
+// Package factory provides state machine factory functions for creating state machines from definitions.
 package factory
 
 import (

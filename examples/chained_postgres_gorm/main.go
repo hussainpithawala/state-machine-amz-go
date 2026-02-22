@@ -1,3 +1,4 @@
+// Package main demonstrates chained state machine execution with PostgreSQL GORM persistence.
 package main
 
 import (
@@ -59,7 +60,7 @@ func runChainedExecutionExample() error {
 	exec := executor.NewBaseExecutor()
 
 	// Register handlers for state machine A
-	exec.RegisterGoFunction("process:data", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("process:data", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("\n[State Machine A] Processing data...")
 		data := input.(map[string]interface{})
 
@@ -74,7 +75,7 @@ func runChainedExecutionExample() error {
 		return result, nil
 	})
 
-	exec.RegisterGoFunction("validate:data", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("validate:data", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("\n[State Machine A] Validating data...")
 		data := input.(map[string]interface{})
 
@@ -89,7 +90,7 @@ func runChainedExecutionExample() error {
 	})
 
 	// Register handlers for state machine B
-	exec.RegisterGoFunction("enrich:data", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("enrich:data", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("\n[State Machine B] Enriching data from previous execution...")
 		data := input.(map[string]interface{})
 
@@ -103,7 +104,7 @@ func runChainedExecutionExample() error {
 		return result, nil
 	})
 
-	exec.RegisterGoFunction("store:data", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("store:data", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("\n[State Machine B] Storing final data...")
 		data := input.(map[string]interface{})
 
@@ -118,7 +119,7 @@ func runChainedExecutionExample() error {
 	})
 
 	// Define State Machine A - Data Processing Pipeline
-	stateMachineA_YAML := `
+	stateMachineAYAML := `
 Comment: "State Machine A - Data Processing Pipeline"
 StartAt: ProcessData
 States:
@@ -138,7 +139,7 @@ States:
 	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
 
 	// Create persistent state machine A
-	smA, err := persistent.New([]byte(stateMachineA_YAML), false, "data-processing-pipeline", repoManager)
+	smA, err := persistent.New([]byte(stateMachineAYAML), false, "data-processing-pipeline", repoManager)
 	if err != nil {
 		return fmt.Errorf("failed to create state machine A: %w", err)
 	}
@@ -167,7 +168,7 @@ States:
 	fmt.Printf("[Execution A] Output:\n%s\n", string(outputJSON))
 
 	// Define State Machine B - Data Enrichment Pipeline
-	stateMachineB_YAML := `
+	stateMachineBYAML := `
 Comment: "State Machine B - Data Enrichment Pipeline"
 StartAt: EnrichData
 States:
@@ -185,7 +186,7 @@ States:
 `
 
 	// Create persistent state machine B
-	smB, err := persistent.New([]byte(stateMachineB_YAML), false, "data-enrichment-pipeline", repoManager)
+	smB, err := persistent.New([]byte(stateMachineBYAML), false, "data-enrichment-pipeline", repoManager)
 	if err != nil {
 		return fmt.Errorf("failed to create state machine B: %w", err)
 	}
