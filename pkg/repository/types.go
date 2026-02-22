@@ -80,6 +80,8 @@ type LinkedExecutionFilter struct {
 	SourceStateMachineID   string    // Filter by source state machine ID
 	SourceExecutionID      string    // Filter by source execution ID
 	SourceStateName        string    // Filter by source state name
+	SourceExecutionStatus  string    // Filter by source execution status (SUCCEEDED, FAILED, etc.)
+	InputTransformerName   string    // Filter by input transformer name
 	TargetStateMachineName string    // Filter by target state machine name
 	TargetExecutionID      string    // Filter by target execution ID
 	CreatedAfter           time.Time // Filter linked executions created after this time
@@ -164,6 +166,11 @@ type Repository interface {
 
 	// CountLinkedExecutions returns the count of linked executions matching the filter
 	CountLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) (int64, error)
+
+	// ListNonLinkedExecutions lists executions that have no linked executions matching the filter criteria
+	// This allows finding executions that don't have specific types of linked executions
+	// For example: executions with no SUCCEEDED linked executions from a specific state
+	ListNonLinkedExecutions(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error)
 }
 
 // ExtendedRepository defines additional repository capabilities

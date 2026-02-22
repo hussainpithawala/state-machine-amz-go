@@ -295,6 +295,7 @@ States:
 		"",
 		transformerBatchOpts,
 		statemachine.WithInputTransformerName("custom_transformer"),
+		statemachine.WithUniqueness(true),
 		statemachine.WithInputTransformer(func(output interface{}) (interface{}, error) {
 			fmt.Println("[Transformer] Transforming input...")
 			data := output.(map[string]interface{})
@@ -334,6 +335,63 @@ States:
 
 	fmt.Println("\nRecent State Machine B Executions:")
 	for _, exec := range recentExecs {
+		fmt.Printf("  - %s: %s (started at %v)\n", exec.Name, exec.Status, exec.StartTime.Format(time.RFC3339))
+	}
+
+	// Re-execute with uniqueness
+
+	// Execute with input transformer
+	transformedResults2, err := smB.ExecuteBatch(
+		ctx,
+		&repository.ExecutionFilter{
+			StateMachineID: smA.GetID(),
+			Status:         "SUCCEEDED",
+			Limit:          2,
+		},
+		"",
+		transformerBatchOpts,
+		statemachine.WithInputTransformerName("custom_transformer"),
+		statemachine.WithUniqueness(true),
+		statemachine.WithInputTransformer(func(output interface{}) (interface{}, error) {
+			fmt.Println("[Transformer] Transforming input...")
+			data := output.(map[string]interface{})
+
+			// Extract and transform specific fields
+			transformed := map[string]interface{}{
+				"orderId":       data["orderId"],
+				"ingestionData": data["rawData"],
+				"transformedAt": time.Now().Format(time.RFC3339),
+				"priority":      "high",
+			}
+
+			return transformed, nil
+		}),
+	)
+
+	if err != nil {
+		return fmt.Errorf("transformed batch execution failed: %w", err)
+	}
+
+	fmt.Printf("\n[After re-run Batch Transformed] Completed %d executions with transformation\n", len(transformedResults2))
+
+	fmt.Println("\n=== Summary ===")
+
+	// Count all executions
+	countANext, _ := smA.CountExecutions(ctx, &repository.ExecutionFilter{})
+	countBNext, _ := smB.CountExecutions(ctx, &repository.ExecutionFilter{})
+
+	fmt.Printf("\nTotal Executions After re-run :\n")
+	fmt.Printf("  - State Machine A (Ingestion): %d\n", countANext)
+	fmt.Printf("  - State Machine B (Processing): %d\n", countBNext)
+
+	// List recent executions from State Machine B
+	recentExecs2, err := smB.ListExecutions(ctx, &repository.ExecutionFilter{Limit: 10})
+	if err != nil {
+		return fmt.Errorf("failed to list executions: %w", err)
+	}
+
+	fmt.Println("\nRerun of  State Machine B Executions:")
+	for _, exec := range recentExecs2 {
 		fmt.Printf("  - %s: %s (started at %v)\n", exec.Name, exec.Status, exec.StartTime.Format(time.RFC3339))
 	}
 

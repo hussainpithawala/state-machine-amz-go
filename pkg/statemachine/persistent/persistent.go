@@ -412,6 +412,10 @@ func (pm *StateMachine) ListExecutions(ctx context.Context, filter *repository.E
 	return pm.repositoryManager.ListExecutions(ctx, filter)
 }
 
+func (pm *StateMachine) ListNonLinkedExecutions(ctx context.Context, executionFilter repository.ExecutionFilter, linkedExecutionFilter repository.LinkedExecutionFilter) ([]*repository.ExecutionRecord, error) {
+	return pm.repositoryManager.ListNonLinkedExecutions(ctx, &executionFilter, &linkedExecutionFilter)
+}
+
 func (pm *StateMachine) CountExecutions(ctx context.Context, filter *repository.ExecutionFilter) (int64, error) {
 	if filter != nil {
 		filter.StateMachineID = pm.stateMachineID
@@ -639,6 +643,41 @@ func (pm *StateMachine) ExecuteBatch(
 		}
 	}
 
+	linkedExecutionFilter := &repository.LinkedExecutionFilter{}
+	config := &statemachine2.ExecutionConfig{}
+	for _, execOpt := range execOpts {
+		execOpt(config)
+	}
+
+	if config.ApplyUnique {
+		linkedExecutionFilter.SourceStateMachineID = filter.StateMachineID
+		if sourceStateName != "" {
+			linkedExecutionFilter.SourceStateName = sourceStateName
+		}
+		if config.InputTransformerName != "" {
+			linkedExecutionFilter.InputTransformerName = config.InputTransformerName
+		}
+
+		sourceExecutionIDs, err := pm.repositoryManager.ListNonLinkedExecutions(ctx, filter, linkedExecutionFilter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list source executions: %w", err)
+		}
+
+		if len(sourceExecutionIDs) == 0 {
+			return []*BatchExecutionResult{}, nil
+		}
+
+		stringExecutionIDs := make([]string, len(sourceExecutionIDs))
+		for i, v := range sourceExecutionIDs {
+			stringExecutionIDs[i] = v.ExecutionID
+		}
+
+		// Execute in sequential or concurrent mode
+		if opts.ConcurrentBatches <= 1 {
+			return pm.executeBatchSequential(ctx, stringExecutionIDs, sourceStateName, opts, execOpts...)
+		}
+		return pm.executeBatchConcurrent(ctx, stringExecutionIDs, sourceStateName, opts, execOpts...)
+	}
 	// Retrieve source execution IDs based on filter
 	sourceExecutionIDs, err := pm.repositoryManager.ListExecutionIDs(ctx, filter)
 	if err != nil {
