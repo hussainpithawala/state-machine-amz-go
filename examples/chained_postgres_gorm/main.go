@@ -255,6 +255,7 @@ States:
 	fmt.Println("\n=== Summary of All Executions ===")
 
 	executionsA, err := smA.ListExecutions(ctx, &repository.ExecutionFilter{Limit: 10})
+
 	if err != nil {
 		return fmt.Errorf("failed to list executions for State Machine A: %w", err)
 	}
@@ -274,5 +275,11 @@ States:
 		fmt.Printf("  - ID: %s, Name: %s, Status: %s\n", exec.ExecutionID, exec.Name, exec.Status)
 	}
 
+	// List all LinkedExecutions to show the chain link
+	linkedExecutions, err := repoManager.ListLinkedExecutions(ctx, &repository.LinkedExecutionFilter{Limit: 10, SourceExecutionID: execA.ID})
+	fmt.Println("\nLinked Executions (all chained from A):")
+	for _, le := range linkedExecutions {
+		fmt.Printf("  - ID: %s, Source Execution ID: %s, Target Execution ID: %s\n", le.ID, le.SourceExecutionID, le.TargetExecutionID)
+	}
 	return nil
 }
