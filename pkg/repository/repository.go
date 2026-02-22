@@ -55,6 +55,18 @@ type StateMachineRecord struct {
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// LinkedExecutionRecord represents a linkage between a source execution and a targeted execution
+type LinkedExecutionRecord struct {
+	ID                     string    `json:"id"`
+	SourceStateMachineID   string    `json:"source_state_machine_id"`
+	SourceExecutionID      string    `json:"source_execution_id"`
+	SourceStateName        string    `json:"source_state_name,omitempty"`
+	InputTransformerName   string    `json:"input_transformer_name,omitempty"`
+	TargetStateMachineName string    `json:"target_state_machine_name"`
+	TargetExecutionID      string    `json:"target_execution_id"`
+	CreatedAt              time.Time `json:"created_at"`
+}
+
 // Manager manages the persistence repository
 type Manager struct {
 	repository Repository
@@ -106,6 +118,11 @@ func (pm *Manager) Initialize(ctx context.Context) error {
 // Close closes the persistence layer
 func (pm *Manager) Close() error {
 	return pm.repository.Close()
+}
+
+// GetRepository returns the underlying repository (for testing)
+func (pm *Manager) GetRepository() Repository {
+	return pm.repository
 }
 
 // SaveExecution saves an execution record
@@ -207,6 +224,11 @@ func (pm *Manager) GetExecutionOutput(ctx context.Context, executionID, stateNam
 // ListExecutionIDs returns only execution IDs matching the filter
 func (pm *Manager) ListExecutionIDs(ctx context.Context, filter *ExecutionFilter) ([]string, error) {
 	return pm.repository.ListExecutionIDs(ctx, filter)
+}
+
+// SaveLinkedExecution saves a linked execution record
+func (pm *Manager) SaveLinkedExecution(ctx context.Context, linkedExec *LinkedExecutionRecord) error {
+	return pm.repository.SaveLinkedExecution(ctx, linkedExec)
 }
 
 // Helper function to generate unique history IDs

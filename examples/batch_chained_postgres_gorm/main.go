@@ -287,6 +287,7 @@ States:
 		},
 		"",
 		transformerBatchOpts,
+		statemachine.WithInputTransformerName("custom_transformer"),
 		statemachine.WithInputTransformer(func(output interface{}) (interface{}, error) {
 			fmt.Println("[Transformer] Transforming input...")
 			data := output.(map[string]interface{})

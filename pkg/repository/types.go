@@ -42,6 +42,16 @@ type StateHistory struct {
 	Metadata       map[string]interface{}
 }
 
+// LinkedExecution represents a linkage between a source execution and a targeted execution
+type LinkedExecution struct {
+	ID                     string
+	SourceStateMachineID   string
+	SourceExecutionID      string
+	SourceStateName        string
+	TargetStateMachineName string
+	TargetExecutionID      string
+}
+
 // DefinitionFilter defines filters for querying state machines
 type DefinitionFilter struct {
 	StateMachineID string // Filter by state machine ID
@@ -132,6 +142,9 @@ type Repository interface {
 
 	// GetExecutionOutput retrieves output from an execution (final or specific state)
 	GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error)
+
+	// SaveLinkedExecution saves a linked execution record
+	SaveLinkedExecution(ctx context.Context, linkedExec *LinkedExecutionRecord) error
 }
 
 // ExtendedRepository defines additional repository capabilities

@@ -317,10 +317,11 @@ func (sm *StateMachine) ToRecord() (*repository.StateMachineRecord, error) {
 type ExecutionOption func(*ExecutionConfig)
 
 type ExecutionConfig struct {
-	Name              string
-	SourceExecutionID string                                 // Execution ID to chain from
-	SourceStateName   string                                 // Optional: specific state to get output from
-	InputTransformer  func(interface{}) (interface{}, error) // Optional: transform source output to input
+	Name                 string
+	SourceExecutionID    string                                 // Execution ID to chain from
+	SourceStateName      string                                 // Optional: specific state to get output from
+	InputTransformerName string                                 // Optional: name of registered transformer
+	InputTransformer     func(interface{}) (interface{}, error) // Optional: transform source output to input
 }
 
 // WithExecutionName sets the execution name
@@ -345,6 +346,13 @@ func WithSourceExecution(executionID string, stateName ...string) ExecutionOptio
 func WithInputTransformer(transformer func(interface{}) (interface{}, error)) ExecutionOption {
 	return func(c *ExecutionConfig) {
 		c.InputTransformer = transformer
+	}
+}
+
+// WithInputTransformerName sets the name of the input transformer for configuring execution options.
+func WithInputTransformerName(transformerName string) ExecutionOption {
+	return func(c *ExecutionConfig) {
+		c.InputTransformerName = transformerName
 	}
 }
 

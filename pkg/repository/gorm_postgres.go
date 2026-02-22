@@ -128,6 +128,7 @@ func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 		{&StateHistoryModel{}, "state_history"},
 		{&ExecutionStatisticsModel{}, "statistics"},
 		{&MessageCorrelationModel{}, "message_correlations"},
+		{&LinkedExecutionModel{}, "linked_executions"},
 	}
 
 	for _, table := range tables {
@@ -279,6 +280,11 @@ func (r *GormPostgresRepository) Close() error {
 		return err
 	}
 	return sqlDB.Close()
+}
+
+// GetDB returns the underlying GORM database instance (for testing)
+func (r *GormPostgresRepository) GetDB() *gorm.DB {
+	return r.db
 }
 
 // SaveExecution saves or updates an execution using GORM
@@ -814,6 +820,32 @@ func fromStateMachineModel(model *StateMachineModel) *StateMachineRecord {
 	}
 }
 
+func toLinkedExecutionModel(record *LinkedExecutionRecord) *LinkedExecutionModel {
+	return &LinkedExecutionModel{
+		ID:                     record.ID,
+		SourceStateMachineID:   record.SourceStateMachineID,
+		SourceExecutionID:      record.SourceExecutionID,
+		SourceStateName:        record.SourceStateName,
+		InputTransformerName:   record.InputTransformerName,
+		TargetStateMachineName: record.TargetStateMachineName,
+		TargetExecutionID:      record.TargetExecutionID,
+		CreatedAt:              record.CreatedAt,
+	}
+}
+
+func fromLinkedExecutionModel(model *LinkedExecutionModel) *LinkedExecutionRecord {
+	return &LinkedExecutionRecord{
+		ID:                     model.ID,
+		SourceStateMachineID:   model.SourceStateMachineID,
+		SourceExecutionID:      model.SourceExecutionID,
+		SourceStateName:        model.SourceStateName,
+		InputTransformerName:   model.InputTransformerName,
+		TargetStateMachineName: model.TargetStateMachineName,
+		TargetExecutionID:      model.TargetExecutionID,
+		CreatedAt:              model.CreatedAt,
+	}
+}
+
 // SaveMessageCorrelation saves a message correlation record
 func (r *GormPostgresRepository) SaveMessageCorrelation(ctx context.Context, record *MessageCorrelationRecord) error {
 	model := toMessageCorrelationModel(record)
@@ -917,6 +949,25 @@ func (r *GormPostgresRepository) ListTimedOutCorrelations(ctx context.Context, c
 		records[i] = fromMessageCorrelationModel(&models[i])
 	}
 	return records, nil
+}
+
+// SaveLinkedExecution saves a linked execution record
+func (r *GormPostgresRepository) SaveLinkedExecution(ctx context.Context, linkedExec *LinkedExecutionRecord) error {
+	model := toLinkedExecutionModel(linkedExec)
+
+	// Use insert-only with ON CONFLICT DO NOTHING since linkages are immutable
+	result := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoNothing: true,
+		}).
+		Create(model)
+
+	if result.Error != nil {
+		return fmt.Errorf("failed to save linked execution: %w", result.Error)
+	}
+
+	return nil
 }
 
 func toMessageCorrelationModel(record *MessageCorrelationRecord) *MessageCorrelationModel {

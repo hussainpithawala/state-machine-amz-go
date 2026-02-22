@@ -66,13 +66,14 @@ func (suite *GormPostgresIntegrationTestSuite) SetupTest() {
 
 // cleanupTestData removes all test data
 func (suite *GormPostgresIntegrationTestSuite) cleanupTestData() {
-	// Safe because we’re using a dedicated test database.
+	// Safe because we're using a dedicated test database.
 	// Truncate in FK-safe order.
 	_ = suite.repository.db.WithContext(suite.ctx).Exec("TRUNCATE TABLE state_machines CASCADE").Error
 	_ = suite.repository.db.WithContext(suite.ctx).Exec("TRUNCATE TABLE state_history CASCADE").Error
 	_ = suite.repository.db.WithContext(suite.ctx).Exec("TRUNCATE TABLE executions CASCADE").Error
 	_ = suite.repository.db.WithContext(suite.ctx).Exec("TRUNCATE TABLE execution_statistics CASCADE").Error
 	_ = suite.repository.db.WithContext(suite.ctx).Exec("TRUNCATE TABLE message_correlations CASCADE").Error
+	_ = suite.repository.db.WithContext(suite.ctx).Exec("TRUNCATE TABLE linked_executions CASCADE").Error
 }
 
 // TestSaveAndGetExecution tests basic save and retrieve operations
@@ -788,6 +789,230 @@ func TestGormPostgresIntegrationSuite(t *testing.T) {
 	_ = repo.Close()
 
 	suite.Run(t, new(GormPostgresIntegrationTestSuite))
+}
+
+// TestSaveAndGetLinkedExecution tests saving and retrieving linked execution records
+func (suite *GormPostgresIntegrationTestSuite) TestSaveAndGetLinkedExecution() {
+	// Create source execution first
+	sourceStartTime := time.Now().Add(-1 * time.Hour)
+	sourceExec := &ExecutionRecord{
+		ExecutionID:    "exec-source-001",
+		StateMachineID: "sm-source",
+		Name:           "source-execution",
+		Input:          map[string]interface{}{"data": "source"},
+		Status:         "SUCCEEDED",
+		StartTime:      &sourceStartTime,
+		CurrentState:   "Final",
+		Output:         map[string]interface{}{"result": "success"},
+	}
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, sourceExec))
+
+	// Create target execution
+	targetStartTime := time.Now()
+	targetExec := &ExecutionRecord{
+		ExecutionID:    "exec-target-001",
+		StateMachineID: "sm-target",
+		Name:           "target-execution",
+		Input:          map[string]interface{}{"data": "target"},
+		Status:         "RUNNING",
+		StartTime:      &targetStartTime,
+		CurrentState:   "Processing",
+	}
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, targetExec))
+
+	// Create linked execution record
+	linkedExec := &LinkedExecutionRecord{
+		ID:                     "link-001",
+		SourceStateMachineID:   "sm-source",
+		SourceExecutionID:      "exec-source-001",
+		SourceStateName:        "ProcessData",
+		InputTransformerName:   "custom_transformer",
+		TargetStateMachineName: "TargetStateMachine",
+		TargetExecutionID:      "exec-target-001",
+		CreatedAt:              time.Now().UTC(),
+	}
+
+	// Save linked execution
+	err := suite.repository.SaveLinkedExecution(suite.ctx, linkedExec)
+	require.NoError(suite.T(), err)
+
+	// Verify it was saved by querying directly
+	var result LinkedExecutionModel
+	err = suite.repository.db.WithContext(suite.ctx).
+		Where("id = ?", "link-001").
+		First(&result).Error
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "sm-source", result.SourceStateMachineID)
+	assert.Equal(suite.T(), "exec-source-001", result.SourceExecutionID)
+	assert.Equal(suite.T(), "ProcessData", result.SourceStateName)
+	assert.Equal(suite.T(), "custom_transformer", result.InputTransformerName)
+	assert.Equal(suite.T(), "TargetStateMachine", result.TargetStateMachineName)
+	assert.Equal(suite.T(), "exec-target-001", result.TargetExecutionID)
+}
+
+// TestSaveLinkedExecutionIdempotent tests that saving the same linked execution twice is idempotent
+func (suite *GormPostgresIntegrationTestSuite) TestSaveLinkedExecutionIdempotent() {
+	// Create executions
+	sourceStartTime := time.Now().Add(-1 * time.Hour)
+	sourceExec := &ExecutionRecord{
+		ExecutionID:    "exec-source-002",
+		StateMachineID: "sm-source",
+		Name:           "source-execution",
+		Input:          map[string]interface{}{"data": "source"},
+		Status:         "SUCCEEDED",
+		StartTime:      &sourceStartTime,
+		CurrentState:   "Final",
+	}
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, sourceExec))
+
+	targetStartTime := time.Now()
+	targetExec := &ExecutionRecord{
+		ExecutionID:    "exec-target-002",
+		StateMachineID: "sm-target",
+		Name:           "target-execution",
+		Input:          map[string]interface{}{"data": "target"},
+		Status:         "RUNNING",
+		StartTime:      &targetStartTime,
+		CurrentState:   "Processing",
+	}
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, targetExec))
+
+	linkedExec := &LinkedExecutionRecord{
+		ID:                     "link-002",
+		SourceStateMachineID:   "sm-source",
+		SourceExecutionID:      "exec-source-002",
+		SourceStateName:        "",
+		InputTransformerName:   "",
+		TargetStateMachineName: "TargetStateMachine",
+		TargetExecutionID:      "exec-target-002",
+		CreatedAt:              time.Now().UTC(),
+	}
+
+	// Save first time
+	err := suite.repository.SaveLinkedExecution(suite.ctx, linkedExec)
+	require.NoError(suite.T(), err)
+
+	// Save second time (should not error due to ON CONFLICT DO NOTHING)
+	err = suite.repository.SaveLinkedExecution(suite.ctx, linkedExec)
+	require.NoError(suite.T(), err)
+
+	// Verify only one record exists
+	var count int64
+	err = suite.repository.db.WithContext(suite.ctx).
+		Model(&LinkedExecutionModel{}).
+		Where("id = ?", "link-002").
+		Count(&count).Error
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), int64(1), count)
+}
+
+// TestSaveLinkedExecutionWithOptionalFields tests linked execution with empty optional fields
+func (suite *GormPostgresIntegrationTestSuite) TestSaveLinkedExecutionWithOptionalFields() {
+	// Create executions
+	sourceStartTime := time.Now().Add(-1 * time.Hour)
+	sourceExec := &ExecutionRecord{
+		ExecutionID:    "exec-source-003",
+		StateMachineID: "sm-source",
+		Name:           "source-execution",
+		Input:          map[string]interface{}{"data": "source"},
+		Status:         "SUCCEEDED",
+		StartTime:      &sourceStartTime,
+		CurrentState:   "Final",
+	}
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, sourceExec))
+
+	targetStartTime := time.Now()
+	targetExec := &ExecutionRecord{
+		ExecutionID:    "exec-target-003",
+		StateMachineID: "sm-target",
+		Name:           "target-execution",
+		Input:          map[string]interface{}{"data": "target"},
+		Status:         "RUNNING",
+		StartTime:      &targetStartTime,
+		CurrentState:   "Processing",
+	}
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, targetExec))
+
+	// Linked execution with optional fields empty
+	linkedExec := &LinkedExecutionRecord{
+		ID:                     "link-003",
+		SourceStateMachineID:   "sm-source",
+		SourceExecutionID:      "exec-source-003",
+		SourceStateName:        "", // Optional
+		InputTransformerName:   "", // Optional
+		TargetStateMachineName: "TargetStateMachine",
+		TargetExecutionID:      "exec-target-003",
+		CreatedAt:              time.Now().UTC(),
+	}
+
+	err := suite.repository.SaveLinkedExecution(suite.ctx, linkedExec)
+	require.NoError(suite.T(), err)
+
+	// Verify it was saved with empty optional fields
+	var result LinkedExecutionModel
+	err = suite.repository.db.WithContext(suite.ctx).
+		Where("id = ?", "link-003").
+		First(&result).Error
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "", result.SourceStateName)
+	assert.Equal(suite.T(), "", result.InputTransformerName)
+}
+
+// TestQueryLinkedExecutionsBySource tests querying linked executions by source
+func (suite *GormPostgresIntegrationTestSuite) TestQueryLinkedExecutionsBySource() {
+	// Create multiple linked executions from same source
+	sourceStartTime := time.Now().Add(-1 * time.Hour)
+	sourceExec := &ExecutionRecord{
+		ExecutionID:    "exec-source-004",
+		StateMachineID: "sm-source",
+		Name:           "source-execution",
+		Input:          map[string]interface{}{"data": "source"},
+		Status:         "SUCCEEDED",
+		StartTime:      &sourceStartTime,
+		CurrentState:   "Final",
+	}
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, sourceExec))
+
+	// Create 3 target executions linked to the same source
+	for i := 1; i <= 3; i++ {
+		targetStartTime := time.Now()
+		targetExec := &ExecutionRecord{
+			ExecutionID:    fmt.Sprintf("exec-target-00%d", 3+i),
+			StateMachineID: "sm-target",
+			Name:           fmt.Sprintf("target-execution-%d", i),
+			Input:          map[string]interface{}{"data": "target"},
+			Status:         "RUNNING",
+			StartTime:      &targetStartTime,
+			CurrentState:   "Processing",
+		}
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, targetExec))
+
+		linkedExec := &LinkedExecutionRecord{
+			ID:                     fmt.Sprintf("link-00%d", 3+i),
+			SourceStateMachineID:   "sm-source",
+			SourceExecutionID:      "exec-source-004",
+			SourceStateName:        "ProcessData",
+			InputTransformerName:   "",
+			TargetStateMachineName: "TargetStateMachine",
+			TargetExecutionID:      fmt.Sprintf("exec-target-00%d", 3+i),
+			CreatedAt:              time.Now().UTC(),
+		}
+		require.NoError(suite.T(), suite.repository.SaveLinkedExecution(suite.ctx, linkedExec))
+	}
+
+	// Query by source execution ID
+	var links []LinkedExecutionModel
+	err := suite.repository.db.WithContext(suite.ctx).
+		Where("source_execution_id = ?", "exec-source-004").
+		Find(&links).Error
+	require.NoError(suite.T(), err)
+	assert.Equal(suite.T(), 3, len(links))
+
+	// Verify all have the same source
+	for _, link := range links {
+		assert.Equal(suite.T(), "exec-source-004", link.SourceExecutionID)
+		assert.Equal(suite.T(), "sm-source", link.SourceStateMachineID)
+	}
 }
 
 // Helper function to create time pointers

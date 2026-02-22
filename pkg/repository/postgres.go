@@ -257,6 +257,25 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 	$$ LANGUAGE plpgsql;
 	`
 
+	// Create linked_executions table
+	linkedExecutionsSchema := `
+	CREATE TABLE IF NOT EXISTS linked_executions (
+		id VARCHAR(255) PRIMARY KEY,
+		source_state_machine_id VARCHAR(255) NOT NULL,
+		source_execution_id VARCHAR(255) NOT NULL,
+		source_state_name VARCHAR(255),
+		input_transformer_name VARCHAR(255),
+		target_state_machine_name VARCHAR(255) NOT NULL,
+		target_execution_id VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Indexes for common queries
+	CREATE INDEX IF NOT EXISTS idx_linked_source_sm ON linked_executions(source_state_machine_id);
+	CREATE INDEX IF NOT EXISTS idx_linked_source_exec ON linked_executions(source_execution_id);
+	CREATE INDEX IF NOT EXISTS idx_linked_target_exec ON linked_executions(target_execution_id);
+	`
+
 	// Execute all schema creation statements
 	schemas := []string{
 		stateMachinesSchema,
@@ -266,6 +285,7 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		executionsTrigger,
 		statsView,
 		refreshStatsFunction,
+		linkedExecutionsSchema,
 	}
 
 	for i, schema := range schemas {
@@ -1313,4 +1333,41 @@ func (ps *PostgresRepository) GetExecutionOutput(ctx context.Context, executionI
 		return nil, fmt.Errorf("failed to unmarshal state output: %w", err)
 	}
 	return output, nil
+}
+
+// SaveLinkedExecution saves a linked execution record
+func (ps *PostgresRepository) SaveLinkedExecution(ctx context.Context, linkedExec *LinkedExecutionRecord) error {
+	if linkedExec.ID == "" {
+		return errors.New("linked execution id is required")
+	}
+	if linkedExec.SourceExecutionID == "" {
+		return errors.New("source execution id is required")
+	}
+	if linkedExec.TargetExecutionID == "" {
+		return errors.New("target execution id is required")
+	}
+
+	query := `
+		INSERT INTO linked_executions (
+			id, source_state_machine_id, source_execution_id, source_state_name,
+			input_transformer_name, target_state_machine_name, target_execution_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (id) DO NOTHING
+	`
+
+	_, err := ps.db.ExecContext(ctx, query,
+		linkedExec.ID,
+		linkedExec.SourceStateMachineID,
+		linkedExec.SourceExecutionID,
+		linkedExec.SourceStateName,
+		linkedExec.InputTransformerName,
+		linkedExec.TargetStateMachineName,
+		linkedExec.TargetExecutionID,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to save linked execution: %w", err)
+	}
+
+	return nil
 }
