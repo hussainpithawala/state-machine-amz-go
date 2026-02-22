@@ -251,7 +251,7 @@ func registerTaskHandlers(exec *MockExecutor) {
 	fmt.Println("Registering task handlers...")
 
 	// Handler 1: Validate Order
-	exec.RegisterTaskHandler("arn:aws:lambda:::validate:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterTaskHandler("arn:aws:lambda:::validate:order", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  📋 Validating order...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -269,7 +269,7 @@ func registerTaskHandlers(exec *MockExecutor) {
 	})
 
 	// Handler 2: Process Payment
-	exec.RegisterTaskHandler("arn:aws:lambda:::process:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterTaskHandler("arn:aws:lambda:::process:payment", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  💳 Processing payment...")
 		time.Sleep(200 * time.Millisecond)
 
@@ -287,7 +287,7 @@ func registerTaskHandlers(exec *MockExecutor) {
 	})
 
 	// Handler 3: Check Inventory
-	exec.RegisterTaskHandler("arn:aws:lambda:::check:inventory", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterTaskHandler("arn:aws:lambda:::check:inventory", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  📦 Checking inventory...")
 		time.Sleep(150 * time.Millisecond)
 
@@ -306,7 +306,7 @@ func registerTaskHandlers(exec *MockExecutor) {
 	})
 
 	// Handler 4: Calculate Shipping
-	exec.RegisterTaskHandler("arn:aws:lambda:::calculate:shipping", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterTaskHandler("arn:aws:lambda:::calculate:shipping", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  🚚 Calculating shipping...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -325,7 +325,7 @@ func registerTaskHandlers(exec *MockExecutor) {
 	})
 
 	// Handler 5: Apply Discounts
-	exec.RegisterTaskHandler("arn:aws:lambda:::apply:discounts", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterTaskHandler("arn:aws:lambda:::apply:discounts", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  🏷️  Applying discounts...")
 		time.Sleep(50 * time.Millisecond)
 
@@ -344,7 +344,7 @@ func registerTaskHandlers(exec *MockExecutor) {
 	})
 
 	// Handler 6: Generate Invoice
-	exec.RegisterTaskHandler("arn:aws:lambda:::generate:invoice", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterTaskHandler("arn:aws:lambda:::generate:invoice", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  📄 Generating invoice...")
 		time.Sleep(250 * time.Millisecond)
 
@@ -362,7 +362,7 @@ func registerTaskHandlers(exec *MockExecutor) {
 	})
 
 	// Handler 7: Send Notification
-	exec.RegisterTaskHandler("arn:aws:lambda:::send:notification", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterTaskHandler("arn:aws:lambda:::send:notification", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  📧 Sending notification...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -381,7 +381,7 @@ func registerTaskHandlers(exec *MockExecutor) {
 	})
 
 	// Handler 8: Update CRM
-	exec.RegisterTaskHandler("arn:aws:lambda:::update:crm", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterTaskHandler("arn:aws:lambda:::update:crm", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  👥 Updating CRM...")
 		time.Sleep(300 * time.Millisecond)
 
@@ -399,7 +399,7 @@ func registerTaskHandlers(exec *MockExecutor) {
 	})
 
 	// Handler 9: Log Analytics
-	exec.RegisterTaskHandler("arn:aws:lambda:::log:analytics", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterTaskHandler("arn:aws:lambda:::log:analytics", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  📊 Logging analytics...")
 		time.Sleep(50 * time.Millisecond)
 
@@ -423,7 +423,7 @@ func testSimpleWorkflow() {
 	// Create state machine from definition
 	sm, err := statemachine.New([]byte(simpleWorkflowYAML), false)
 	if err != nil {
-		log.Fatalf("Failed to create state machine: %v", err)
+		log.Printf("Failed to create state machine: %v", err)
 	}
 
 	// Create execution context
@@ -455,7 +455,7 @@ func testParallelWorkflow() {
 	// Create state machine from definition
 	sm, err := statemachine.New([]byte(parallelWorkflowYAML), false)
 	if err != nil {
-		log.Fatalf("Failed to create state machine: %v", err)
+		log.Printf("Failed to create state machine: %v", err)
 	}
 
 	// Create execution context
@@ -493,7 +493,7 @@ func testChoiceWorkflow() {
 	// Create state machine from definition
 	sm, err := statemachine.New([]byte(choiceWorkflowYAML), false)
 	if err != nil {
-		log.Fatalf("Failed to create state machine: %v", err)
+		log.Printf("Failed to create state machine: %v", err)
 	}
 
 	// Test different scenarios

@@ -1,3 +1,4 @@
+// Package queue provides distributed queue functionality using Asynq for asynchronous task processing.
 package queue
 
 import (

@@ -2,6 +2,84 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.5] - 2026-02-10
+
+### Changed
+- **Input-Output Consistency**: Updated state machine execution to ensure consistent input-output flow.
+  - Set `execCtx.Output` to `execCtx.Input` when pausing execution to maintain input-output consistency.
+  - Modified state resume logic to use the previous execution's output as the next input.
+  - Switched state-machine repository and timeout handling to rely on `Output` instead of `Input`.
+- **Execution Handler Functions**: Added new execution handler functions to `executor.BaseExecutor` for improved execution control.
+- **Example Refinements**: Enhanced `examples/message_timeout_complete/main.go` with:
+  - Refined state machine definitions for better clarity.
+  - Added execution context to API setup methods.
+  - Improved timeout handling demonstrations.
+- **CI/CD Updates**: Upgraded Go version to 1.24 in GitHub workflows (`ci.yml` and `release.yml`).
+
+### Fixed
+- Resolved input-output mismatch issues during state transitions and execution pauses.
+- Improved timeout handling consistency across state executions.
+
+## [1.2.4] - 2026-02-10
+
+### Added
+- **TLS/SSL Support for Redis**: Full TLS support for secure Redis connections.
+  - New `RedisClientOpt` field in queue `Config` struct for flexible Redis configuration.
+  - Support for TLS certificates (CA, client cert, and key) in Redis connections.
+  - `InsecureSkipVerify` option for development/testing environments.
+  - Connection pooling and timeout configurations (DialTimeout, ReadTimeout, WriteTimeout, PoolSize).
+- New secure Redis examples demonstrating TLS configuration:
+  - `examples/test_secure_redis/` - Example with TLS-enabled Redis.
+  - `examples/test_tls_conn/` - Example testing TLS connections.
+- Docker Compose configuration for secure Redis instance (`redis-secured` service).
+  - Runs on ports 7379 (non-TLS) and 7380 (TLS).
+  - Configured with password authentication (`redispassword`).
+  - TLS certificate volume mounting.
+  - Health checks for TLS connections.
+
+### Changed
+- **Breaking Change**: Refactored queue `Config` struct to use `asynq.RedisClientOpt`.
+  - Removed individual fields: `RedisAddr`, `RedisPassword`, `RedisDB`, `TlsConfig`.
+  - Replaced with single `RedisClientOpt *asynq.RedisClientOpt` field.
+  - Provides more flexibility and direct access to all Asynq Redis options.
+- Updated `DefaultConfig()` to include secure defaults:
+  - Default password: `redispassword`.
+  - Connection timeouts: 10s dial, 30s read/write.
+  - Pool size: 20 connections.
+  - TLS with `InsecureSkipVerify` enabled by default.
+- Updated all examples to use new `RedisClientOpt` configuration:
+  - `examples/distributed_queue/main.go`
+  - `examples/message_timeout_complete/main.go`
+- Enhanced `.gitignore` to exclude TLS certificates and Redis data directories.
+- Updated `Makefile`:
+  - Added `REDIS_PASSWORD`, `REDIS_SECURED_ADDR`, `REDIS_SECURED_PASSWORD` variables.
+  - Updated health checks for both standard and secure Redis instances.
+  - Excluded new TLS examples from CI test runs.
+- Updated CI workflow (`.github/workflows/ci.yml`):
+  - Excluded `test_tls_conn` and `test_secure_redis` from automated example runs.
+- Updated Go version to 1.24.0 in `go.mod`.
+- Updated dependencies:
+  - `github.com/redis/go-redis/v9` from v9.7.0 to v9.7.3.
+  - `golang.org/x` packages updated to latest versions.
+
+### Fixed
+- Added proper name handling in `StateMachine.SaveDefinition()`:
+  - Only sets `record.ID` if `stateMachineID` is non-empty.
+  - Only sets `record.Name` if `statemachine.Name` is non-empty.
+- Improved `StateMachine.ToRecord()` to use `Name` field when available, falling back to `ID`.
+- Added `Name` field to `StateMachine` and `rawStateMachine` structs for proper JSON serialization.
+- Fixed timeout duration in `ExampleTestTimeoutScenario()` from 12s to 10s for consistency.
+- Fixed Makefile syntax error in `test-examples` target (environment variable export).
+- Docker Compose formatting improvements (consistent array bracket style).
+- All queue configuration tests updated to use new `RedisClientOpt` structure.
+- Added new test `TestConfig_GetRedisClientOptWithTls` to verify TLS configuration.
+
+### Security
+- Added TLS/SSL encryption support for Redis connections.
+- Secure password authentication for Redis.
+- Certificate-based authentication support (CA, client certs).
+- Configurable TLS verification for different security requirements.
+
 ## [1.0.9] - 2026-01-02
 
 ### Added

@@ -9,7 +9,7 @@ on:
   workflow_call:
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.24'
 
 jobs:
   lint:
@@ -20,23 +20,27 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: '1.24'  # or your project's Go version
           cache: true
 
+      - name: Install golangci-lint v2.4.0
+        run: |
+          # Install specific version directly
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.4.0
+          golangci-lint --version
+
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest
-          args: --timeout=5m --config=.golangci.yml
+        run: |
+          golangci-lint run --timeout=5m --config=.golangci.yml
 
   test-unit:
     name: Unit Tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: [ '1.23' ]
+        go-version: [ '1.24' ]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -69,7 +73,7 @@ jobs:
     needs: [ lint ]
     strategy:
       matrix:
-        go-version: [ '1.23' ]
+        go-version: [ '1.24' ]
 
     services:
       postgres:
@@ -158,7 +162,7 @@ jobs:
     needs: [ lint, test-unit ]
     strategy:
       matrix:
-        go-version: [ '1.23' ]
+        go-version: [ '1.24' ]
 
     services:
       postgres:
@@ -254,7 +258,7 @@ jobs:
     needs: [ lint ]
     strategy:
       matrix:
-        go-version: [ '1.23' ]
+        go-version: [ '1.24' ]
 
     services:
       postgres:
@@ -329,7 +333,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable
           DATABASE_URL_GORM: postgresql://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable
         run: |
-          find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' ! -path '*/message_timeout_complete/*' -name "*.go" -print0 | xargs -0 -n1 go run
+          find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' ! -path '*/message_timeout_complete/*' ! -path '*/test_tls_conn/*' ! -path '*/test_secure_redis/*' -name "*.go" -print0 | xargs -0 -n1 go run
 
   build:
     name: Build

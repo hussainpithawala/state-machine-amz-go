@@ -118,6 +118,11 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 	// Save initial execution state if repositoryManager is enabled
 	pm.persistExecution(ctx, execCtx)
 
+	// If SourceExecutionID exists, create LinkedExecution record (only once at start)
+	if config.SourceExecutionID != "" {
+		pm.saveLinkedExecution(ctx, execCtx, config)
+	}
+
 	return pm.RunExecution(ctx, input, execCtx)
 }
 
@@ -288,6 +293,8 @@ func (pm *StateMachine) handleWaitingState(
 
 	execCtx.Status = PAUSED
 	execCtx.CurrentState = currentStateName
+	// since we are going to pause the current execCtx.Output should be set to the input
+	execCtx.Output = execCtx.Input
 	pm.persistExecution(ctx, execCtx)
 
 	return execCtx, nil
@@ -344,6 +351,40 @@ func saveHistory(ctx context.Context, execCtx *execution.Execution, sm *StateMac
 func (pm *StateMachine) persistExecution(ctx context.Context, execCtx *execution.Execution) {
 	if err := pm.repositoryManager.SaveExecution(ctx, execCtx); err != nil {
 		fmt.Printf("Warning: failed to persist final execution state: %v\n", err)
+	}
+}
+
+// saveLinkedExecution creates and persists a LinkedExecution record
+func (pm *StateMachine) saveLinkedExecution(ctx context.Context, execCtx *execution.Execution, config *statemachine2.ExecutionConfig) {
+	// Get source execution details to retrieve source state machine ID
+	sourceExec, err := pm.repositoryManager.GetExecution(ctx, config.SourceExecutionID)
+	if err != nil {
+		fmt.Printf("Warning: failed to get source execution for linked record: %v\n", err)
+		return
+	}
+
+	// Determine input transformer name (if any)
+	inputTransformerName := config.InputTransformerName
+	if config.InputTransformer != nil {
+		// You could store a transformer name if it's registered somewhere
+		inputTransformerName = "custom_transformer"
+	}
+
+	// Create linked execution record
+	linkedRecord := &repository.LinkedExecutionRecord{
+		ID:                     fmt.Sprintf("link-%s-%s", config.SourceExecutionID, execCtx.ID),
+		SourceStateMachineID:   sourceExec.StateMachineID,
+		SourceExecutionID:      config.SourceExecutionID,
+		SourceStateName:        config.SourceStateName,
+		InputTransformerName:   inputTransformerName,
+		TargetStateMachineName: pm.statemachine.Name,
+		TargetExecutionID:      execCtx.ID,
+		CreatedAt:              time.Now().UTC(),
+	}
+
+	// Save the linked execution record
+	if err := pm.repositoryManager.SaveLinkedExecution(ctx, linkedRecord); err != nil {
+		fmt.Printf("Warning: failed to persist linked execution record: %v\n", err)
 	}
 }
 
@@ -431,8 +472,8 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 		pm.persistExecution(ctx, execCtx)
 	}
 
-	// Continue execution from the current state
-	return pm.RunExecution(ctx, execCtx.Input, execCtx)
+	// Continue execution from the current state and hence use the output of the previous execution as the input
+	return pm.RunExecution(ctx, execCtx.Output, execCtx)
 }
 
 // cancelTimeoutTask attempts to cancel a scheduled timeout task
@@ -457,7 +498,7 @@ func (pm *StateMachine) cancelTimeoutTask(ctx context.Context, correlationID str
 
 func (sm *StateMachine) MergeInputs(processor *states.JSONPathProcessor,
 	processedInput interface{}, result interface{}) (op2 interface{}, op4 error) {
-	var output interface{} = result
+	output := result
 	var err error
 
 	if processedInput == nil {
@@ -502,7 +543,8 @@ func (pm *StateMachine) ProcessTimeoutTrigger(ctx context.Context, correlationID
 	}
 
 	processor := states.JSONPathProcessor{}
-	mergedInput, err := pm.MergeInputs(&processor, executionRecord.Input, timeoutInput)
+	// use last execution(s) output as the exec.Input
+	mergedInput, err := pm.MergeInputs(&processor, executionRecord.Output, timeoutInput)
 
 	if err != nil {
 		return fmt.Errorf("failed to merge inputs: %w", err)
@@ -559,8 +601,15 @@ func (pm *StateMachine) SaveDefinition(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	// Use the explicit stateMachineID if it was provided to New
-	record.ID = pm.stateMachineID
+	if pm.stateMachineID != "" {
+		record.ID = pm.stateMachineID
+	}
+	if pm.statemachine.Name != "" {
+		record.Name = pm.statemachine.Name
+	}
+
 	return pm.repositoryManager.SaveStateMachine(ctx, record)
 }
 

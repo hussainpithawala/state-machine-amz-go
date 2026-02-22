@@ -1,3 +1,4 @@
+// Package main demonstrates chained state machine execution with PostgreSQL GORM persistence.
 package main
 
 import (
@@ -43,7 +44,12 @@ func runChainedExecutionExample() error {
 	if err != nil {
 		return fmt.Errorf("failed to create repository manager: %w", err)
 	}
-	defer repoManager.Close()
+	defer func(repoManager *repository.Manager) {
+		err := repoManager.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close repository manager: %v\n", err)
+		}
+	}(repoManager)
 
 	// Initialize the database schema
 	if err := repoManager.Initialize(ctx); err != nil {
@@ -54,7 +60,7 @@ func runChainedExecutionExample() error {
 	exec := executor.NewBaseExecutor()
 
 	// Register handlers for state machine A
-	exec.RegisterGoFunction("process:data", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("process:data", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("\n[State Machine A] Processing data...")
 		data := input.(map[string]interface{})
 
@@ -69,7 +75,7 @@ func runChainedExecutionExample() error {
 		return result, nil
 	})
 
-	exec.RegisterGoFunction("validate:data", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("validate:data", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("\n[State Machine A] Validating data...")
 		data := input.(map[string]interface{})
 
@@ -84,7 +90,7 @@ func runChainedExecutionExample() error {
 	})
 
 	// Register handlers for state machine B
-	exec.RegisterGoFunction("enrich:data", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("enrich:data", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("\n[State Machine B] Enriching data from previous execution...")
 		data := input.(map[string]interface{})
 
@@ -98,7 +104,7 @@ func runChainedExecutionExample() error {
 		return result, nil
 	})
 
-	exec.RegisterGoFunction("store:data", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("store:data", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("\n[State Machine B] Storing final data...")
 		data := input.(map[string]interface{})
 
@@ -113,7 +119,7 @@ func runChainedExecutionExample() error {
 	})
 
 	// Define State Machine A - Data Processing Pipeline
-	stateMachineA_YAML := `
+	stateMachineAYAML := `
 Comment: "State Machine A - Data Processing Pipeline"
 StartAt: ProcessData
 States:
@@ -133,7 +139,7 @@ States:
 	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
 
 	// Create persistent state machine A
-	smA, err := persistent.New([]byte(stateMachineA_YAML), false, "data-processing-pipeline", repoManager)
+	smA, err := persistent.New([]byte(stateMachineAYAML), false, "data-processing-pipeline", repoManager)
 	if err != nil {
 		return fmt.Errorf("failed to create state machine A: %w", err)
 	}
@@ -162,7 +168,7 @@ States:
 	fmt.Printf("[Execution A] Output:\n%s\n", string(outputJSON))
 
 	// Define State Machine B - Data Enrichment Pipeline
-	stateMachineB_YAML := `
+	stateMachineBYAML := `
 Comment: "State Machine B - Data Enrichment Pipeline"
 StartAt: EnrichData
 States:
@@ -180,7 +186,7 @@ States:
 `
 
 	// Create persistent state machine B
-	smB, err := persistent.New([]byte(stateMachineB_YAML), false, "data-enrichment-pipeline", repoManager)
+	smB, err := persistent.New([]byte(stateMachineBYAML), false, "data-enrichment-pipeline", repoManager)
 	if err != nil {
 		return fmt.Errorf("failed to create state machine B: %w", err)
 	}
@@ -255,6 +261,7 @@ States:
 	fmt.Println("\n=== Summary of All Executions ===")
 
 	executionsA, err := smA.ListExecutions(ctx, &repository.ExecutionFilter{Limit: 10})
+
 	if err != nil {
 		return fmt.Errorf("failed to list executions for State Machine A: %w", err)
 	}
@@ -274,5 +281,11 @@ States:
 		fmt.Printf("  - ID: %s, Name: %s, Status: %s\n", exec.ExecutionID, exec.Name, exec.Status)
 	}
 
+	// List all LinkedExecutions to show the chain link
+	linkedExecutions, _ := repoManager.ListLinkedExecutions(ctx, &repository.LinkedExecutionFilter{Limit: 10, SourceExecutionID: execA.ID})
+	fmt.Println("\nLinked Executions (all chained from A):")
+	for _, le := range linkedExecutions {
+		fmt.Printf("  - ID: %s, Source Execution ID: %s, Target Execution ID: %s\n", le.ID, le.SourceExecutionID, le.TargetExecutionID)
+	}
 	return nil
 }

@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testInitial = "initial"
+
 func TestParallelState_Execute_MultipleBranches(t *testing.T) {
 	ctx := context.Background()
 
@@ -165,7 +167,7 @@ func TestParallelState_Execute_MultiStateBranch(t *testing.T) {
 		},
 	}
 
-	input := "initial"
+	input := testInitial
 
 	output, _, err := state.Execute(ctx, input)
 
@@ -272,7 +274,7 @@ func TestParallelState_Execute_WithOutputPath(t *testing.T) {
 		},
 	}
 
-	input := "initial"
+	input := testInitial
 
 	output, _, err := state.Execute(ctx, input)
 
@@ -304,7 +306,7 @@ func TestParallelState_Execute_ContextCancelled(t *testing.T) {
 		},
 	}
 
-	input := "initial"
+	input := testInitial
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -352,7 +354,7 @@ func TestParallelState_Execute_BranchError(t *testing.T) {
 		},
 	}
 
-	input := "initial"
+	input := testInitial
 
 	_, _, err := state.Execute(ctx, input)
 	require.Error(t, err)

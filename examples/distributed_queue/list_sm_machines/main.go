@@ -1,3 +1,4 @@
+// Package main lists all state machines from the repository.
 package main
 
 import (
@@ -16,15 +17,20 @@ func main() {
 	// Setup repository
 	repoManager, err := setupRepository(ctx)
 	if err != nil {
-		log.Fatalf("Failed to setup repository: %v", err)
+		log.Printf("Failed to setup repository: %v", err)
 	}
-	defer repoManager.Close()
+	defer func(repoManager *repository.Manager) {
+		err := repoManager.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close repository manager: %v\n", err)
+		}
+	}(repoManager)
 	fmt.Println("=== ListStateMachines Examples ===")
 	// Example 1: List all state machines
 	fmt.Println("1. List all state machines:")
 	allStateMachines, err := repoManager.ListStateMachines(ctx, nil)
 	if err != nil {
-		log.Fatalf("Failed to list state machines: %v", err)
+		log.Printf("Failed to list state machines: %v", err)
 	}
 	printStateMachines(allStateMachines)
 
@@ -35,7 +41,7 @@ func main() {
 	}
 	filteredByName, err := repoManager.ListStateMachines(ctx, nameFilter)
 	if err != nil {
-		log.Fatalf("Failed to list state machines: %v", err)
+		log.Printf("Failed to list state machines: %v", err)
 	}
 	printStateMachines(filteredByName)
 
@@ -47,7 +53,7 @@ func main() {
 		}
 		filteredByID, err := repoManager.ListStateMachines(ctx, idFilter)
 		if err != nil {
-			log.Fatalf("Failed to list state machines: %v", err)
+			log.Printf("Failed to list state machines: %v", err)
 		}
 		printStateMachines(filteredByID)
 	}
@@ -71,7 +77,7 @@ func printStateMachines(stateMachines []*repository.StateMachineRecord) {
 		fmt.Printf("      Created: %s\n", sm.CreatedAt.Format("2006-01-02 15:04:05"))
 		fmt.Printf("      Updated: %s\n", sm.UpdatedAt.Format("2006-01-02 15:04:05"))
 
-		if sm.Metadata != nil && len(sm.Metadata) > 0 {
+		if len(sm.Metadata) > 0 {
 			metadataJSON, _ := json.MarshalIndent(sm.Metadata, "      ", "  ")
 			fmt.Printf("      Metadata: %s\n", string(metadataJSON))
 		}

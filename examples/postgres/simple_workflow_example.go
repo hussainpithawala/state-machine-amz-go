@@ -64,14 +64,14 @@ States:
 	// 2. Create state machine from definition
 	pm, err := persistent.New([]byte(yamlContent), false, "sm-1", persistenceManager)
 	if err != nil {
-		return fmt.Errorf("failed to create a peristent state machine: %w", err)
+		return fmt.Errorf("failed to create a persistent state machine: %w", err)
 	}
 
 	// 5. Create executor and register task handlers
 	exec := executor.NewBaseExecutor()
 
 	// Register handlers for the resources defined in YAML
-	exec.RegisterGoFunction("process:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("process:order", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Processing order...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -83,7 +83,7 @@ States:
 		}, nil
 	})
 
-	exec.RegisterGoFunction("validate:payment", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("validate:payment", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Validating payment...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -93,7 +93,7 @@ States:
 		}, nil
 	})
 
-	exec.RegisterGoFunction("send:notification", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("send:notification", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Sending notification...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -121,9 +121,9 @@ States:
 	}
 
 	// Save initial execution state
-	//if err := pm.SaveExecution(ctx, execCtx); err != nil {
+	// if err := pm.SaveExecution(ctx, execCtx); err != nil {
 	//	return fmt.Errorf("failed to save initial execution: %w", err)
-	//}
+	// }
 
 	// 7. Execute the workflow
 	fmt.Println("\nExecuting workflow...")
@@ -141,12 +141,11 @@ States:
 	history, err := pm.GetExecutionHistory(ctx, executionInstance.ID)
 	if err != nil {
 		return fmt.Errorf("failed to get history: %w", err)
-	} else {
-		fmt.Println("\nExecution History:")
-		err := yaml.NewEncoder(os.Stdout).Encode(history)
-		if err != nil {
-			return fmt.Errorf("failed to marshal history: %w", err)
-		}
+	}
+	fmt.Println("\nExecution History:")
+	err = yaml.NewEncoder(os.Stdout).Encode(history)
+	if err != nil {
+		return fmt.Errorf("failed to marshal history: %w", err)
 	}
 	defer func(pm *repository.Manager) {
 		err := pm.Close()

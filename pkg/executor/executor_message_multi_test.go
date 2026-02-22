@@ -21,14 +21,14 @@ type mockRepository struct {
 	smRecord *repository.StateMachineRecord
 }
 
-func (m *mockRepository) GetStateMachine(ctx context.Context, id string) (*repository.StateMachineRecord, error) {
+func (m *mockRepository) GetStateMachine(_ context.Context, id string) (*repository.StateMachineRecord, error) {
 	if m.smRecord != nil && m.smRecord.ID == id {
 		return m.smRecord, nil
 	}
 	return nil, fmt.Errorf("not found")
 }
 
-func (m *mockRepository) FindWaitingCorrelations(ctx context.Context, filter *repository.MessageCorrelationFilter) ([]*repository.MessageCorrelationRecord, error) {
+func (m *mockRepository) FindWaitingCorrelations(_ context.Context, filter *repository.MessageCorrelationFilter) ([]*repository.MessageCorrelationRecord, error) {
 	return []*repository.MessageCorrelationRecord{
 		{
 			ExecutionID:    "exec-repo-1",
@@ -39,7 +39,7 @@ func (m *mockRepository) FindWaitingCorrelations(ctx context.Context, filter *re
 	}, nil
 }
 
-func (m *mockRepository) GetExecution(ctx context.Context, id string) (*repository.ExecutionRecord, error) {
+func (m *mockRepository) GetExecution(_ context.Context, id string) (*repository.ExecutionRecord, error) {
 	return &repository.ExecutionRecord{
 		ExecutionID:    id,
 		StateMachineID: "sm-repo-1",
@@ -48,26 +48,26 @@ func (m *mockRepository) GetExecution(ctx context.Context, id string) (*reposito
 	}, nil
 }
 
-func (m *mockRepository) SaveExecution(ctx context.Context, record *repository.ExecutionRecord) error {
+func (m *mockRepository) SaveExecution(_ context.Context, record *repository.ExecutionRecord) error {
 	return nil
 }
-func (m *mockRepository) SaveStateHistory(ctx context.Context, record *repository.StateHistoryRecord) error {
+func (m *mockRepository) SaveStateHistory(_ context.Context, record *repository.StateHistoryRecord) error {
 	return nil
 }
-func (m *mockRepository) UpdateCorrelationStatus(ctx context.Context, id, status string) error {
+func (m *mockRepository) UpdateCorrelationStatus(_ context.Context, id, status string) error {
 	return nil
 }
 
-func (m *mockRepository) SaveMessageCorrelation(ctx context.Context, record *repository.MessageCorrelationRecord) error {
+func (m *mockRepository) SaveMessageCorrelation(_ context.Context, record *repository.MessageCorrelationRecord) error {
 	return nil
 }
-func (m *mockRepository) GetMessageCorrelation(ctx context.Context, id string) (*repository.MessageCorrelationRecord, error) {
+func (m *mockRepository) GetMessageCorrelation(_ context.Context, id string) (*repository.MessageCorrelationRecord, error) {
 	return nil, nil
 }
-func (m *mockRepository) DeleteMessageCorrelation(ctx context.Context, id string) error {
+func (m *mockRepository) DeleteMessageCorrelation(_ context.Context, id string) error {
 	return nil
 }
-func (m *mockRepository) ListTimedOutCorrelations(ctx context.Context, currentTimestamp int64) ([]*repository.MessageCorrelationRecord, error) {
+func (m *mockRepository) ListTimedOutCorrelations(_ context.Context, currentTimestamp int64) ([]*repository.MessageCorrelationRecord, error) {
 	return nil, nil
 }
 
@@ -75,7 +75,7 @@ type mockStateMachine struct {
 	id string
 }
 
-func (m *mockStateMachine) MergeInputs(processor *states.JSONPathProcessor, processedInput, result interface{}) (op2 interface{}, op4 error) {
+func (m *mockStateMachine) MergeInputs(_ *states.JSONPathProcessor, processedInput, result interface{}) (op2 interface{}, op4 error) {
 	receivedMessageKey := fmt.Sprintf("%s_%s", states.ReceivedMessageBase, "dummy")
 	resumeInput := map[string]interface{}{
 		receivedMessageKey: map[string]interface{}{
@@ -97,17 +97,17 @@ func (m *mockStateMachine) MergeInputs(processor *states.JSONPathProcessor, proc
 	return processedInput, nil
 }
 
-func (m *mockStateMachine) GetStartAt() string                         { return "" }
-func (m *mockStateMachine) GetState(name string) (states.State, error) { return nil, nil }
-func (m *mockStateMachine) IsTimeout(startTime time.Time) bool         { return false }
-func (m *mockStateMachine) RunExecution(ctx context.Context, input interface{}, execCtx *execution.Execution) (*execution.Execution, error) {
+func (m *mockStateMachine) GetStartAt() string                      { return "" }
+func (m *mockStateMachine) GetState(_ string) (states.State, error) { return nil, nil }
+func (m *mockStateMachine) IsTimeout(_ time.Time) bool              { return false }
+func (m *mockStateMachine) RunExecution(_ context.Context, input interface{}, execCtx *execution.Execution) (*execution.Execution, error) {
 	return execCtx, nil
 }
-func (m *mockStateMachine) ResumeExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
+func (m *mockStateMachine) ResumeExecution(_ context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
 	execCtx.Status = "SUCCEEDED"
 	return execCtx, nil
 }
-func (m *mockStateMachine) FindWaitingExecutionsByCorrelation(ctx context.Context, correlationKey string, correlationValue interface{}) ([]*repository.ExecutionRecord, error) {
+func (m *mockStateMachine) FindWaitingExecutionsByCorrelation(_ context.Context, correlationKey string, correlationValue interface{}) ([]*repository.ExecutionRecord, error) {
 	return nil, nil
 }
 func (m *mockStateMachine) GetID() string { return m.id }

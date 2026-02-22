@@ -42,6 +42,16 @@ type StateHistory struct {
 	Metadata       map[string]interface{}
 }
 
+// LinkedExecution represents a linkage between a source execution and a targeted execution
+type LinkedExecution struct {
+	ID                     string
+	SourceStateMachineID   string
+	SourceExecutionID      string
+	SourceStateName        string
+	TargetStateMachineName string
+	TargetExecutionID      string
+}
+
 // DefinitionFilter defines filters for querying state machines
 type DefinitionFilter struct {
 	StateMachineID string // Filter by state machine ID
@@ -63,6 +73,19 @@ type ExecutionFilter struct {
 type BatchExecutionFilter struct {
 	ExecutionFilter
 	SourceStateName string // Optional: specific state to get output from in source executions
+}
+
+// LinkedExecutionFilter defines filters for querying linked executions
+type LinkedExecutionFilter struct {
+	SourceStateMachineID   string    // Filter by source state machine ID
+	SourceExecutionID      string    // Filter by source execution ID
+	SourceStateName        string    // Filter by source state name
+	TargetStateMachineName string    // Filter by target state machine name
+	TargetExecutionID      string    // Filter by target execution ID
+	CreatedAfter           time.Time // Filter linked executions created after this time
+	CreatedBefore          time.Time // Filter linked executions created before this time
+	Limit                  int       // Maximum number of results
+	Offset                 int       // Offset for pagination
 }
 
 // Statistics represents aggregated execution statistics
@@ -132,6 +155,15 @@ type Repository interface {
 
 	// GetExecutionOutput retrieves output from an execution (final or specific state)
 	GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error)
+
+	// SaveLinkedExecution saves a linked execution record
+	SaveLinkedExecution(ctx context.Context, linkedExec *LinkedExecutionRecord) error
+
+	// ListLinkedExecutions lists linked executions with filtering and pagination
+	ListLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) ([]*LinkedExecutionRecord, error)
+
+	// CountLinkedExecutions returns the count of linked executions matching the filter
+	CountLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) (int64, error)
 }
 
 // ExtendedRepository defines additional repository capabilities
@@ -310,7 +342,7 @@ func generateExecutionID() string {
 
 	if err != nil {
 		// Log the error and panic/fatal exit, as cryptographic security has failed
-		log.Fatalf("Fatal error reading from crypto/rand: %v", err)
+		log.Printf("Fatal error reading from crypto/rand: %v", err)
 	}
 	return fmt.Sprintf("[generateExecutionID] exec-%s", hex.EncodeToString(b))
 }
@@ -322,7 +354,7 @@ func generateStateHistoryID(executionID, stateName string, sequenceNumber int) s
 
 	if err != nil {
 		// Log the error and panic/fatal exit, as cryptographic security has failed
-		log.Fatalf("[generateStateHistoryID] Fatal error reading from crypto/rand: %v", err)
+		log.Printf("[generateStateHistoryID] Fatal error reading from crypto/rand: %v", err)
 	}
 
 	return fmt.Sprintf("%s-%s-%d-%s", executionID, stateName, sequenceNumber, hex.EncodeToString(b)[:8])

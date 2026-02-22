@@ -128,6 +128,7 @@ func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 		{&StateHistoryModel{}, "state_history"},
 		{&ExecutionStatisticsModel{}, "statistics"},
 		{&MessageCorrelationModel{}, "message_correlations"},
+		{&LinkedExecutionModel{}, "linked_executions"},
 	}
 
 	for _, table := range tables {
@@ -279,6 +280,11 @@ func (r *GormPostgresRepository) Close() error {
 		return err
 	}
 	return sqlDB.Close()
+}
+
+// GetDB returns the underlying GORM database instance (for testing)
+func (r *GormPostgresRepository) GetDB() *gorm.DB {
+	return r.db
 }
 
 // SaveExecution saves or updates an execution using GORM
@@ -814,6 +820,32 @@ func fromStateMachineModel(model *StateMachineModel) *StateMachineRecord {
 	}
 }
 
+func toLinkedExecutionModel(record *LinkedExecutionRecord) *LinkedExecutionModel {
+	return &LinkedExecutionModel{
+		ID:                     record.ID,
+		SourceStateMachineID:   record.SourceStateMachineID,
+		SourceExecutionID:      record.SourceExecutionID,
+		SourceStateName:        record.SourceStateName,
+		InputTransformerName:   record.InputTransformerName,
+		TargetStateMachineName: record.TargetStateMachineName,
+		TargetExecutionID:      record.TargetExecutionID,
+		CreatedAt:              record.CreatedAt,
+	}
+}
+
+func fromLinkedExecutionModel(model *LinkedExecutionModel) *LinkedExecutionRecord {
+	return &LinkedExecutionRecord{
+		ID:                     model.ID,
+		SourceStateMachineID:   model.SourceStateMachineID,
+		SourceExecutionID:      model.SourceExecutionID,
+		SourceStateName:        model.SourceStateName,
+		InputTransformerName:   model.InputTransformerName,
+		TargetStateMachineName: model.TargetStateMachineName,
+		TargetExecutionID:      model.TargetExecutionID,
+		CreatedAt:              model.CreatedAt,
+	}
+}
+
 // SaveMessageCorrelation saves a message correlation record
 func (r *GormPostgresRepository) SaveMessageCorrelation(ctx context.Context, record *MessageCorrelationRecord) error {
 	model := toMessageCorrelationModel(record)
@@ -919,6 +951,117 @@ func (r *GormPostgresRepository) ListTimedOutCorrelations(ctx context.Context, c
 	return records, nil
 }
 
+// SaveLinkedExecution saves a linked execution record
+func (r *GormPostgresRepository) SaveLinkedExecution(ctx context.Context, linkedExec *LinkedExecutionRecord) error {
+	model := toLinkedExecutionModel(linkedExec)
+
+	// Use insert-only with ON CONFLICT DO NOTHING since linkages are immutable
+	result := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoNothing: true,
+		}).
+		Create(model)
+
+	if result.Error != nil {
+		return fmt.Errorf("failed to save linked execution: %w", result.Error)
+	}
+
+	return nil
+}
+
+// ListLinkedExecutions lists linked executions with filtering and pagination
+func (r *GormPostgresRepository) ListLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) ([]*LinkedExecutionRecord, error) {
+	var models []LinkedExecutionModel
+
+	query := r.db.WithContext(ctx)
+
+	// Apply filters
+	if filter != nil {
+		if filter.SourceStateMachineID != "" {
+			query = query.Where("source_state_machine_id = ?", filter.SourceStateMachineID)
+		}
+		if filter.SourceExecutionID != "" {
+			query = query.Where("source_execution_id = ?", filter.SourceExecutionID)
+		}
+		if filter.SourceStateName != "" {
+			query = query.Where("source_state_name = ?", filter.SourceStateName)
+		}
+		if filter.TargetStateMachineName != "" {
+			query = query.Where("target_state_machine_name = ?", filter.TargetStateMachineName)
+		}
+		if filter.TargetExecutionID != "" {
+			query = query.Where("target_execution_id = ?", filter.TargetExecutionID)
+		}
+		if !filter.CreatedAfter.IsZero() {
+			query = query.Where("created_at >= ?", filter.CreatedAfter)
+		}
+		if !filter.CreatedBefore.IsZero() {
+			query = query.Where("created_at <= ?", filter.CreatedBefore)
+		}
+
+		// Apply pagination
+		if filter.Limit > 0 {
+			query = query.Limit(filter.Limit)
+		}
+		if filter.Offset > 0 {
+			query = query.Offset(filter.Offset)
+		}
+	}
+
+	// Order by created_at descending
+	result := query.Order("created_at DESC").Find(&models)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to list linked executions: %w", result.Error)
+	}
+
+	records := make([]*LinkedExecutionRecord, len(models))
+	for i := range models {
+		records[i] = fromLinkedExecutionModel(&models[i])
+	}
+
+	return records, nil
+}
+
+// CountLinkedExecutions returns the count of linked executions matching the filter
+func (r *GormPostgresRepository) CountLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) (int64, error) {
+	var count int64
+
+	query := r.db.WithContext(ctx).Model(&LinkedExecutionModel{})
+
+	// Apply filters
+	if filter != nil {
+		if filter.SourceStateMachineID != "" {
+			query = query.Where("source_state_machine_id = ?", filter.SourceStateMachineID)
+		}
+		if filter.SourceExecutionID != "" {
+			query = query.Where("source_execution_id = ?", filter.SourceExecutionID)
+		}
+		if filter.SourceStateName != "" {
+			query = query.Where("source_state_name = ?", filter.SourceStateName)
+		}
+		if filter.TargetStateMachineName != "" {
+			query = query.Where("target_state_machine_name = ?", filter.TargetStateMachineName)
+		}
+		if filter.TargetExecutionID != "" {
+			query = query.Where("target_execution_id = ?", filter.TargetExecutionID)
+		}
+		if !filter.CreatedAfter.IsZero() {
+			query = query.Where("created_at >= ?", filter.CreatedAfter)
+		}
+		if !filter.CreatedBefore.IsZero() {
+			query = query.Where("created_at <= ?", filter.CreatedBefore)
+		}
+	}
+
+	result := query.Count(&count)
+	if result.Error != nil {
+		return 0, fmt.Errorf("failed to count linked executions: %w", result.Error)
+	}
+
+	return count, nil
+}
+
 func toMessageCorrelationModel(record *MessageCorrelationRecord) *MessageCorrelationModel {
 	model := &MessageCorrelationModel{
 		ID:               record.ID,
@@ -956,11 +1099,11 @@ func fromMessageCorrelationModel(model *MessageCorrelationModel) *MessageCorrela
 // GetExecutionOutput retrieves output from an execution (final or specific state)
 // If stateName is empty, returns the final execution output
 // If stateName is provided, returns the output of that specific state
-func (gr *GormPostgresRepository) GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error) {
+func (r *GormPostgresRepository) GetExecutionOutput(ctx context.Context, executionID, stateName string) (interface{}, error) {
 	if stateName == "" {
 		// Get final execution output
 		var execution ExecutionModel
-		result := gr.db.WithContext(ctx).
+		result := r.db.WithContext(ctx).
 			Select("output").
 			Where("execution_id = ?", executionID).
 			First(&execution)
@@ -977,7 +1120,7 @@ func (gr *GormPostgresRepository) GetExecutionOutput(ctx context.Context, execut
 
 	// Get specific state output (most recent if state was executed multiple times)
 	var stateHistory StateHistoryModel
-	result := gr.db.WithContext(ctx).
+	result := r.db.WithContext(ctx).
 		Select("output").
 		Where("execution_id = ? AND state_name = ?", executionID, stateName).
 		Order("sequence_number DESC").

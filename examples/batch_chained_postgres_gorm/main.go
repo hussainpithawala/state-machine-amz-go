@@ -1,3 +1,5 @@
+// Package main demonstrates batch chained state machine execution with PostgreSQL GORM persistence.
+
 package main
 
 import (
@@ -42,7 +44,12 @@ func runBatchChainedExecutionExample() error {
 	if err != nil {
 		return fmt.Errorf("failed to create repository manager: %w", err)
 	}
-	defer repoManager.Close()
+	defer func(repoManager *repository.Manager) {
+		err := repoManager.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close repository manager: %v\n", err)
+		}
+	}(repoManager)
 
 	// Initialize the database schema
 	if err := repoManager.Initialize(ctx); err != nil {
@@ -53,7 +60,7 @@ func runBatchChainedExecutionExample() error {
 	exec := executor.NewBaseExecutor()
 
 	// Register handlers for State Machine A - Data Ingestion
-	exec.RegisterGoFunction("ingest:data", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("ingest:data", func(_ context.Context, input interface{}) (interface{}, error) {
 		data := input.(map[string]interface{})
 		fmt.Printf("\n[Ingest] Processing: %v\n", data["orderId"])
 
@@ -66,7 +73,7 @@ func runBatchChainedExecutionExample() error {
 	})
 
 	// Register handlers for State Machine B - Data Processing (will run in batch)
-	exec.RegisterGoFunction("process:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("process:order", func(_ context.Context, input interface{}) (interface{}, error) {
 		data := input.(map[string]interface{})
 		orderId := data["orderId"]
 		fmt.Printf("\n[Process] Processing order: %v\n", orderId)
@@ -83,7 +90,7 @@ func runBatchChainedExecutionExample() error {
 		}, nil
 	})
 
-	exec.RegisterGoFunction("validate:order", func(ctx context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("validate:order", func(_ context.Context, input interface{}) (interface{}, error) {
 		data := input.(map[string]interface{})
 		orderId := data["orderId"]
 		fmt.Printf("[Validate] Validating order: %v\n", orderId)
@@ -181,7 +188,7 @@ States:
 		OnExecutionStart: func(sourceExecutionID string, index int) {
 			fmt.Printf("\n[Batch Sequential] Starting execution %d for source: %s\n", index, sourceExecutionID)
 		},
-		OnExecutionComplete: func(sourceExecutionID string, index int, err error) {
+		OnExecutionComplete: func(_ string, index int, err error) {
 			if err != nil {
 				fmt.Printf("[Batch Sequential] Execution %d failed: %v\n", index, err)
 			} else {
@@ -215,7 +222,7 @@ States:
 		OnExecutionStart: func(sourceExecutionID string, index int) {
 			fmt.Printf("\n[Batch Concurrent] Starting execution %d for source: %s\n", index, sourceExecutionID)
 		},
-		OnExecutionComplete: func(sourceExecutionID string, index int, err error) {
+		OnExecutionComplete: func(_ string, index int, err error) {
 			if err != nil {
 				fmt.Printf("[Batch Concurrent] Execution %d failed: %v\n", index, err)
 			} else {
@@ -287,6 +294,7 @@ States:
 		},
 		"",
 		transformerBatchOpts,
+		statemachine.WithInputTransformerName("custom_transformer"),
 		statemachine.WithInputTransformer(func(output interface{}) (interface{}, error) {
 			fmt.Println("[Transformer] Transforming input...")
 			data := output.(map[string]interface{})

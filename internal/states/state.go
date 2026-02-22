@@ -42,6 +42,7 @@ type RetryRule struct {
 	JitterStrategy  string   `json:"JitterStrategy,omitempty"`
 }
 
+// CatchRule defines error handling for a state.
 type CatchRule struct {
 	ErrorEquals []string `json:"ErrorEquals"`
 	ResultPath  *string  `json:"ResultPath,omitempty"`
@@ -60,11 +61,19 @@ type BaseState struct {
 	Comment    string  `json:"Comment,omitempty"`
 }
 
-func (s *BaseState) GetName() string  { return s.Name }
-func (s *BaseState) GetType() string  { return s.Type }
-func (s *BaseState) GetNext() *string { return s.Next }
-func (s *BaseState) IsEnd() bool      { return s.End }
+// GetName returns the state name.
+func (s *BaseState) GetName() string { return s.Name }
 
+// GetType returns the state type.
+func (s *BaseState) GetType() string { return s.Type }
+
+// GetNext returns the next state name.
+func (s *BaseState) GetNext() *string { return s.Next }
+
+// IsEnd returns whether this is a terminal state.
+func (s *BaseState) IsEnd() bool { return s.End }
+
+// Validate validates the base state configuration.
 func (s *BaseState) Validate() error {
 	if s.Name == "" {
 		return fmt.Errorf("state name cannot be empty")
@@ -81,6 +90,7 @@ func (s *BaseState) Validate() error {
 	return nil
 }
 
+// MarshalJSON implements custom JSON marshaling for BaseState.
 func (s *BaseState) MarshalJSON() ([]byte, error) {
 	type Alias BaseState
 	aux := &struct {
@@ -136,7 +146,8 @@ func (s *BaseState) GetNextStates() []string {
 	return []string{}
 }
 
-func (s *BaseState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
+// Execute is not implemented for base state and returns an error.
+func (s *BaseState) Execute(_ context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	return nil, nil, fmt.Errorf("Execute not implemented for base state")
 }
 

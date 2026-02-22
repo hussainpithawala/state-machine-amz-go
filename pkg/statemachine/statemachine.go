@@ -22,6 +22,7 @@ import (
 
 // StateMachine represents an Amazon States Language state machine
 type StateMachine struct {
+	Name           string                  `json:"Name"`
 	Comment        string                  `json:"Comment,omitempty"`
 	StartAt        string                  `json:"StartAt"`
 	States         map[string]states.State `json:"-"` // Populated after unmarshaling
@@ -36,6 +37,7 @@ type StateMachine struct {
 
 // rawStateMachine is a temporary struct for unmarshaling
 type rawStateMachine struct {
+	Name           string                     `json:"Name"`
 	Comment        string                     `json:"Comment,omitempty"`
 	StartAt        string                     `json:"StartAt"`
 	States         map[string]json.RawMessage `json:"States"`
@@ -63,6 +65,7 @@ func New(definition []byte, isJson bool) (*StateMachine, error) {
 
 	// Create the StateMachine instance
 	sm := &StateMachine{
+		Name:           rawSM.Name,
 		Comment:        rawSM.Comment,
 		StartAt:        rawSM.StartAt,
 		TimeoutSeconds: rawSM.TimeoutSeconds,
@@ -294,9 +297,14 @@ func (sm *StateMachine) ToRecord() (*repository.StateMachineRecord, error) {
 		return nil, fmt.Errorf("failed to marshal state machine definition: %w", err)
 	}
 
+	name := sm.Name
+	if sm.Name == "" {
+		name = sm.ID
+	}
+
 	return &repository.StateMachineRecord{
 		ID:          sm.ID,
-		Name:        sm.ID, // Using ID as name if not otherwise specified
+		Name:        name,
 		Description: sm.Comment,
 		Definition:  string(definition),
 		Version:     sm.Version,
@@ -309,10 +317,11 @@ func (sm *StateMachine) ToRecord() (*repository.StateMachineRecord, error) {
 type ExecutionOption func(*ExecutionConfig)
 
 type ExecutionConfig struct {
-	Name              string
-	SourceExecutionID string                                 // Execution ID to chain from
-	SourceStateName   string                                 // Optional: specific state to get output from
-	InputTransformer  func(interface{}) (interface{}, error) // Optional: transform source output to input
+	Name                 string
+	SourceExecutionID    string                                 // Execution ID to chain from
+	SourceStateName      string                                 // Optional: specific state to get output from
+	InputTransformerName string                                 // Optional: name of registered transformer
+	InputTransformer     func(interface{}) (interface{}, error) // Optional: transform source output to input
 }
 
 // WithExecutionName sets the execution name
@@ -337,6 +346,13 @@ func WithSourceExecution(executionID string, stateName ...string) ExecutionOptio
 func WithInputTransformer(transformer func(interface{}) (interface{}, error)) ExecutionOption {
 	return func(c *ExecutionConfig) {
 		c.InputTransformer = transformer
+	}
+}
+
+// WithInputTransformerName sets the name of the input transformer for configuring execution options.
+func WithInputTransformerName(transformerName string) ExecutionOption {
+	return func(c *ExecutionConfig) {
+		c.InputTransformerName = transformerName
 	}
 }
 

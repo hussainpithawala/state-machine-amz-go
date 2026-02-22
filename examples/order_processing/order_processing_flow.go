@@ -126,7 +126,7 @@ func main() {
 	workflowPath := filepath.Join("workflows", "order_processing.yaml")
 	smDef, err := loadStateMachineDefinition(workflowPath)
 	if err != nil {
-		log.Fatalf("Failed to load state machine definition: %v", err)
+		log.Printf("Failed to load state machine definition: %v", err)
 	}
 
 	fmt.Printf("✓ Loaded state machine: %s\n", smDef.Comment)

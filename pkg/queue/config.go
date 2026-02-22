@@ -10,13 +10,10 @@ import (
 
 // Config represents the queue configuration
 type Config struct {
-	RedisAddr     string
-	RedisPassword string
-	RedisDB       int
-	Concurrency   int
-	Queues        map[string]int
-	RetryPolicy   *RetryPolicy
-	TlsConfig     *tls.Config
+	RedisClientOpt *asynq.RedisClientOpt
+	Concurrency    int
+	Queues         map[string]int
+	RetryPolicy    *RetryPolicy
 }
 
 // RetryPolicy defines retry behavior for failed tasks
@@ -28,10 +25,19 @@ type RetryPolicy struct {
 // DefaultConfig returns a default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		RedisAddr:     "localhost:6379",
-		RedisPassword: "",
-		RedisDB:       0,
-		Concurrency:   10,
+		RedisClientOpt: &asynq.RedisClientOpt{
+			Addr:         "localhost:6379",
+			Password:     "redispassword",
+			DB:           0,
+			DialTimeout:  10 * time.Second,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+			PoolSize:     20,
+			TLSConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+		Concurrency: 10,
 		Queues: map[string]int{
 			"critical": 6, // Highest priority
 			"timeout":  5, // High priority for timeout events
@@ -47,7 +53,7 @@ func DefaultConfig() *Config {
 
 // Validate validates the configuration
 func (c *Config) Validate() error {
-	if c.RedisAddr == "" {
+	if c.RedisClientOpt.Addr == "" {
 		return fmt.Errorf("redis address is required")
 	}
 	if c.Concurrency <= 0 {
@@ -65,12 +71,7 @@ func (c *Config) Validate() error {
 
 // GetRedisClientOpt returns asynq Redis client options
 func (c *Config) GetRedisClientOpt() asynq.RedisClientOpt {
-	return asynq.RedisClientOpt{
-		Addr:      c.RedisAddr,
-		Password:  c.RedisPassword,
-		DB:        c.RedisDB,
-		TLSConfig: c.TlsConfig,
-	}
+	return *c.RedisClientOpt
 }
 
 // GetServerConfig returns asynq server configuration

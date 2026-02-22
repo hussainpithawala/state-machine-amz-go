@@ -274,7 +274,7 @@ func (t *TaskState) Execute(ctx context.Context, input interface{}) (result inte
 	handler := t.getTaskHandler()
 
 	// Execute task with retry logic
-	result, taskErr, retryExhausted := t.executeWithRetry(ctx, handler, taskInput)
+	result, retryExhausted, taskErr := t.executeWithRetry(ctx, handler, taskInput)
 	if taskErr != nil && retryExhausted {
 		return nil, nil, taskErr
 	}
@@ -316,7 +316,7 @@ func (t *TaskState) getTaskHandler() TaskHandler {
 }
 
 // executeWithRetry handles task execution with retry logic
-func (t *TaskState) executeWithRetry(ctx context.Context, handler TaskHandler, taskInput interface{}) (interface{}, error, bool) {
+func (t *TaskState) executeWithRetry(ctx context.Context, handler TaskHandler, taskInput interface{}) (interface{}, bool, error) {
 	maxAttempts := t.calculateMaxAttempts()
 	backoffDuration := time.Duration(1) * time.Second
 
@@ -326,13 +326,13 @@ func (t *TaskState) executeWithRetry(ctx context.Context, handler TaskHandler, t
 
 		// If successful, return result
 		if taskErr == nil {
-			return result, nil, true
+			return result, true, nil
 		}
 
 		// Check if we should retry
 		shouldRetry := t.shouldRetry(taskErr, attempt, maxAttempts)
 		if !shouldRetry {
-			return nil, taskErr, false
+			return nil, false, taskErr
 		}
 
 		// Update backoff duration
@@ -340,11 +340,11 @@ func (t *TaskState) executeWithRetry(ctx context.Context, handler TaskHandler, t
 
 		// Wait before retrying
 		if err := t.waitForRetry(ctx, backoffDuration); err != nil {
-			return nil, err, false
+			return nil, false, err
 		}
 	}
 
-	return nil, fmt.Errorf("max retry attempts exceeded"), false
+	return nil, false, fmt.Errorf("max retry attempts exceeded")
 }
 
 // calculateMaxAttempts determines the maximum number of retry attempts
@@ -457,7 +457,7 @@ func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInp
 // processSuccessfulResult processes successful task results
 func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor,
 	processedInput interface{}, result interface{}) (op2 interface{}, op3 *string, op4 error) {
-	var output interface{} = result
+	output := result
 	var err error
 	// Apply result selector if provided
 	if t.ResultSelector != nil {

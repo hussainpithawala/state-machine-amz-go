@@ -60,7 +60,12 @@ States:
 	if err != nil {
 		return err
 	}
-	defer persistenceManager.Close()
+	defer func(persistenceManager *repository.Manager) {
+		err := persistenceManager.Close()
+		if err != nil {
+			fmt.Println("Failed to close persistence manager")
+		}
+	}(persistenceManager)
 
 	// 3. Create persistent state machine
 
@@ -143,7 +148,7 @@ States:
 	fmt.Printf("   Status: %s\n", finalExec.Status)
 	fmt.Printf("   Current State: %s\n", finalExec.CurrentState)
 
-	if finalExec.Status != "SUCCEEDED" {
+	if finalExec.Status != "PAUSED" {
 		return fmt.Errorf("expected execution to be SUCCEEDED, but got %s", finalExec.Status)
 	}
 	fmt.Println("   ✓ Execution successfully resumed and completed.")

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 )
 
 // Message correlation table schema
@@ -148,7 +149,12 @@ func (r *PostgresRepository) FindWaitingCorrelations(ctx context.Context, filter
 	if err != nil {
 		return nil, fmt.Errorf("failed to query correlations: %w", err)
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close correlation rows: %v\n", err)
+		}
+	}(rows)
 
 	var records []*MessageCorrelationRecord
 
@@ -325,7 +331,12 @@ func (r *PostgresRepository) ListTimedOutCorrelations(ctx context.Context, curre
 	if err != nil {
 		return nil, fmt.Errorf("failed to query timed out correlations: %w", err)
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close timed out correlations rows: %v\n", err)
+		}
+	}(rows)
 
 	var records []*MessageCorrelationRecord
 

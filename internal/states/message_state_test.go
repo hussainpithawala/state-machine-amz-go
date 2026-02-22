@@ -15,6 +15,11 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 )
 
+const (
+	processConfirmation = "ProcessConfirmation"
+	processPayment      = "ProcessPayment"
+)
+
 func TestMessageState_Creation(t *testing.T) {
 	messageState := states.NewMessageState("WaitForConfirmation", "user_confirmation")
 
@@ -25,6 +30,7 @@ func TestMessageState_Creation(t *testing.T) {
 }
 
 func TestMessageState_Validation(t *testing.T) {
+	const processPayment = "ProcessPayment"
 	tests := []struct {
 		name        string
 		setupState  func() *states.MessageState
@@ -35,7 +41,7 @@ func TestMessageState_Validation(t *testing.T) {
 			name: "valid state",
 			setupState: func() *states.MessageState {
 				state := states.NewMessageState("WaitForPayment", "payment_key")
-				next := "ProcessPayment"
+				next := processPayment
 				state.Next = &next
 				return state
 			},
@@ -45,7 +51,7 @@ func TestMessageState_Validation(t *testing.T) {
 			name: "missing correlation key",
 			setupState: func() *states.MessageState {
 				state := states.NewMessageState("WaitForPayment", "")
-				next := "ProcessPayment"
+				next := processPayment
 				state.Next = &next
 				return state
 			},
@@ -56,7 +62,7 @@ func TestMessageState_Validation(t *testing.T) {
 			name: "negative timeout",
 			setupState: func() *states.MessageState {
 				state := states.NewMessageState("WaitForPayment", "payment_key")
-				next := "ProcessPayment"
+				next := processPayment
 				state.Next = &next
 				timeout := -100
 				state.TimeoutSeconds = &timeout
@@ -96,7 +102,7 @@ func TestMessageState_PreMessageExecution(t *testing.T) {
 	ctx := context.Background()
 
 	messageState := states.NewMessageState("WaitForPayment", "payment_confirmation")
-	next := "ProcessPayment"
+	next := processPayment
 	messageState.Next = &next
 	correlationPath := "$.transactionId"
 	messageState.CorrelationValuePath = &correlationPath
@@ -127,7 +133,7 @@ func TestMessageState_PostMessageExecution(t *testing.T) {
 	ctx := context.Background()
 
 	messageState := states.NewMessageState("WaitForPayment", "payment_confirmation")
-	next := "ProcessPayment"
+	next := processPayment
 	messageState.Next = &next
 	receivedMessageKey := fmt.Sprintf("%s_%s", states.ReceivedMessageBase, messageState.Name)
 
@@ -188,7 +194,7 @@ func TestMessageState_JSONMarshaling(t *testing.T) {
 
 func TestMessageState_GetNextStates(t *testing.T) {
 	messageState := states.NewMessageState("WaitForPayment", "payment_key")
-	next := "ProcessPayment"
+	next := processPayment
 	messageState.Next = &next
 
 	// Add catch rules
@@ -377,7 +383,8 @@ func TestMessageState_CorrelationValueExtraction(t *testing.T) {
 
 func TestMessageState_Timeout(t *testing.T) {
 	messageState := states.NewMessageState("WaitForConfirmation", "confirmation_key")
-	next := "ProcessConfirmation"
+
+	next := processConfirmation
 	messageState.Next = &next
 	timeout := 300
 	messageState.TimeoutSeconds = &timeout
@@ -401,6 +408,7 @@ func TestMessageState_Timeout(t *testing.T) {
 func TestMessageState_TimeoutExecution(t *testing.T) {
 	ctx := context.Background()
 
+	const handleTimeOut = "HandleTimeout"
 	tests := []struct {
 		name           string
 		setupState     func() *states.MessageState
@@ -413,11 +421,11 @@ func TestMessageState_TimeoutExecution(t *testing.T) {
 			name: "timeout with TimeoutPath",
 			setupState: func() *states.MessageState {
 				state := states.NewMessageState("WaitForConfirmation", "confirmation_key")
-				next := "ProcessConfirmation"
+				next := processConfirmation
 				state.Next = &next
 				timeout := 300
 				state.TimeoutSeconds = &timeout
-				timeoutPath := "HandleTimeout"
+				timeoutPath := handleTimeOut
 				state.TimeoutPath = &timeoutPath
 				return state
 			},
@@ -426,7 +434,7 @@ func TestMessageState_TimeoutExecution(t *testing.T) {
 				"orderId": "ORD-123",
 			},
 			expectedNext: func() *string {
-				s := "HandleTimeout"
+				s := handleTimeOut
 				return &s
 			}(),
 			expectError: false,
@@ -441,7 +449,7 @@ func TestMessageState_TimeoutExecution(t *testing.T) {
 			name: "timeout without TimeoutPath",
 			setupState: func() *states.MessageState {
 				state := states.NewMessageState("WaitForConfirmation", "confirmation_key")
-				next := "ProcessConfirmation"
+				next := processConfirmation
 				state.Next = &next
 				timeout := 300
 				state.TimeoutSeconds = &timeout
@@ -463,11 +471,11 @@ func TestMessageState_TimeoutExecution(t *testing.T) {
 			name: "timeout with ResultPath preserves original input",
 			setupState: func() *states.MessageState {
 				state := states.NewMessageState("WaitForConfirmation", "confirmation_key")
-				next := "ProcessConfirmation"
+				next := processConfirmation
 				state.Next = &next
 				timeout := 300
 				state.TimeoutSeconds = &timeout
-				timeoutPath := "HandleTimeout"
+				timeoutPath := handleTimeOut
 				state.TimeoutPath = &timeoutPath
 
 				// Apply ResultPath to merge timeout result back
@@ -483,7 +491,7 @@ func TestMessageState_TimeoutExecution(t *testing.T) {
 				"amount":  100.00,
 			},
 			expectedNext: func() *string {
-				s := "HandleTimeout"
+				s := handleTimeOut
 				return &s
 			}(),
 			expectError: false,
@@ -534,7 +542,7 @@ func TestMessageState_TimeoutExecution(t *testing.T) {
 func BenchmarkMessageState_Execute(b *testing.B) {
 	ctx := context.Background()
 	messageState := states.NewMessageState("WaitForPayment", "payment_key")
-	next := "ProcessPayment"
+	next := processPayment
 	messageState.Next = &next
 
 	input := map[string]interface{}{
@@ -550,7 +558,7 @@ func BenchmarkMessageState_Execute(b *testing.B) {
 
 func BenchmarkMessageState_JSONMarshaling(b *testing.B) {
 	messageState := states.NewMessageState("WaitForPayment", "payment_key")
-	next := "ProcessPayment"
+	next := processPayment
 	messageState.Next = &next
 
 	b.ResetTimer()

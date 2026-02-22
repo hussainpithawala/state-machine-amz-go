@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// FAILED is the status constant for failed executions.
 const FAILED = "FAILED"
 
 // Execution represents a state machine execution instance
@@ -24,6 +25,8 @@ type Execution struct {
 	History        []StateHistory
 	Metadata       map[string]interface{}
 }
+
+// MarkFailed marks the execution as failed with the given error.
 
 func (e *Execution) MarkFailed(err error) {
 	e.Status = FAILED

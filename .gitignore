@@ -33,3 +33,21 @@ build
 # .vscode/
 /api-docs/
 /docker-examples/postgres_14/data/
+/examples/test_secure_redis/redis/tls/ca.crt
+/examples/test_secure_redis/redis/tls/ca.key
+/examples/test_secure_redis/redis/tls/ca.txt
+/examples/test_secure_redis/redis/tls/redis.crt
+/examples/test_secure_redis/redis/tls/redis.key
+/examples/test_tls_conn/redis/tls/ca.crt
+/examples/test_tls_conn/redis/tls/ca.key
+/examples/test_tls_conn/redis/tls/ca.txt
+/examples/test_tls_conn/redis/tls/redis.crt
+/examples/test_tls_conn/redis/tls/redis.key
+/docker-examples/redis/tls/ca.crt
+/docker-examples/redis/tls/ca.key
+/docker-examples/redis/tls/ca.txt
+/docker-examples/redis/tls/redis.crt
+/docker-examples/redis/tls/redis.key
+/redis/
+
+pkg/.DS_Store

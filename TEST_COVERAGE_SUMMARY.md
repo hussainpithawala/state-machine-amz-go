@@ -211,7 +211,7 @@ Potential areas for additional test coverage:
 
 The tests require:
 
-- Go 1.23+
+- Go 1.24+
 - Docker and Docker Compose
 - Postgres 15+
 - Redis 7+

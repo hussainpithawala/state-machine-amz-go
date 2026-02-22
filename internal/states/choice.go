@@ -46,7 +46,7 @@ type ChoiceRule struct {
 }
 
 // Execute executes the Choice state
-func (s *ChoiceState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
+func (s *ChoiceState) Execute(_ context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	// Process input path
 	processor := GetPathProcessor()
 	processedInput, err := processor.ApplyInputPath(input, s.InputPath)
@@ -101,7 +101,7 @@ func (s *ChoiceState) Execute(ctx context.Context, input interface{}) (result in
 // evaluateChoice evaluates a single choice rule
 func (s *ChoiceState) evaluateChoice(rule *ChoiceRule, input interface{}) (bool, error) {
 	// Determine the context for this rule
-	var context interface{} = input
+	context := input
 	if rule.Variable != "" {
 		context = s.getVariableValue(rule.Variable, input)
 		// If the variable doesn't exist, the choice evaluates to false
@@ -303,10 +303,10 @@ func (s *ChoiceState) compareBoolean(variableValue interface{}, expected bool) (
 		// Try to convert from string
 		if strValue, ok := variableValue.(string); ok {
 			lowerStr := strings.ToLower(strValue)
-			switch {
-			case lowerStr == "true":
+			switch lowerStr {
+			case "true":
 				boolValue = true
-			case lowerStr == "false":
+			case "false":
 				boolValue = false
 			default:
 				return false, fmt.Errorf("cannot convert string '%s' to boolean", strValue)

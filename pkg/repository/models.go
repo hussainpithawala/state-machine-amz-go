@@ -165,3 +165,20 @@ type ExecutionStatisticsModel struct {
 func (ExecutionStatisticsModel) TableName() string {
 	return "execution_statistics"
 }
+
+// LinkedExecutionModel represents the linked_executions table
+type LinkedExecutionModel struct {
+	ID                     string    `gorm:"primaryKey;size:255;not null"`
+	SourceStateMachineID   string    `gorm:"size:255;not null;index:idx_linked_source_sm"`
+	SourceExecutionID      string    `gorm:"size:255;not null;index:idx_linked_source_exec"`
+	SourceStateName        string    `gorm:"size:255"`
+	InputTransformerName   string    `gorm:"size:255"`
+	TargetStateMachineName string    `gorm:"size:255;not null"`
+	TargetExecutionID      string    `gorm:"size:255;not null;index:idx_linked_target_exec"`
+	CreatedAt              time.Time `gorm:"autoCreateTime"`
+}
+
+// TableName specifies the table name for LinkedExecutionModel
+func (LinkedExecutionModel) TableName() string {
+	return "linked_executions"
+}
