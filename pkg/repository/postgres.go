@@ -1384,57 +1384,80 @@ func (ps *PostgresRepository) ListLinkedExecutions(ctx context.Context, filter *
 	var args []interface{}
 	argPos := 1
 
+	// Determine if we need to join with executions table for status filtering
+	needsJoin := filter != nil && filter.SourceExecutionStatus != ""
+
 	// Build WHERE clause
 	if filter != nil {
 		if filter.SourceStateMachineID != "" {
-			conditions = append(conditions, fmt.Sprintf("source_state_machine_id = $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.source_state_machine_id = $%d", argPos))
 			args = append(args, filter.SourceStateMachineID)
 			argPos++
 		}
 		if filter.SourceExecutionID != "" {
-			conditions = append(conditions, fmt.Sprintf("source_execution_id = $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.source_execution_id = $%d", argPos))
 			args = append(args, filter.SourceExecutionID)
 			argPos++
 		}
 		if filter.SourceStateName != "" {
-			conditions = append(conditions, fmt.Sprintf("source_state_name = $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.source_state_name = $%d", argPos))
 			args = append(args, filter.SourceStateName)
 			argPos++
 		}
+		if filter.SourceExecutionStatus != "" {
+			conditions = append(conditions, fmt.Sprintf("e.status = $%d", argPos))
+			args = append(args, filter.SourceExecutionStatus)
+			argPos++
+		}
+		if filter.InputTransformerName != "" {
+			conditions = append(conditions, fmt.Sprintf("le.input_transformer_name = $%d", argPos))
+			args = append(args, filter.InputTransformerName)
+			argPos++
+		}
 		if filter.TargetStateMachineName != "" {
-			conditions = append(conditions, fmt.Sprintf("target_state_machine_name = $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.target_state_machine_name = $%d", argPos))
 			args = append(args, filter.TargetStateMachineName)
 			argPos++
 		}
 		if filter.TargetExecutionID != "" {
-			conditions = append(conditions, fmt.Sprintf("target_execution_id = $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.target_execution_id = $%d", argPos))
 			args = append(args, filter.TargetExecutionID)
 			argPos++
 		}
 		if !filter.CreatedAfter.IsZero() {
-			conditions = append(conditions, fmt.Sprintf("created_at >= $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.created_at >= $%d", argPos))
 			args = append(args, filter.CreatedAfter)
 			argPos++
 		}
 		if !filter.CreatedBefore.IsZero() {
-			conditions = append(conditions, fmt.Sprintf("created_at <= $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.created_at <= $%d", argPos))
 			args = append(args, filter.CreatedBefore)
 			argPos++
 		}
 	}
 
 	// Build query
-	query := `
-		SELECT id, source_state_machine_id, source_execution_id, source_state_name,
-		       input_transformer_name, target_state_machine_name, target_execution_id, created_at
-		FROM linked_executions
-	`
+	var query string
+	if needsJoin {
+		query = `
+			SELECT le.id, le.source_state_machine_id, le.source_execution_id, le.source_state_name,
+				   le.input_transformer_name, le.target_state_machine_name, le.target_execution_id, le.created_at
+			FROM linked_executions le
+			INNER JOIN executions e ON le.source_execution_id = e.execution_id
+		`
+	} else {
+		query = `
+			SELECT id, source_state_machine_id, source_execution_id, source_state_name,
+				   input_transformer_name, target_state_machine_name, target_execution_id, created_at
+			FROM linked_executions le
+		`
+	}
 
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY le.created_at DESC"
 
 	// Apply pagination
 	if filter != nil {
@@ -1492,46 +1515,64 @@ func (ps *PostgresRepository) CountLinkedExecutions(ctx context.Context, filter 
 	var args []interface{}
 	argPos := 1
 
+	// Determine if we need to join with executions table for status filtering
+	needsJoin := filter != nil && filter.SourceExecutionStatus != ""
+
 	// Build WHERE clause
 	if filter != nil {
 		if filter.SourceStateMachineID != "" {
-			conditions = append(conditions, fmt.Sprintf("source_state_machine_id = $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.source_state_machine_id = $%d", argPos))
 			args = append(args, filter.SourceStateMachineID)
 			argPos++
 		}
 		if filter.SourceExecutionID != "" {
-			conditions = append(conditions, fmt.Sprintf("source_execution_id = $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.source_execution_id = $%d", argPos))
 			args = append(args, filter.SourceExecutionID)
 			argPos++
 		}
 		if filter.SourceStateName != "" {
-			conditions = append(conditions, fmt.Sprintf("source_state_name = $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.source_state_name = $%d", argPos))
 			args = append(args, filter.SourceStateName)
 			argPos++
 		}
+		if filter.SourceExecutionStatus != "" {
+			conditions = append(conditions, fmt.Sprintf("e.status = $%d", argPos))
+			args = append(args, filter.SourceExecutionStatus)
+			argPos++
+		}
+		if filter.InputTransformerName != "" {
+			conditions = append(conditions, fmt.Sprintf("le.input_transformer_name = $%d", argPos))
+			args = append(args, filter.InputTransformerName)
+			argPos++
+		}
 		if filter.TargetStateMachineName != "" {
-			conditions = append(conditions, fmt.Sprintf("target_state_machine_name = $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.target_state_machine_name = $%d", argPos))
 			args = append(args, filter.TargetStateMachineName)
 			argPos++
 		}
 		if filter.TargetExecutionID != "" {
-			conditions = append(conditions, fmt.Sprintf("target_execution_id = $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.target_execution_id = $%d", argPos))
 			args = append(args, filter.TargetExecutionID)
 			argPos++
 		}
 		if !filter.CreatedAfter.IsZero() {
-			conditions = append(conditions, fmt.Sprintf("created_at >= $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.created_at >= $%d", argPos))
 			args = append(args, filter.CreatedAfter)
 			argPos++
 		}
 		if !filter.CreatedBefore.IsZero() {
-			conditions = append(conditions, fmt.Sprintf("created_at <= $%d", argPos))
+			conditions = append(conditions, fmt.Sprintf("le.created_at <= $%d", argPos))
 			args = append(args, filter.CreatedBefore)
 		}
 	}
 
 	// Build query
-	query := "SELECT COUNT(*) FROM linked_executions"
+	var query string
+	if needsJoin {
+		query = "SELECT COUNT(*) FROM linked_executions le INNER JOIN executions e ON le.source_execution_id = e.execution_id"
+	} else {
+		query = "SELECT COUNT(*) FROM linked_executions le"
+	}
 
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
@@ -1544,4 +1585,177 @@ func (ps *PostgresRepository) CountLinkedExecutions(ctx context.Context, filter 
 	}
 
 	return count, nil
+}
+
+// ListNonLinkedExecutions lists executions that have no linked executions matching the filter criteria
+// This allows finding executions that don't have specific types of linked executions
+// For example: executions with no SUCCEEDED linked executions from a specific state
+func (ps *PostgresRepository) ListNonLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) ([]*ExecutionRecord, error) {
+	// Build the subquery for filtered linked executions
+	var subConditions []string
+	var args []interface{}
+	argPos := 1
+
+	// Build subquery conditions
+	if filter != nil {
+		if filter.SourceStateName != "" {
+			subConditions = append(subConditions, fmt.Sprintf("le.source_state_name = $%d", argPos))
+			args = append(args, filter.SourceStateName)
+			argPos++
+		}
+		if filter.InputTransformerName != "" {
+			subConditions = append(subConditions, fmt.Sprintf("le.input_transformer_name = $%d", argPos))
+			args = append(args, filter.InputTransformerName)
+			argPos++
+		}
+		if filter.TargetStateMachineName != "" {
+			subConditions = append(subConditions, fmt.Sprintf("le.target_state_machine_name = $%d", argPos))
+			args = append(args, filter.TargetStateMachineName)
+			argPos++
+		}
+		if !filter.CreatedAfter.IsZero() {
+			subConditions = append(subConditions, fmt.Sprintf("le.created_at >= $%d", argPos))
+			args = append(args, filter.CreatedAfter)
+			argPos++
+		}
+		if !filter.CreatedBefore.IsZero() {
+			subConditions = append(subConditions, fmt.Sprintf("le.created_at <= $%d", argPos))
+			args = append(args, filter.CreatedBefore)
+			argPos++
+		}
+	}
+
+	// Build the subquery
+	subQuery := "SELECT le.source_execution_id FROM linked_executions le"
+	if len(subConditions) > 0 {
+		subQuery += " WHERE " + strings.Join(subConditions, " AND ")
+	}
+
+	// Main query
+	baseQuery := fmt.Sprintf(`
+		SELECT DISTINCT
+			e.execution_id,
+			e.state_machine_id,
+			e.name,
+			e.input,
+			e.output,
+			e.status,
+			e.start_time,
+			e.end_time,
+			e.current_state,
+			e.error,
+			e.metadata
+		FROM executions e
+		LEFT JOIN (%s) AS filtered_links ON e.execution_id = filtered_links.source_execution_id
+		WHERE filtered_links.source_execution_id IS NULL
+	`, subQuery)
+
+	// Apply execution filters
+	var execConditions []string
+	if filter != nil {
+		if filter.SourceStateMachineID != "" {
+			execConditions = append(execConditions, fmt.Sprintf("e.state_machine_id = $%d", argPos))
+			args = append(args, filter.SourceStateMachineID)
+			argPos++
+		}
+		if filter.SourceExecutionID != "" {
+			execConditions = append(execConditions, fmt.Sprintf("e.execution_id = $%d", argPos))
+			args = append(args, filter.SourceExecutionID)
+			argPos++
+		}
+		if filter.SourceExecutionStatus != "" {
+			execConditions = append(execConditions, fmt.Sprintf("e.status = $%d", argPos))
+			args = append(args, filter.SourceExecutionStatus)
+			argPos++
+		}
+
+		if len(execConditions) > 0 {
+			baseQuery += " AND " + strings.Join(execConditions, " AND ")
+		}
+	}
+
+	// Add ordering
+	baseQuery += " ORDER BY e.start_time DESC"
+
+	// Add pagination
+	if filter != nil {
+		if filter.Limit > 0 {
+			baseQuery += fmt.Sprintf(" LIMIT $%d", argPos)
+			args = append(args, filter.Limit)
+			argPos++
+		}
+		if filter.Offset > 0 {
+			baseQuery += fmt.Sprintf(" OFFSET $%d", argPos)
+			args = append(args, filter.Offset)
+			argPos++
+		}
+	}
+
+	rows, err := ps.db.QueryContext(ctx, baseQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list non-linked executions: %w", err)
+	}
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			log.Printf("Failed to close non-linked executions rows: %v\n", err)
+		}
+	}(rows)
+
+	var executions []*ExecutionRecord
+	for rows.Next() {
+		var exec ExecutionRecord
+		var inputJSON, outputJSON, metadataJSON []byte
+		var endTime sql.NullTime
+		var errorMsg sql.NullString
+
+		err := rows.Scan(
+			&exec.ExecutionID,
+			&exec.StateMachineID,
+			&exec.Name,
+			&inputJSON,
+			&outputJSON,
+			&exec.Status,
+			&exec.StartTime,
+			&endTime,
+			&exec.CurrentState,
+			&errorMsg,
+			&metadataJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan execution: %w", err)
+		}
+
+		// Parse JSON fields
+		if inputJSON != nil {
+			if err := json.Unmarshal(inputJSON, &exec.Input); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal input: %w", err)
+			}
+		}
+		if outputJSON != nil {
+			if err := json.Unmarshal(outputJSON, &exec.Output); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal output: %w", err)
+			}
+		}
+		if metadataJSON != nil {
+			if err := json.Unmarshal(metadataJSON, &exec.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			}
+		}
+
+		if endTime.Valid {
+			exec.EndTime = &endTime.Time
+		}
+		if errorMsg.Valid {
+			exec.Error = errorMsg.String
+		}
+
+		executions = append(executions, &exec)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating non-linked executions: %w", err)
+	}
+
+	return executions, nil
 }
