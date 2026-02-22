@@ -643,6 +643,42 @@ func (pm *StateMachine) ExecuteBatch(
 		}
 	}
 
+	linkedExecutionFilter := &repository.LinkedExecutionFilter{}
+	config := &statemachine2.ExecutionConfig{}
+	for _, execOpt := range execOpts {
+		execOpt(config)
+	}
+
+	if config.ApplyUnique {
+		linkedExecutionFilter.SourceStateMachineID = filter.StateMachineID
+		if sourceStateName != "" {
+			linkedExecutionFilter.SourceStateName = sourceStateName
+		}
+		if config.InputTransformerName != "" {
+			linkedExecutionFilter.InputTransformerName = config.InputTransformerName
+		}
+
+		sourceExecutionIDs, err := pm.repositoryManager.ListNonLinkedExecutions(ctx, filter, linkedExecutionFilter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list source executions: %w", err)
+		}
+
+		if len(sourceExecutionIDs) == 0 {
+			return []*BatchExecutionResult{}, nil
+		}
+
+		stringExecutionIDs := make([]string, len(sourceExecutionIDs))
+		for i, v := range sourceExecutionIDs {
+			stringExecutionIDs[i] = v.ExecutionID
+		}
+
+		// Execute in sequential or concurrent mode
+		if opts.ConcurrentBatches <= 1 {
+			return pm.executeBatchSequential(ctx, stringExecutionIDs, sourceStateName, opts, execOpts...)
+		}
+		return pm.executeBatchConcurrent(ctx, stringExecutionIDs, sourceStateName, opts, execOpts...)
+
+	}
 	// Retrieve source execution IDs based on filter
 	sourceExecutionIDs, err := pm.repositoryManager.ListExecutionIDs(ctx, filter)
 	if err != nil {
@@ -658,6 +694,7 @@ func (pm *StateMachine) ExecuteBatch(
 		return pm.executeBatchSequential(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
 	}
 	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
+
 }
 
 // executeBatchSequential executes chained executions sequentially
