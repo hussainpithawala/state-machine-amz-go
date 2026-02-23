@@ -101,6 +101,9 @@ func (h *ExecutionHandler) handleRegularExecution(ctx context.Context, sm *persi
 		execOpts = append(execOpts,
 			statemachine2.WithSourceExecution(payload.SourceExecutionID, payload.SourceStateName),
 		)
+		execOpts = append(execOpts,
+			statemachine2.WithUniqueness(payload.ApplyUnique))
+		execOpts = append(execOpts, statemachine2.WithInputTransformerName(payload.InputTransformerName))
 	}
 
 	// Execute the state machine

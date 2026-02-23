@@ -15,14 +15,16 @@ const (
 
 // ExecutionTaskPayload represents the payload for a state machine execution task
 type ExecutionTaskPayload struct {
-	StateMachineID    string                 `json:"state_machine_id"`
-	ExecutionID       string                 `json:"execution_id,omitempty"`
-	SourceExecutionID string                 `json:"source_execution_id,omitempty"`
-	SourceStateName   string                 `json:"source_state_name,omitempty"`
-	ExecutionName     string                 `json:"execution_name"`
-	ExecutionIndex    int                    `json:"execution_index,omitempty"`
-	Input             interface{}            `json:"input,omitempty"`
-	Options           map[string]interface{} `json:"options,omitempty"`
+	StateMachineID       string                 `json:"state_machine_id"`
+	ExecutionID          string                 `json:"execution_id,omitempty"`
+	SourceExecutionID    string                 `json:"source_execution_id,omitempty"`
+	SourceStateName      string                 `json:"source_state_name,omitempty"`
+	InputTransformerName string                 `json:"input_transformer_name,omitempty"`
+	ApplyUnique          bool                   `json:"apply_unique,omitempty"`
+	ExecutionName        string                 `json:"execution_name"`
+	ExecutionIndex       int                    `json:"execution_index,omitempty"`
+	Input                interface{}            `json:"input,omitempty"`
+	Options              map[string]interface{} `json:"options,omitempty"`
 	// Timeout-specific fields
 	IsTimeout     bool   `json:"is_timeout,omitempty"`
 	CorrelationID string `json:"correlation_id,omitempty"`

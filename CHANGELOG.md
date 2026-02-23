@@ -1,6 +1,15 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.2.8] - 2026-02-23
+
+### Changed
+- Refactored input transformer handling and enhanced execution payload
+  - Removed redundant inline logic for input transformer name assignment.
+  - Added `InputTransformerName` and `ApplyUnique` fields to `ExecutionTaskPayload`.
+  - Updated execution task creation and processing to include the new fields.
+  - Enhanced state machine execution configuration with input transformer and uniqueness support.
+
 ## [1.2.7] - 2026-02-23
 
 ### Added

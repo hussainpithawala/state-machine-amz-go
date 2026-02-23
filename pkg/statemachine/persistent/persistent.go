@@ -363,20 +363,13 @@ func (pm *StateMachine) saveLinkedExecution(ctx context.Context, execCtx *execut
 		return
 	}
 
-	// Determine input transformer name (if any)
-	inputTransformerName := config.InputTransformerName
-	if config.InputTransformer != nil {
-		// You could store a transformer name if it's registered somewhere
-		inputTransformerName = "custom_transformer"
-	}
-
 	// Create linked execution record
 	linkedRecord := &repository.LinkedExecutionRecord{
 		ID:                     fmt.Sprintf("link-%s-%s", config.SourceExecutionID, execCtx.ID),
 		SourceStateMachineID:   sourceExec.StateMachineID,
 		SourceExecutionID:      config.SourceExecutionID,
 		SourceStateName:        config.SourceStateName,
-		InputTransformerName:   inputTransformerName,
+		InputTransformerName:   config.InputTransformerName,
 		TargetStateMachineName: pm.statemachine.Name,
 		TargetExecutionID:      execCtx.ID,
 		CreatedAt:              time.Now().UTC(),
@@ -778,15 +771,20 @@ func (pm *StateMachine) executeBatchViaQueue(
 		if opts.OnExecutionStart != nil {
 			opts.OnExecutionStart(sourceExecID, idx)
 		}
+		config := &statemachine2.ExecutionConfig{}
+		for _, execOpt := range execOpts {
+			execOpt(config)
+		}
 
 		// Create task payload
 		payload := &queue.ExecutionTaskPayload{
-			StateMachineID:    pm.stateMachineID,
-			SourceExecutionID: sourceExecID,
-			SourceStateName:   sourceStateName,
-			ExecutionName:     fmt.Sprintf("%s-%d", opts.NamePrefix, idx),
-			ExecutionIndex:    idx,
-			Input:             nil, // Input will be derived from source execution
+			StateMachineID:       pm.stateMachineID,
+			SourceExecutionID:    sourceExecID,
+			SourceStateName:      sourceStateName,
+			InputTransformerName: config.InputTransformerName,
+			ExecutionName:        fmt.Sprintf("%s-%d", opts.NamePrefix, idx),
+			ExecutionIndex:       idx,
+			Input:                nil, // Input will be derived from source execution
 		}
 
 		// Enqueue the task
