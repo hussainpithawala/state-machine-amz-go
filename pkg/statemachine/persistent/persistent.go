@@ -680,55 +680,6 @@ func (pm *StateMachine) ExecuteBatch(
 	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
 }
 
-// executeBatchSequential executes chained executions sequentially
-func (pm *StateMachine) executeBatchSequential(
-	ctx context.Context,
-	sourceExecutionIDs []string,
-	sourceStateName string,
-	opts *statemachine2.BatchExecutionOptions,
-	execOpts ...statemachine2.ExecutionOption,
-) ([]*BatchExecutionResult, error) {
-	results := make([]*BatchExecutionResult, 0, len(sourceExecutionIDs))
-
-	for idx, sourceExecID := range sourceExecutionIDs {
-		// Notify start
-		if opts.OnExecutionStart != nil {
-			opts.OnExecutionStart(sourceExecID, idx)
-		}
-
-		// Prepare execution options
-		chainedOpts := make([]statemachine2.ExecutionOption, 0, len(execOpts)+2)
-		chainedOpts = append(chainedOpts, execOpts...)
-		chainedOpts = append(chainedOpts,
-			statemachine2.WithExecutionName(fmt.Sprintf("%s-%d", opts.NamePrefix, idx)),
-			statemachine2.WithSourceExecution(sourceExecID, sourceStateName),
-		)
-
-		// Execute chained execution
-		exec, err := pm.Execute(ctx, nil, chainedOpts...)
-
-		result := &BatchExecutionResult{
-			SourceExecutionID: sourceExecID,
-			Execution:         exec,
-			Error:             err,
-			Index:             idx,
-		}
-		results = append(results, result)
-
-		// Notify completion
-		if opts.OnExecutionComplete != nil {
-			opts.OnExecutionComplete(sourceExecID, idx, err)
-		}
-
-		// Stop on error if configured
-		if err != nil && opts.StopOnError {
-			return results, fmt.Errorf("batch execution stopped due to error at index %d: %w", idx, err)
-		}
-	}
-
-	return results, nil
-}
-
 // executeBatchConcurrent executes chained executions concurrently with controlled parallelism
 // If a queue client is configured, tasks are enqueued to the distributed queue
 // Otherwise, tasks are executed locally with goroutines
