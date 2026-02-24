@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.2.10] - 2026-02-24
+
+### Changed
+- **Batch Processing Refinements**: Fully removed sequential execution logic and refined error messaging.
+  - Completely removed commented-out sequential execution code from batch processing.
+  - Enhanced error messages for improved clarity and debugging.
+
 ## [1.2.9] - 2026-02-24
 
 ### Changed
