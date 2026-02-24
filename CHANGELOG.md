@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.2.9] - 2026-02-24
+
+### Changed
+- **Batch Processing Execution Mode**: Removed sequential execution path in batch processing logic.
+  - Commented out conditional logic for sequential execution.
+  - Defaulted batch processing to always use concurrent execution for improved performance.
+
 ## [1.2.8] - 2026-02-23
 
 ### Changed
