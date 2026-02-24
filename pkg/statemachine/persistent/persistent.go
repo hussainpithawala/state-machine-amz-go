@@ -682,9 +682,9 @@ func (pm *StateMachine) ExecuteBatch(
 	}
 
 	// Execute in sequential or concurrent mode
-	if opts.ConcurrentBatches <= 1 {
-		return pm.executeBatchSequential(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
-	}
+	// if opts.ConcurrentBatches <= 1 {
+	// 		return pm.executeBatchSequential(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
+	// }
 	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
 }
 
