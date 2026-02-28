@@ -93,6 +93,12 @@ func (o *Orchestrator) RegisterHandlers(exec *executor.BaseExecutor) {
 	exec.RegisterGoFunction(ResourceCheckResume, o.handleCheckResume)
 }
 
+// Signal is a delegating method that forwards to ResumeController.Signal
+// to manually resume a paused batch after operator intervention.
+func (o *Orchestrator) Signal(ctx context.Context, batchID, operator, notes string) error {
+	return o.resume.Signal(ctx, batchID, operator, notes)
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Run – called by persistent_microbatch.go
 // ──────────────────────────────────────────────────────────────────────────────
