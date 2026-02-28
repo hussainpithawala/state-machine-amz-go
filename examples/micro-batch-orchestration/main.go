@@ -683,10 +683,10 @@ type config struct {
 func loadConfig() config {
 	return config{
 		redisAddr:         envStr("REDIS_ADDR", "localhost:6379"),
-		postgresURL:       envStr("POSTGRES_URL", ""),
+		postgresURL:       envStr("POSTGRES_URL", "postgres://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable"),
 		sourceExecCount:   envInt("SOURCE_EXEC_COUNT", 5_000),
 		microBatchSize:    envInt("MICRO_BATCH_SIZE", 500),
-		workerConcurrency: envInt("WORKER_CONCURRENCY", 10),
+		workerConcurrency: envInt("WORKER_CONCURRENCY", 2),
 		pauseAtBatch:      envInt("PAUSE_AT_BATCH", 2),
 	}
 }
