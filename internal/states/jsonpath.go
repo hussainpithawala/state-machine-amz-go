@@ -187,9 +187,16 @@ func (p *JSONPathProcessor) setValue(data interface{}, path string, value interf
 
 	// Merge with original data if it's a map
 	if dataMap, ok := data.(map[string]interface{}); ok {
-		return mergeMaps(dataMap, result.(map[string]interface{})), nil
+		// Check if result is also a map before merging
+		if resultMap, ok := result.(map[string]interface{}); ok {
+			return mergeMaps(dataMap, resultMap), nil
+		}
+		// If result is not a map (e.g., array or primitive after wrapping),
+		// we can't merge, so just return the result as a fresh structure
+		return result, nil
 	}
 
+	// If data is not a map, return the newly created structure
 	return result, nil
 }
 

@@ -237,14 +237,47 @@ func (w *WaitState) prepareOutput(processor *JSONPathProcessor, processedInput i
 
 // MarshalJSON implements custom JSON marshaling
 func (w *WaitState) MarshalJSON() ([]byte, error) {
-	type Alias WaitState
-	return json.Marshal(&struct {
-		Type string `json:"Type"`
-		*Alias
-	}{
-		Type:  "Wait",
-		Alias: (*Alias)(w),
-	})
+	// Create a map to hold all fields
+	result := make(map[string]interface{})
+
+	// Always include Type
+	result["Type"] = "Wait"
+
+	// Include base state fields
+	if w.Next != nil {
+		result["Next"] = *w.Next
+	}
+	if w.End {
+		result["End"] = w.End
+	}
+	if w.InputPath != nil {
+		result["InputPath"] = *w.InputPath
+	}
+	if w.ResultPath != nil {
+		result["ResultPath"] = *w.ResultPath
+	}
+	if w.OutputPath != nil {
+		result["OutputPath"] = *w.OutputPath
+	}
+	if w.Comment != "" {
+		result["Comment"] = w.Comment
+	}
+
+	// Include WaitState-specific fields
+	if w.Seconds != nil {
+		result["Seconds"] = *w.Seconds
+	}
+	if w.SecondsPath != nil {
+		result["SecondsPath"] = *w.SecondsPath
+	}
+	if w.Timestamp != nil {
+		result["Timestamp"] = *w.Timestamp
+	}
+	if w.TimestampPath != nil {
+		result["TimestampPath"] = *w.TimestampPath
+	}
+
+	return json.Marshal(result)
 }
 
 // toInt64 converts a value to int64
