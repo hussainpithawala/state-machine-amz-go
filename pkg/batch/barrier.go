@@ -81,7 +81,7 @@ func NewBarrier(ctx context.Context, rdb *redis.Client) (*Barrier, error) {
 func (b *Barrier) Init(ctx context.Context, mbID string, size int) error {
 	_, err := b.rdb.EvalSha(ctx, b.initSHA,
 		[]string{keyBarrier(mbID)},
-		size, BarrierTTLSeconds,
+		size, int(BarrierTTLSeconds.Seconds()),
 	).Result()
 	if err != nil {
 		return fmt.Errorf("batch/barrier: init %q: %w", mbID, err)
@@ -94,7 +94,7 @@ func (b *Barrier) Init(ctx context.Context, mbID string, size int) error {
 func (b *Barrier) Decrement(ctx context.Context, mbID string) (BarrierResult, error) {
 	rem, err := b.rdb.EvalSha(ctx, b.decrSHA,
 		[]string{keyBarrier(mbID)},
-		BarrierTTLSeconds,
+		int(BarrierTTLSeconds.Seconds()),
 	).Int64()
 	if err != nil {
 		return BarrierResult{}, fmt.Errorf("batch/barrier: decrement %q: %w", mbID, err)

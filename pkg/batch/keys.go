@@ -1,6 +1,9 @@
 package batch
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Redis Key Schema
@@ -32,16 +35,16 @@ const (
 	DefaultSoftFailureThreshold = 0.2
 
 	// BarrierTTLSeconds is how long a barrier key lives in Redis.
-	BarrierTTLSeconds = 86_400 // 24 h
+	BarrierTTLSeconds = 24 * time.Hour
 
 	// MetricsTTLSeconds is the lifetime of per-batch metric keys.
-	MetricsTTLSeconds = 7 * 86_400 // 7 days
+	MetricsTTLSeconds = 7 * 24 * time.Hour
 
 	// ResumeTTLSeconds is the lifetime of a resume signal key.
-	ResumeTTLSeconds = 86_400 // 24 h
+	ResumeTTLSeconds = 24 * time.Hour
 
 	// IDsListTTLSeconds is the lifetime of the stored IDs list in Redis.
-	IDsListTTLSeconds = 7 * 86_400 // 7 days
+	IDsListTTLSeconds = 7 * 24 * time.Hour
 
 	// MicroBatchCorrelationKey is the CorrelationKey used in the Message state.
 	// Every WaitForMicroBatchCompletion pause is correlated on this key.
