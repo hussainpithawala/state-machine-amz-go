@@ -10,6 +10,7 @@ import (
 
 	// Third-party imports
 	"github.com/davecgh/go-spew/spew"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 
 	// Project-specific/Internal imports
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
@@ -30,6 +31,7 @@ type StateMachine struct {
 	repositoryManager *repository.Manager
 	stateMachineID    string
 	queueClient       *queue.Client
+	executor          *executor.BaseExecutor // nil = default executor
 }
 
 // Option allows configuring the state machine
@@ -691,10 +693,14 @@ func (pm *StateMachine) executeBatchConcurrent(
 	execOpts ...statemachine2.ExecutionOption,
 ) ([]*BatchExecutionResult, error) {
 	// If queue client is configured, use distributed execution
+	if opts.DoMicroBatch && opts.MicroBatchSize > 0 {
+		return pm.executeMicroBatch(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
+	}
+
+	// micro batching not requested follow general course of action
 	if pm.queueClient != nil {
 		return pm.executeBatchViaQueue(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
 	}
-
 	// Otherwise, execute locally (original implementation)
 	return pm.executeBatchLocal(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
 }
@@ -849,4 +855,10 @@ func (pm *StateMachine) executeBatchLocal(
 	}
 
 	return results, nil
+}
+
+// SetExecutor attaches a custom executor (with local Go functions registered)
+// to this state machine.  Call before Execute.
+func (pm *StateMachine) SetExecutor(exec *executor.BaseExecutor) {
+	pm.executor = exec
 }

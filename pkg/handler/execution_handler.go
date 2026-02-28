@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"time"
 
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/batch"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	statemachine2 "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
@@ -108,6 +111,24 @@ func (h *ExecutionHandler) handleRegularExecution(ctx context.Context, sm *persi
 
 	// Execute the state machine
 	exec, err := sm.Execute(ctx, input, execOpts...)
+
+	if meta, ok := batch.WorkerExtractMeta(payload.Input); ok {
+		outcome := batch.TaskOutcome{
+			BatchID:      meta.BatchID,
+			MicroBatchID: meta.MicroBatchID,
+			TaskID:       payload.SourceExecutionID,
+			Success:      err == nil,
+			CompletedAt:  time.Now(),
+		}
+		// TODO: Implement orchestratorRegistry to signal micro-batch completion
+		// This requires an orchestrator registry to be injected into the handler
+		_ = outcome // Suppress unused variable warning
+		log.Printf("info: micro-batch task completed for %s", meta.MicroBatchID)
+		// if hookErr := orchestratorRegistry.Get(meta.OrchestratorSMID).SignalMicroBatchComplete(ctx, meta, outcome); hookErr != nil {
+		// 	log.Printf("warn: micro-batch hook %s: %v", meta.MicroBatchID, hookErr)
+		// }
+	}
+
 	if err != nil {
 		return fmt.Errorf("execution failed: %w", err)
 	}

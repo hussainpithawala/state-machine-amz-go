@@ -37,6 +37,9 @@ type Executor interface {
 	ListExecutions() []*execution.Execution
 }
 
+// StateMachineLoader is a function type that loads a state machine by ID
+type StateMachineLoader func(ctx context.Context, stateMachineID string, manager *repository.Manager) (StateMachineInterface, error)
+
 // BaseExecutor provides common executor functionality
 type BaseExecutor struct {
 	executions        map[string]*execution.Execution
@@ -44,6 +47,7 @@ type BaseExecutor struct {
 	registry          *StateRegistry
 	registries        RegistryMap
 	repositoryManager *repository.Manager
+	smLoader          StateMachineLoader // Factory function to load state machines from repository
 }
 
 // StateRegistry registers and manages state handlers
@@ -99,6 +103,11 @@ func (e *BaseExecutor) AddRegistry(stateMachineID string, registry *StateRegistr
 // SetRepositoryManager sets the repository manager for the executor
 func (e *BaseExecutor) SetRepositoryManager(manager *repository.Manager) {
 	e.repositoryManager = manager
+}
+
+// SetStateMachineLoader sets the state machine loader function
+func (e *BaseExecutor) SetStateMachineLoader(loader StateMachineLoader) {
+	e.smLoader = loader
 }
 
 // GetStatus returns the status of an execution

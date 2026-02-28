@@ -7,7 +7,6 @@ import (
 
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
-	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
 )
 
 const PAUSED = "PAUSED"
@@ -172,9 +171,9 @@ func (executor *BaseExecutor) getOrLoadStateMachine(ctx context.Context, smID st
 		}
 	}
 
-	// If we don't have it in cache, try to load it from repository
-	if targetSM == nil && executor.repositoryManager != nil {
-		loadedSM, err := persistent.NewFromDefnId(ctx, smID, executor.repositoryManager)
+	// If we don't have it in cache, try to load it from repository using the loader function
+	if targetSM == nil && executor.repositoryManager != nil && executor.smLoader != nil {
+		loadedSM, err := executor.smLoader(ctx, smID, executor.repositoryManager)
 		if err == nil {
 			targetSM = loadedSM
 			smCache[smID] = loadedSM

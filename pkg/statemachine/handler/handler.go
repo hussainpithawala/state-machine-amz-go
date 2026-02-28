@@ -59,7 +59,7 @@ func (h *ExecutionHandler) HandleExecution(ctx context.Context, payload *queue.E
 		ctx = context.WithValue(ctx, types.ExecutionContextKey, h.executionContext)
 	}
 
-	// Route to appropriate handler based on execution type
+	// Route to the appropriate handler based on an execution type
 	if payload.IsTimeout {
 		return h.handleTimeoutExecution(ctx, sm, payload)
 	}

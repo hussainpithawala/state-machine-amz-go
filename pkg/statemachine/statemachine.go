@@ -370,4 +370,22 @@ type BatchExecutionOptions struct {
 	StopOnError         bool   // Stop processing if an execution fails
 	OnExecutionStart    func(sourceExecutionID string, index int)
 	OnExecutionComplete func(sourceExecutionID string, index int, err error)
+	// ── Micro-batch streaming fields ─────────────────────────────────────
+	// DoMicroBatch enables the adaptive micro-batch streaming path.
+	// When true, MicroBatchSize and RedisClient must also be set.
+	DoMicroBatch bool
+
+	// MicroBatchSize is the number of source execution IDs per micro-batch.
+	MicroBatchSize int
+
+	// RedisClient is the *redis.Client used by the barrier, metrics, and
+	// resume-signal subsystems.  Required when DoMicroBatch=true.
+	RedisClient interface{} // typed as interface{} to avoid circular import;
+
+	// cast to *redis.Client inside executeMicroBatch.
+	// FailurePolicyConfig overrides default thresholds.  Zero value uses
+
+	// package-level defaults (SevereFailure=0.5, SoftFailure=0.2).
+	FailurePolicyConfig interface{} // cast to batch.FailurePolicy at call site
+
 }
