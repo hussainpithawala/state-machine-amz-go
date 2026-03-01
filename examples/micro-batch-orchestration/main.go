@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 	"github.com/redis/go-redis/v9"
 
 	_ "github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
@@ -53,12 +54,12 @@ StartAt: IngestRecord
 States:
   IngestRecord:
     Type: Task
-    Resource: "arn:aws:lambda:::source:ingest"
+    Resource: "source:ingest"
     ResultPath: "$.ingestResult"
     Next: ValidateRecord
   ValidateRecord:
     Type: Task
-    Resource: "arn:aws:lambda:::source:validate"
+    Resource: "source:validate"
     ResultPath: "$.validateResult"
     End: true
 `
@@ -71,7 +72,7 @@ StartAt: EnrichRecord
 States:
   EnrichRecord:
     Type: Task
-    Resource: "arn:aws:lambda:::target:enrich"
+    Resource: "target:enrich"
     ResultPath: "$.enrichResult"
     Next: StoreRecord
     Retry:
@@ -81,7 +82,7 @@ States:
         BackoffRate: 2.0
   StoreRecord:
     Type: Task
-    Resource: "arn:aws:lambda:::target:store"
+    Resource: "target:store"
     ResultPath: "$.storeResult"
     End: true
 `
@@ -229,6 +230,13 @@ func run(ctx context.Context) error {
 	// Seed the source state machine with N completed executions so there is
 	// something for ExecuteBatch to filter on.  In a real system these already
 	// exist – this block is only here to make the example self-contained.
+
+	// Setup global executor with task handlers
+	globalExec := setupExecutor()
+
+	// setup context with executor
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(globalExec))
+
 	sourceExecutionIDs, err := seedSourceExecutions(ctx, cfg, manager)
 	if err != nil {
 		return fmt.Errorf("seed: %w", err)
@@ -238,8 +246,6 @@ func run(ctx context.Context) error {
 	// ── Start queue worker pool ───────────────────────────────────────────────
 	// Launch workers that pull tasks from the queue, run the target state
 	// machine for each source execution, and drive the Redis barrier hook.
-	// Setup global executor with task handlers
-	globalExec := setupExecutor()
 	workerWg, workerShutdown := startWorkerPool(ctx, cfg, manager, queueClient, globalExec, orchRegistry)
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -390,13 +396,13 @@ func startWorkerPool(
 	cfg config,
 	manager *repository.Manager,
 	qc *queue.Client,
-	exec *executor.BaseExecutor,
+	baseExecutor *executor.BaseExecutor,
 	orchRegistry *registry.OrchestratorRegistry,
 ) (*sync.WaitGroup, func()) {
 	var wg sync.WaitGroup
 
 	// Create execution context adapter to bridge executor with handler
-	execAdapter := executor.NewExecutionContextAdapter(exec)
+	execAdapter := executor.NewExecutionContextAdapter(baseExecutor)
 
 	// Create execution handler with executor context
 	execHandler := handler.NewExecutionHandlerWithContext(manager, qc, execAdapter)
@@ -684,8 +690,8 @@ func loadConfig() config {
 	return config{
 		redisAddr:         envStr("REDIS_ADDR", "localhost:6379"),
 		postgresURL:       envStr("POSTGRES_URL", "postgres://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable"),
-		sourceExecCount:   envInt("SOURCE_EXEC_COUNT", 5_000),
-		microBatchSize:    envInt("MICRO_BATCH_SIZE", 500),
+		sourceExecCount:   envInt("SOURCE_EXEC_COUNT", 10),
+		microBatchSize:    envInt("MICRO_BATCH_SIZE", 5),
 		workerConcurrency: envInt("WORKER_CONCURRENCY", 2),
 		pauseAtBatch:      envInt("PAUSE_AT_BATCH", 2),
 	}

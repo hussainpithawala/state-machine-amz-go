@@ -466,6 +466,25 @@ func TestJSONPathProcessor_MergeMaps(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "nested merge with Nil Object",
+			mapA: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"a": 1,
+				},
+			},
+			mapB: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"b": 2,
+				},
+			},
+			expected: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"a": 1,
+					"b": 2,
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {

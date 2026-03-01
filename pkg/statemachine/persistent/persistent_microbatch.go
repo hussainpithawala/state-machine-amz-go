@@ -82,6 +82,7 @@ import (
 func (pm *StateMachine) executeMicroBatch(
 	ctx context.Context,
 	sourceExecutionIDs []string,
+	targetMachineId string,
 	sourceStateName string,
 	opts *statemachine2.BatchExecutionOptions,
 	execOpts ...statemachine2.ExecutionOption,
@@ -121,7 +122,7 @@ func (pm *StateMachine) executeMicroBatch(
 	batchID := fmt.Sprintf("mb-%s-%d", pm.GetID(), time.Now().UnixNano())
 
 	// ── Launch orchestrator ───────────────────────────────────────────────────
-	doneCh, err := orch.Run(ctx, batchID, sourceExecutionIDs, sourceStateName, opts, execOpts)
+	doneCh, err := orch.Run(ctx, batchID, sourceExecutionIDs, targetMachineId, sourceStateName, opts, execOpts)
 	if err != nil {
 		return nil, fmt.Errorf("executeMicroBatch: launch: %w", err)
 	}

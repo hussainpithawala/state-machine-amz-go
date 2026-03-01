@@ -69,9 +69,15 @@ type OrchestratorInput struct {
 	// MicroBatchSize is the desired size of each micro-batch (e.g. 1 000).
 	MicroBatchSize int `json:"micro_batch_size"`
 
+	// SourceStateMachineID is the state machine ID of the source executions.
+	SourceStateMachineID string `json:"source_state_machine_id"`
+
 	// SourceStateName is passed through to each individual task execution so
 	// it can derive its input from the correct state of the source execution.
 	SourceStateName string `json:"source_state_name"`
+
+	// TargetStateMachineID is the state machine ID of the target executions.
+	TargetStateMachineID string `json:"target_state_machine_id"`
 
 	// OrchestratorSMID is the state machine ID that was used to create the
 	// orchestrator execution.  Workers use this together with BatchID to locate
@@ -104,6 +110,12 @@ type FailurePolicy struct {
 	// SoftFailureThreshold (0–1) triggers a PauseBatch for human review.
 	// Default: 0.20 (pause if rolling avg across M micro-batches ≥ 20 %).
 	SoftFailureThreshold float64 `json:"soft_failure_threshold"`
+}
+
+type RootDispatchResult struct {
+	OrchestratorID string         `json:"orchestrator_id"`
+	BatchID        string         `json:"batch_id"`
+	DispatchResult DispatchResult `json:"dispatchResult"`
 }
 
 // DispatchResult is the output of the DispatchMicroBatch Task state.

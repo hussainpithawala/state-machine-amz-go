@@ -205,7 +205,7 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 
 		currentStateName = *nextState
 		execCtx.CurrentState = currentStateName
-		mergeOutput, errMerge := pm.MergeInputs(&states.JSONPathProcessor{}, output, execCtx.Input)
+		mergeOutput, errMerge := pm.MergeInputs(&states.JSONPathProcessor{}, execCtx.Input, output)
 		if errMerge != nil {
 			return execCtx, errMerge
 		}
@@ -667,7 +667,7 @@ func (pm *StateMachine) ExecuteBatch(
 			stringExecutionIDs[i] = v.ExecutionID
 		}
 
-		return pm.executeBatchConcurrent(ctx, stringExecutionIDs, sourceStateName, opts, execOpts...)
+		return pm.executeBatchConcurrent(ctx, stringExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
 	}
 	// Retrieve source execution IDs based on filter
 	sourceExecutionIDs, err := pm.repositoryManager.ListExecutionIDs(ctx, filter)
@@ -679,7 +679,7 @@ func (pm *StateMachine) ExecuteBatch(
 		return []*BatchExecutionResult{}, nil
 	}
 
-	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
+	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
 }
 
 // executeBatchConcurrent executes chained executions concurrently with controlled parallelism
@@ -688,13 +688,14 @@ func (pm *StateMachine) ExecuteBatch(
 func (pm *StateMachine) executeBatchConcurrent(
 	ctx context.Context,
 	sourceExecutionIDs []string,
+	targetMachineID string,
 	sourceStateName string,
 	opts *statemachine2.BatchExecutionOptions,
 	execOpts ...statemachine2.ExecutionOption,
 ) ([]*BatchExecutionResult, error) {
 	// If queue client is configured, use distributed execution
 	if opts.DoMicroBatch && opts.MicroBatchSize > 0 {
-		return pm.executeMicroBatch(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
+		return pm.executeMicroBatch(ctx, sourceExecutionIDs, targetMachineID, sourceStateName, opts, execOpts...)
 	}
 
 	// micro batching not requested follow general course of action

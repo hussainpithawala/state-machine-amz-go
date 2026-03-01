@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
@@ -121,6 +122,7 @@ func (o *Orchestrator) Run(
 	ctx context.Context,
 	batchID string,
 	sourceExecutionIDs []string,
+	targetMachineId string,
 	sourceStateName string,
 	opts *statemachine2.BatchExecutionOptions,
 	execOpts []statemachine2.ExecutionOption,
@@ -146,12 +148,13 @@ func (o *Orchestrator) Run(
 	}
 
 	input := OrchestratorInput{
-		BatchID:          batchID,
-		TotalCount:       len(sourceExecutionIDs),
-		MicroBatchSize:   mbSize,
-		SourceStateName:  sourceStateName,
-		OrchestratorSMID: OrchestratorStateMachineID,
-		FailurePolicy:    policy,
+		BatchID:              batchID,
+		TotalCount:           len(sourceExecutionIDs),
+		MicroBatchSize:       mbSize,
+		SourceStateName:      sourceStateName,
+		OrchestratorSMID:     OrchestratorStateMachineID,
+		TargetStateMachineID: targetMachineId,
+		FailurePolicy:        policy,
 	}
 
 	// ── 2. Build the orchestrator state machine ───────────────────────────────
@@ -178,8 +181,10 @@ func (o *Orchestrator) Run(
 	go func() {
 		execName := fmt.Sprintf("mb-orch-%s-%d", batchID, time.Now().UnixNano())
 		execCtx := execution.NewContext(execName, orchestratorSM.GetStartAt(), input)
-		execCtx.ID = fmt.Sprintf("%s-exec-%d", OrchestratorStateMachineID, time.Now().UnixNano())
+		execCtx.ID = fmt.Sprintf("%s-baseExecutor-%d", OrchestratorStateMachineID, time.Now().UnixNano())
 		execCtx.StateMachineID = OrchestratorStateMachineID
+
+		ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
 
 		result, err := orchestratorSM.Execute(ctx, execCtx)
 		if err != nil {
@@ -250,7 +255,9 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 	}
 
 	if cursorVal >= input.TotalCount {
-		return DispatchResult{IsBatchComplete: true}, nil
+		return map[string]interface{}{
+			"isBatchComplete": true,
+		}, nil
 	}
 
 	// ── Slice next micro-batch IDs from Redis list ────────────────────────────
@@ -283,12 +290,16 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 		return nil, fmt.Errorf("batch:dispatch: advance cursor: %w", err)
 	}
 
-	return DispatchResult{
-		IsBatchComplete: false,
-		MicroBatchID:    mbID,
-		MicroBatchIndex: mbIndex,
-		Size:            actualSize,
-		DispatchedAt:    time.Now().UTC(),
+	return map[string]interface{}{
+		"batchID":        input.BatchID,
+		"orchestratorID": input.OrchestratorSMID,
+		"dispatchResult": map[string]interface{}{
+			"isBatchComplete": false,
+			"microBatchId":    mbID,
+			"microBatchIndex": mbIndex,
+			"size":            actualSize,
+			"dispatchedAt":    time.Now().UTC(),
+		},
 	}, nil
 }
 
@@ -484,7 +495,7 @@ func (o *Orchestrator) enqueueIDs(
 		}
 
 		payload := &queue.ExecutionTaskPayload{
-			StateMachineID:    input.OrchestratorSMID,
+			StateMachineID:    input.TargetStateMachineID,
 			SourceExecutionID: sourceExecID,
 			SourceStateName:   input.SourceStateName,
 			ExecutionName:     fmt.Sprintf("%s-mb%d-%d", input.BatchID, mbIndex, idx),

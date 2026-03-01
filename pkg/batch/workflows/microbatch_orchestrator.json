@@ -5,8 +5,8 @@
     "DispatchMicroBatch": {
       "Type": "Task",
       "Comment": "Reads the Redis cursor, slices the next micro-batch of source-execution IDs from the keyIDsList, initialises the Redis barrier counter, and enqueues all tasks to the queue client. Returns isBatchComplete=true when all IDs have been dispatched.",
-      "Resource": "arn:aws:lambda:::batch:dispatch",
-      "ResultPath": "$.dispatchResult",
+      "Resource": "batch:dispatch",
+      "ResultPath": "$",
       "Retry": [
         {
           "ErrorEquals": [
@@ -61,7 +61,7 @@
     "EvaluateMicroBatch": {
       "Type": "Task",
       "Comment": "Applies both statistical control measures: (1) instantaneous failure rate over last N tasks, (2) rolling average failure rate across last M micro-batches. Returns severeFailure=true or belowThreshold=true to trigger halt or pause respectively.",
-      "Resource": "arn:aws:lambda:::batch:evaluate",
+      "Resource": "batch:evaluate",
       "ResultPath": "$.evaluation",
       "Retry": [
         {
@@ -112,7 +112,7 @@
     "CheckResumeSignal": {
       "Type": "Task",
       "Comment": "Polls the Redis resume key (GETDEL). If an operator called batch.Orchestrator.Signal(), the flag is atomically consumed and shouldResume=true is returned. Otherwise shouldResume=false and the loop returns to PauseBatch.",
-      "Resource": "arn:aws:lambda:::batch:check-resume",
+      "Resource": "batch:check-resume",
       "ResultPath": "$.resumeCheck",
       "Retry": [
         {

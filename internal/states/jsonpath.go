@@ -295,17 +295,24 @@ func splitPath(path string) []string {
 	return parts
 }
 
-// mergeMaps deeply merges two maps
+// mergeMaps deeply merges two maps, only copying non-nil values from b
 func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	// Copy all from a
 	for k, v := range a {
+		if v == nil {
+			continue
+		}
 		result[k] = v
 	}
 
-	// Merge from b
+	// Merge from b, only if value is not nil
 	for k, v := range b {
+		if v == nil {
+			continue // Skip nil values from b
+		}
+
 		if existing, exists := result[k]; exists {
 			// Both have this key
 			if aMap, ok := existing.(map[string]interface{}); ok {
@@ -315,7 +322,7 @@ func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
 					continue
 				}
 			}
-			// Not both maps or different types, b wins
+			// Not both maps or different types, b wins (only if b is not nil)
 		}
 		result[k] = v
 	}
