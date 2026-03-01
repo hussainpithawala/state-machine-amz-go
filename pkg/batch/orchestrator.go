@@ -374,11 +374,11 @@ func (o *Orchestrator) SignalMicroBatchComplete(
 		fmt.Printf("warn: snapshot mb rate: %v\n", err)
 	}
 
-	return o.resumeOrchestrator(ctx, mbMeta)
+	return o.resumeOrchestrator(ctx, mbMeta, outcome)
 }
 
 // resumeOrchestrator finds the waiting orchestrator execution and resumes it.
-func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatchMeta) error {
+func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatchMeta, outcome TaskOutcome) error {
 	// Find the orchestrator execution that is paused at WaitForMicroBatchCompletion
 	// with CorrelationKey="micro_batch_id", CorrelationValue=mbMeta.MicroBatchID.
 	executions, err := o.parentSM.FindWaitingExecutionsByCorrelation(
@@ -399,6 +399,7 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 		completionPayload := map[string]interface{}{
 			"completedMicroBatchId": mbMeta.MicroBatchID,
 			"completedAt":           time.Now().UTC(),
+			"isComplete":            true,
 		}
 		execCtx := &execution.Execution{
 			ID:             rec.ExecutionID,
@@ -411,7 +412,14 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 		if rec.StartTime != nil {
 			execCtx.StartTime = *rec.StartTime
 		}
-		if _, err := o.parentSM.ResumeExecution(ctx, execCtx); err != nil {
+
+		factory, err := o.smFactory(ctx, mbMeta.OrchestratorSMID, o.parentSM.GetRepositoryManager())
+		if err != nil {
+			return err
+		}
+
+		_, err = factory.ResumeExecution(ctx, execCtx)
+		if err != nil {
 			return fmt.Errorf("signal: resume orchestrator %s: %w", rec.ExecutionID, err)
 		}
 	}

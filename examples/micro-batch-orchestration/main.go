@@ -112,7 +112,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("repository: %w", err)
 	}
-	defer manager.Close()
+	//defer manager.Close()
 
 	queueClient, err := buildQueueClient(cfg)
 	if err != nil {
@@ -168,7 +168,7 @@ func run(ctx context.Context) error {
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("step 2: redis ping: %w", err)
 	}
-	defer rdb.Close()
+	//defer rdb.Close()
 	slog.Info("step 2 ✓", "addr", cfg.redisAddr)
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -187,12 +187,13 @@ func run(ctx context.Context) error {
 		sm, err := persistent.NewFromDefnId(ctx, smID, mgr)
 		return sm, err
 	}
+
 	smCreator := func(def []byte, isJSON bool, smID string, mgr *repository.Manager) (batch.StateMachine, error) {
 		sm, err := persistent.New(def, isJSON, smID, mgr)
 		return sm, err
 	}
 
-	orch, err := batch.NewOrchestrator(ctx, rdb, targetSM, smFactory, smCreator)
+	orchestrator, err := batch.NewOrchestrator(ctx, rdb, targetSM, smFactory, smCreator)
 	if err != nil {
 		return fmt.Errorf("step 3: %w", err)
 	}
@@ -208,7 +209,7 @@ func run(ctx context.Context) error {
 	// ─────────────────────────────────────────────────────────────────────────
 	slog.Info("step 4: registering orchestrator state machine definition")
 
-	if err := orch.EnsureDefinition(ctx, batch.OrchestratorDefinitionJSON()); err != nil {
+	if err := orchestrator.EnsureDefinition(ctx, batch.OrchestratorDefinitionJSON()); err != nil {
 		return fmt.Errorf("step 4: %w", err)
 	}
 	slog.Info("step 4 ✓", "orchestrator_sm_id", batch.OrchestratorStateMachineID)
@@ -218,12 +219,12 @@ func run(ctx context.Context) error {
 	//
 	// Queue workers only know the OrchestratorSMID from the task payload – they
 	// don't hold a direct Go reference. The registry provides the lookup so the
-	// worker can call orch.SignalMicroBatchComplete without a global variable.
+	// worker can call orchestrator.SignalMicroBatchComplete without a global variable.
 	// ─────────────────────────────────────────────────────────────────────────
 	slog.Info("step 5: registering orchestrator in app registry",
 		"key", batch.OrchestratorStateMachineID)
 
-	orchRegistry.Register(batch.OrchestratorStateMachineID, orch)
+	orchRegistry.Register(batch.OrchestratorStateMachineID, orchestrator)
 	slog.Info("step 5 ✓")
 
 	// ── Seed source executions ────────────────────────────────────────────────
@@ -246,7 +247,7 @@ func run(ctx context.Context) error {
 	// ── Start queue worker pool ───────────────────────────────────────────────
 	// Launch workers that pull tasks from the queue, run the target state
 	// machine for each source execution, and drive the Redis barrier hook.
-	workerWg, workerShutdown := startWorkerPool(ctx, cfg, manager, queueClient, globalExec, orchRegistry)
+	workerWg, workerShutdown := startWorkerPool(ctx, cfg, manager, queueClient, globalExec, orchestrator, orchRegistry)
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// STEP 6 – Invoke the micro-batch execution.
@@ -322,7 +323,7 @@ func run(ctx context.Context) error {
 	// threshold after a micro-batch, the orchestrator SM transitions to
 	// PauseBatch and enters the CheckResumeSignal poll loop.
 	//
-	// An operator (or automated remediation system) calls orch.Signal to set
+	// An operator (or automated remediation system) calls orchestrator.Signal to set
 	// the Redis key.  The next CheckResumeSignal poll reads-and-deletes it
 	// (GETDEL) and sets shouldResume=true, allowing the orchestrator to
 	// re-enter DispatchMicroBatch for the next micro-batch.
@@ -348,9 +349,9 @@ func run(ctx context.Context) error {
 				"batch_id", activeBatchID,
 				"operator", "ops-engineer@company.com",
 			)
-			signalCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := orch.Signal(
+			signalCtx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+			//defer cancel()
+			if err := orchestrator.Signal(
 				signalCtx,
 				activeBatchID,
 				"ops-engineer@company.com",
@@ -397,6 +398,7 @@ func startWorkerPool(
 	manager *repository.Manager,
 	qc *queue.Client,
 	baseExecutor *executor.BaseExecutor,
+	orchestrator *batch.Orchestrator,
 	orchRegistry *registry.OrchestratorRegistry,
 ) (*sync.WaitGroup, func()) {
 	var wg sync.WaitGroup
@@ -405,7 +407,7 @@ func startWorkerPool(
 	execAdapter := executor.NewExecutionContextAdapter(baseExecutor)
 
 	// Create execution handler with executor context
-	execHandler := handler.NewExecutionHandlerWithContext(manager, qc, execAdapter)
+	execHandler := handler.NewExecutionHandlerWithContext(manager, qc, execAdapter, orchestrator)
 
 	// Build queue config for worker
 	queueConfig := &queue.Config{
@@ -649,13 +651,15 @@ func handleSourceValidate(_ context.Context, input interface{}) (interface{}, er
 func handleEnrich(_ context.Context, input interface{}) (interface{}, error) {
 	m, _ := input.(map[string]interface{})
 	// Simulate occasional transient errors that the Retry block will absorb.
-	if id, ok := m["record_id"].(string); ok && len(id) > 0 && id[len(id)-1] == '9' {
-		// ~10 % of records end in '9' – simulate a retryable error.
-		// On retry the input is the same so the second attempt succeeds.
-		if _, already := m["_retry_ok"]; !already {
-			return nil, fmt.Errorf("transient enrich error (will retry)")
-		}
-	}
+
+	//if id, ok := m["record_id"].(string); ok && len(id) > 0 && id[len(id)-1] == '9' {
+	//	// ~10 % of records end in '9' – simulate a retryable error.
+	//	// On retry the input is the same so the second attempt succeeds.
+	//	if _, already := m["_retry_ok"]; !already {
+	//		return nil, fmt.Errorf("transient enrich error (will retry)")
+	//	}
+	//}
+
 	return map[string]interface{}{
 		"record_id":   m["record_id"],
 		"enriched_at": time.Now().UTC(),

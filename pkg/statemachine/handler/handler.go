@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/batch"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	statemachine2 "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
@@ -19,14 +20,16 @@ type ExecutionHandler struct {
 	repositoryManager *repository.Manager
 	queueClient       *queue.Client
 	executionContext  types.ExecutionContext
+	orchestrator      *batch.Orchestrator
 }
 
 // NewExecutionHandler creates a new execution handler
-func NewExecutionHandler(repositoryManager *repository.Manager, queueClient *queue.Client) *ExecutionHandler {
+func NewExecutionHandler(repositoryManager *repository.Manager, queueClient *queue.Client, orchestrator *batch.Orchestrator) *ExecutionHandler {
 	return &ExecutionHandler{
 		repositoryManager: repositoryManager,
 		queueClient:       queueClient,
 		executionContext:  nil,
+		orchestrator:      orchestrator,
 	}
 }
 
