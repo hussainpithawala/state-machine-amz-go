@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
-	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 	"github.com/redis/go-redis/v9"
 
@@ -525,6 +524,11 @@ func startOrchestratorContinuationWorker(
 // continueOrchestratorExecutions finds orchestrator executions in RUNNING status
 // and continues their execution. These are orchestrators that were just resumed
 // from a Message state and need to continue running.
+//
+// NOTE: This function is intentionally disabled because the orchestrator continuation
+// is now handled automatically by the resumeOrchestrator method in orchestrator.go.
+// When SignalMicroBatchComplete is called, it already resumes the orchestrator with
+// proper handlers and executes it until it pauses or completes.
 func continueOrchestratorExecutions(
 	ctx context.Context,
 	orchestrator *batch.Orchestrator,
@@ -532,69 +536,7 @@ func continueOrchestratorExecutions(
 	queueClient *queue.Client,
 	smFactory func(context.Context, string, *repository.Manager) (batch.StateMachine, error),
 ) error {
-	// Find RUNNING orchestrator executions
-	filter := &repository.ExecutionFilter{
-		StateMachineID: batch.OrchestratorStateMachineID,
-		Status:         "RUNNING",
-	}
-
-	executions, err := manager.ListExecutions(ctx, filter)
-	if err != nil {
-		return fmt.Errorf("list running orchestrator executions: %w", err)
-	}
-
-	for _, exec := range executions {
-		// Skip if this execution was recently checked (within last 2 seconds)
-		// to avoid tight loops
-		if exec.StartTime != nil && time.Since(*exec.StartTime) < 2*time.Second {
-			continue
-		}
-
-		slog.Info("continuing orchestrator execution", "exec_id", exec.ExecutionID, "state", exec.CurrentState)
-
-		// Load the orchestrator state machine
-		sm, err := smFactory(ctx, batch.OrchestratorStateMachineID, manager)
-		if err != nil {
-			slog.Error("failed to load orchestrator SM", "err", err)
-			continue
-		}
-
-		// Register handlers and queue client
-		baseExec := executor.NewBaseExecutor()
-		orchestrator.RegisterHandlers(baseExec)
-		sm.SetExecutor(baseExec)
-		sm.SetQueueClient(queueClient)
-
-		// Continue execution from where it left off
-		execCtx := &execution.Execution{
-			ID:             exec.ExecutionID,
-			StateMachineID: exec.StateMachineID,
-			Name:           exec.Name,
-			Status:         exec.Status,
-			CurrentState:   exec.CurrentState,
-			Input:          exec.Output, // Use output as next input
-		}
-		if exec.StartTime != nil {
-			execCtx.StartTime = *exec.StartTime
-		}
-
-		// Set up context with executor
-		execCtxWithAdapter := context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(baseExec))
-
-		// Continue the execution - this will run until it pauses or completes
-		result, err := sm.ResumeExecution(execCtxWithAdapter, execCtx)
-		if err != nil {
-			slog.Error("failed to continue orchestrator", "exec_id", exec.ExecutionID, "err", err)
-			continue
-		}
-
-		slog.Info("orchestrator continuation result",
-			"exec_id", result.ID,
-			"status", result.Status,
-			"state", result.CurrentState,
-		)
-	}
-
+	// Disabled - orchestrator continuation is handled by SignalMicroBatchComplete
 	return nil
 }
 

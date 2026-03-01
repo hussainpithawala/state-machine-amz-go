@@ -256,7 +256,9 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 
 	if cursorVal >= input.TotalCount {
 		return map[string]interface{}{
-			"isBatchComplete": true,
+			"dispatchResult": map[string]interface{}{
+				"isBatchComplete": true,
+			},
 		}, nil
 	}
 
@@ -398,16 +400,31 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 		// additional input (merged by MergeInputs in RunExecution).
 		// IMPORTANT: Include the ReceivedMessage marker so the Message state
 		// knows this is a resumption and advances to the Next state.
+
+		// Since WaitForMicroBatchCompletion has no ResultPath, the Message state
+		// will use messageData.Data as the entire output. We MUST preserve the
+		// complete orchestrator state from rec.Input (which is stored under the "$" key).
+		// Note: We do NOT include the marker itself in data to avoid circular references.
+		var stateData interface{}
+		if inputMap, ok := rec.Input.(map[string]interface{}); ok {
+			if dollarData, exists := inputMap["$"]; exists {
+				stateData = dollarData
+			} else {
+				stateData = rec.Input
+			}
+		} else {
+			stateData = rec.Input
+		}
+
 		completionPayload := map[string]interface{}{
-			"completedMicroBatchId": mbMeta.MicroBatchID,
-			"completedAt":           time.Now().UTC(),
-			"isComplete":            true,
 			// Message state marker - tells WaitForMicroBatchCompletion to advance
 			// Key format: __received_message___<StateName>
 			"__received_message___WaitForMicroBatchCompletion": map[string]interface{}{
 				"correlation_key":   MicroBatchCorrelationKey,
 				"correlation_value": mbMeta.MicroBatchID,
 				"received_at":       time.Now().Unix(),
+				// Preserve only the actual state data (without markers)
+				"data": stateData,
 			},
 		}
 		execCtx := &execution.Execution{
@@ -417,7 +434,7 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 			Status:         rec.Status,
 			CurrentState:   rec.CurrentState,
 			Input:          rec.Input,                                             // Keep original input
-			Output:         mergeCompletionPayload(rec.Output, completionPayload), // Merge completion into output
+			Output:         mergeCompletionPayload(rec.Output, completionPayload), // Merge marker into OUTPUT (ResumeExecution uses Output as input)
 		}
 		if rec.StartTime != nil {
 			execCtx.StartTime = *rec.StartTime
@@ -436,13 +453,22 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 			factory.SetQueueClient(qc)
 		}
 
-		// Set up context with executor
-		ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
+		// Resume the orchestrator in a goroutine so it can run to completion
+		// without blocking the worker that called SignalMicroBatchComplete.
+		// Use context.Background() to ensure the goroutine isn't cancelled
+		// when the worker's context is done.
+		go func(sm StateMachine, exec *executor.BaseExecutor, execCtx *execution.Execution) {
+			// Create a fresh context with the executor adapter
+			resumeCtx := context.WithValue(context.Background(), types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
 
-		_, err = factory.ResumeExecution(ctx, execCtx)
-		if err != nil {
-			return fmt.Errorf("signal: resume orchestrator %s: %w", rec.ExecutionID, err)
-		}
+			result, err := sm.ResumeExecution(resumeCtx, execCtx)
+			if err != nil {
+				fmt.Printf("error: orchestrator resume failed for %s: %v\n", execCtx.ID, err)
+				return
+			}
+			fmt.Printf("orchestrator execution %s completed with status: %s at state: %s\n",
+				result.ID, result.Status, result.CurrentState)
+		}(factory, exec, execCtx)
 	}
 	return nil
 }
