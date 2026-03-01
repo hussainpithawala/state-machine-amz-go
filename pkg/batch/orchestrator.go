@@ -396,10 +396,19 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 	for _, rec := range executions {
 		// Reconstruct the execution context with the completion payload as
 		// additional input (merged by MergeInputs in RunExecution).
+		// IMPORTANT: Include the ReceivedMessage marker so the Message state
+		// knows this is a resumption and advances to the Next state.
 		completionPayload := map[string]interface{}{
 			"completedMicroBatchId": mbMeta.MicroBatchID,
 			"completedAt":           time.Now().UTC(),
 			"isComplete":            true,
+			// Message state marker - tells WaitForMicroBatchCompletion to advance
+			// Key format: __received_message___<StateName>
+			"__received_message___WaitForMicroBatchCompletion": map[string]interface{}{
+				"correlation_key":   MicroBatchCorrelationKey,
+				"correlation_value": mbMeta.MicroBatchID,
+				"received_at":       time.Now().Unix(),
+			},
 		}
 		execCtx := &execution.Execution{
 			ID:             rec.ExecutionID,
@@ -407,7 +416,8 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 			Name:           rec.Name,
 			Status:         rec.Status,
 			CurrentState:   rec.CurrentState,
-			Input:          mergeCompletionPayload(rec.Output, completionPayload),
+			Input:          rec.Input,                                             // Keep original input
+			Output:         mergeCompletionPayload(rec.Output, completionPayload), // Merge completion into output
 		}
 		if rec.StartTime != nil {
 			execCtx.StartTime = *rec.StartTime
@@ -417,6 +427,17 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 		if err != nil {
 			return err
 		}
+
+		// Register handlers and queue client for this resumed execution
+		exec := executor.NewBaseExecutor()
+		o.RegisterHandlers(exec)
+		factory.SetExecutor(exec)
+		if qc := o.parentSM.GetQueueClient(); qc != nil {
+			factory.SetQueueClient(qc)
+		}
+
+		// Set up context with executor
+		ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
 
 		_, err = factory.ResumeExecution(ctx, execCtx)
 		if err != nil {

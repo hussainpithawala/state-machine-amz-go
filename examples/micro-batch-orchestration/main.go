@@ -29,10 +29,10 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 	"github.com/redis/go-redis/v9"
 
-	_ "github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/handler"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
@@ -249,6 +249,11 @@ func run(ctx context.Context) error {
 	// machine for each source execution, and drive the Redis barrier hook.
 	workerWg, workerShutdown := startWorkerPool(ctx, cfg, manager, queueClient, globalExec, orchestrator, orchRegistry)
 
+	// ── Start dedicated orchestrator continuation worker ──────────────────────
+	// This worker watches for orchestrator executions that have completed a
+	// Message state and need to continue to the next batch
+	orchWorkerWg, orchWorkerShutdown := startOrchestratorContinuationWorker(ctx, rdb, orchestrator, manager, queueClient, smFactory)
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// STEP 6 – Invoke the micro-batch execution.
 	//
@@ -383,6 +388,11 @@ func run(ctx context.Context) error {
 	workerShutdown()
 	workerWg.Wait()
 	slog.Info("all workers stopped")
+
+	slog.Info("shutting down orchestrator continuation worker...")
+	orchWorkerShutdown()
+	orchWorkerWg.Wait()
+	slog.Info("orchestrator continuation worker stopped")
 	return nil
 }
 
@@ -460,6 +470,133 @@ func startWorkerPool(
 // Task processing is now handled by the queue.ExecutionHandler which is
 // registered with the Asynq server. The handler in pkg/handler/execution_handler.go
 // automatically handles micro-batch hook signaling via the orchestrator registry.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Orchestrator Continuation Worker
+// ─────────────────────────────────────────────────────────────────────────────
+
+// startOrchestratorContinuationWorker starts a worker that monitors for orchestrator
+// executions in RUNNING status (which means they were just resumed from a Message state)
+// and continues executing them until they pause again or complete.
+func startOrchestratorContinuationWorker(
+	ctx context.Context,
+	rdb *redis.Client,
+	orchestrator *batch.Orchestrator,
+	manager *repository.Manager,
+	queueClient *queue.Client,
+	smFactory func(context.Context, string, *repository.Manager) (batch.StateMachine, error),
+) (*sync.WaitGroup, func()) {
+	var wg sync.WaitGroup
+	stopCh := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		slog.Info("orchestrator continuation worker starting")
+
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				slog.Info("orchestrator continuation worker stopping (context cancelled)")
+				return
+			case <-stopCh:
+				slog.Info("orchestrator continuation worker stopping (shutdown signal)")
+				return
+			case <-ticker.C:
+				// Check for orchestrators that need continuation
+				if err := continueOrchestratorExecutions(ctx, orchestrator, manager, queueClient, smFactory); err != nil {
+					slog.Error("orchestrator continuation error", "err", err)
+				}
+			}
+		}
+	}()
+
+	shutdown := func() {
+		close(stopCh)
+	}
+
+	slog.Info("orchestrator continuation worker started")
+	return &wg, shutdown
+}
+
+// continueOrchestratorExecutions finds orchestrator executions in RUNNING status
+// and continues their execution. These are orchestrators that were just resumed
+// from a Message state and need to continue running.
+func continueOrchestratorExecutions(
+	ctx context.Context,
+	orchestrator *batch.Orchestrator,
+	manager *repository.Manager,
+	queueClient *queue.Client,
+	smFactory func(context.Context, string, *repository.Manager) (batch.StateMachine, error),
+) error {
+	// Find RUNNING orchestrator executions
+	filter := &repository.ExecutionFilter{
+		StateMachineID: batch.OrchestratorStateMachineID,
+		Status:         "RUNNING",
+	}
+
+	executions, err := manager.ListExecutions(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("list running orchestrator executions: %w", err)
+	}
+
+	for _, exec := range executions {
+		// Skip if this execution was recently checked (within last 2 seconds)
+		// to avoid tight loops
+		if exec.StartTime != nil && time.Since(*exec.StartTime) < 2*time.Second {
+			continue
+		}
+
+		slog.Info("continuing orchestrator execution", "exec_id", exec.ExecutionID, "state", exec.CurrentState)
+
+		// Load the orchestrator state machine
+		sm, err := smFactory(ctx, batch.OrchestratorStateMachineID, manager)
+		if err != nil {
+			slog.Error("failed to load orchestrator SM", "err", err)
+			continue
+		}
+
+		// Register handlers and queue client
+		baseExec := executor.NewBaseExecutor()
+		orchestrator.RegisterHandlers(baseExec)
+		sm.SetExecutor(baseExec)
+		sm.SetQueueClient(queueClient)
+
+		// Continue execution from where it left off
+		execCtx := &execution.Execution{
+			ID:             exec.ExecutionID,
+			StateMachineID: exec.StateMachineID,
+			Name:           exec.Name,
+			Status:         exec.Status,
+			CurrentState:   exec.CurrentState,
+			Input:          exec.Output, // Use output as next input
+		}
+		if exec.StartTime != nil {
+			execCtx.StartTime = *exec.StartTime
+		}
+
+		// Set up context with executor
+		execCtxWithAdapter := context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(baseExec))
+
+		// Continue the execution - this will run until it pauses or completes
+		result, err := sm.ResumeExecution(execCtxWithAdapter, execCtx)
+		if err != nil {
+			slog.Error("failed to continue orchestrator", "exec_id", exec.ExecutionID, "err", err)
+			continue
+		}
+
+		slog.Info("orchestrator continuation result",
+			"exec_id", result.ID,
+			"status", result.Status,
+			"state", result.CurrentState,
+		)
+	}
+
+	return nil
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Source execution seeder (makes the example self-contained)
