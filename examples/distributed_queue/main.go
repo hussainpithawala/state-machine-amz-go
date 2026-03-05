@@ -177,7 +177,7 @@ func runWorker(ctx context.Context, queueConfig *queue.Config, repoManager *repo
 	}(queueClient)
 
 	// Create execution handler with executor
-	handler := handler.NewExecutionHandlerWithContext(repoManager, queueClient, execAdapter)
+	handler := handler.NewExecutionHandlerWithContext(repoManager, queueClient, execAdapter, nil)
 
 	// Create worker with handler
 	worker, err := queue.NewWorker(queueConfig, handler)

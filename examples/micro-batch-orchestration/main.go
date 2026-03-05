@@ -101,6 +101,7 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("shutdown complete")
+	os.Exit(0)
 }
 
 func run(ctx context.Context) error {
@@ -111,7 +112,12 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("repository: %w", err)
 	}
-	//defer manager.Close()
+	defer func(manager *repository.Manager) {
+		err := manager.Close()
+		if err != nil {
+			slog.Error("repository close failed", "err", err)
+		}
+	}(manager)
 
 	queueClient, err := buildQueueClient(cfg)
 	if err != nil {
@@ -163,11 +169,18 @@ func run(ctx context.Context) error {
 		PoolSize:     20,
 		MinIdleConns: 5,
 	})
+	defer func(rdb *redis.Client) {
+		err := rdb.Close()
+		if err != nil {
+			slog.Error("redis close failed", "err", err)
+		}
+	}(rdb)
+
 	// Verify connectivity before continuing.
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("step 2: redis ping: %w", err)
 	}
-	//defer rdb.Close()
+
 	slog.Info("step 2 ✓", "addr", cfg.redisAddr)
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -246,7 +259,7 @@ func run(ctx context.Context) error {
 	// ── Start queue worker pool ───────────────────────────────────────────────
 	// Launch workers that pull tasks from the queue, run the target state
 	// machine for each source execution, and drive the Redis barrier hook.
-	workerWg, workerShutdown := startWorkerPool(ctx, cfg, manager, queueClient, globalExec, orchestrator, orchRegistry)
+	workerWg, workerShutdown := startWorkerPool(cfg, manager, queueClient, globalExec, orchestrator)
 
 	// ── Start dedicated orchestrator continuation worker ──────────────────────
 	// This worker watches for orchestrator executions that have completed a
@@ -401,15 +414,7 @@ func run(ctx context.Context) error {
 
 // startWorkerPool creates and starts a worker pool using the queue.Worker API.
 // This follows the same pattern as distributed_queue/main.go.
-func startWorkerPool(
-	ctx context.Context,
-	cfg config,
-	manager *repository.Manager,
-	qc *queue.Client,
-	baseExecutor *executor.BaseExecutor,
-	orchestrator *batch.Orchestrator,
-	orchRegistry *registry.OrchestratorRegistry,
-) (*sync.WaitGroup, func()) {
+func startWorkerPool(cfg config, manager *repository.Manager, qc *queue.Client, baseExecutor *executor.BaseExecutor, orchestrator *batch.Orchestrator) (*sync.WaitGroup, func()) {
 	var wg sync.WaitGroup
 
 	// Create execution context adapter to bridge executor with handler
@@ -506,7 +511,7 @@ func startOrchestratorContinuationWorker(
 				return
 			case <-ticker.C:
 				// Check for orchestrators that need continuation
-				if err := continueOrchestratorExecutions(ctx, orchestrator, manager, queueClient, smFactory); err != nil {
+				if err := continueOrchestratorExecutions(); err != nil {
 					slog.Error("orchestrator continuation error", "err", err)
 				}
 			}
@@ -529,13 +534,7 @@ func startOrchestratorContinuationWorker(
 // is now handled automatically by the resumeOrchestrator method in orchestrator.go.
 // When SignalMicroBatchComplete is called, it already resumes the orchestrator with
 // proper handlers and executes it until it pauses or completes.
-func continueOrchestratorExecutions(
-	ctx context.Context,
-	orchestrator *batch.Orchestrator,
-	manager *repository.Manager,
-	queueClient *queue.Client,
-	smFactory func(context.Context, string, *repository.Manager) (batch.StateMachine, error),
-) error {
+func continueOrchestratorExecutions() error {
 	// Disabled - orchestrator continuation is handled by SignalMicroBatchComplete
 	return nil
 }
@@ -773,10 +772,10 @@ func loadConfig() config {
 	return config{
 		redisAddr:         envStr("REDIS_ADDR", "localhost:6379"),
 		postgresURL:       envStr("POSTGRES_URL", "postgres://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable"),
-		sourceExecCount:   envInt("SOURCE_EXEC_COUNT", 10),
-		microBatchSize:    envInt("MICRO_BATCH_SIZE", 5),
-		workerConcurrency: envInt("WORKER_CONCURRENCY", 2),
-		pauseAtBatch:      envInt("PAUSE_AT_BATCH", 2),
+		sourceExecCount:   envInt("SOURCE_EXEC_COUNT", 1000),
+		microBatchSize:    envInt("MICRO_BATCH_SIZE", 50),
+		workerConcurrency: envInt("WORKER_CONCURRENCY", 4),
+		pauseAtBatch:      envInt("PAUSE_AT_BATCH", 1),
 	}
 }
 

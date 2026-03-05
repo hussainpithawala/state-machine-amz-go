@@ -7,6 +7,8 @@ import (
 
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
+	statemachinepkg "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
 )
 
 const PAUSED = "PAUSED"
@@ -172,15 +174,101 @@ func (executor *BaseExecutor) getOrLoadStateMachine(ctx context.Context, smID st
 	}
 
 	// If we don't have it in cache, try to load it from repository using the loader function
-	if targetSM == nil && executor.repositoryManager != nil && executor.smLoader != nil {
-		loadedSM, err := executor.smLoader(ctx, smID, executor.repositoryManager)
-		if err == nil {
-			targetSM = loadedSM
-			smCache[smID] = loadedSM
+	if targetSM == nil && executor.repositoryManager != nil {
+		// Prefer caller-provided loader when configured.
+		if executor.smLoader != nil {
+			loadedSM, err := executor.smLoader(ctx, smID, executor.repositoryManager)
+			if err == nil {
+				targetSM = loadedSM
+				smCache[smID] = loadedSM
+			}
+		} else {
+			// Fallback loader for repository-backed message resume paths.
+			loadedSM, err := executor.loadStateMachineFromRepository(ctx, smID)
+			if err == nil {
+				targetSM = loadedSM
+				smCache[smID] = loadedSM
+			}
 		}
 	}
 
 	return targetSM
+}
+
+func (executor *BaseExecutor) loadStateMachineFromRepository(ctx context.Context, smID string) (StateMachineInterface, error) {
+	record, err := executor.repositoryManager.GetStateMachine(ctx, smID)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil || record.Definition == "" {
+		return nil, fmt.Errorf("state machine definition not found for id %s", smID)
+	}
+
+	baseSM, err := statemachinepkg.New([]byte(record.Definition), true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse state machine definition for id %s: %w", smID, err)
+	}
+
+	return &repositoryStateMachineAdapter{
+		id: smID,
+		sm: baseSM,
+	}, nil
+}
+
+// repositoryStateMachineAdapter adapts a definition-loaded statemachine.StateMachine
+// to the executor's StateMachineInterface for message-resume use cases.
+type repositoryStateMachineAdapter struct {
+	id string
+	sm *statemachinepkg.StateMachine
+}
+
+func (a *repositoryStateMachineAdapter) GetStartAt() string {
+	return a.sm.GetStartAt()
+}
+
+func (a *repositoryStateMachineAdapter) GetState(name string) (states.State, error) {
+	return a.sm.GetState(name)
+}
+
+func (a *repositoryStateMachineAdapter) IsTimeout(startTime time.Time) bool {
+	return a.sm.IsTimeout(startTime)
+}
+
+func (a *repositoryStateMachineAdapter) RunExecution(ctx context.Context, input interface{}, execCtx *execution.Execution) (*execution.Execution, error) {
+	if execCtx == nil {
+		return nil, fmt.Errorf("execution context cannot be nil")
+	}
+	if input != nil {
+		execCtx.Input = input
+	}
+	if execCtx.CurrentState == "" {
+		execCtx.CurrentState = a.sm.GetStartAt()
+	}
+	return a.sm.RunExecution(ctx, execCtx)
+}
+
+func (a *repositoryStateMachineAdapter) ResumeExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
+	return a.sm.ResumeExecution(ctx, execCtx)
+}
+
+func (a *repositoryStateMachineAdapter) FindWaitingExecutionsByCorrelation(_ context.Context, _ string, _ interface{}) ([]*repository.ExecutionRecord, error) {
+	return nil, fmt.Errorf("in-memory adapter does not support repository-based correlation search")
+}
+
+func (a *repositoryStateMachineAdapter) GetID() string {
+	return a.id
+}
+
+func (a *repositoryStateMachineAdapter) MergeInputs(processor *states.JSONPathProcessor, processedInput interface{}, result interface{}) (interface{}, error) {
+	output := result
+	if processedInput == nil {
+		return output, nil
+	}
+	if result == nil {
+		return processedInput, nil
+	}
+
+	return processor.ApplyResultPath(processedInput, output, states.StringPtr("$."))
 }
 
 // prepareRegistryForExecution sets the appropriate registry for the given state machine

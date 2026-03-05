@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/hibiken/asynq"
 )
@@ -20,6 +21,8 @@ type Worker struct {
 	server           *asynq.Server
 	mux              *asynq.ServeMux
 	executionHandler ExecutionHandler
+	shutdownCh       chan struct{}
+	shutdownOnce     sync.Once
 }
 
 // NewWorker creates a new queue worker for processing tasks
@@ -39,6 +42,7 @@ func NewWorker(config *Config, handler ExecutionHandler) (*Worker, error) {
 		server:           server,
 		mux:              mux,
 		executionHandler: handler,
+		shutdownCh:       make(chan struct{}),
 	}
 
 	// Register task handlers
@@ -104,14 +108,19 @@ func (w *Worker) handleTimeoutTask(ctx context.Context, task *asynq.Task) error 
 // Run starts the worker to process tasks from the queue
 func (w *Worker) Run() error {
 	log.Println("Starting worker to process state machine execution tasks...")
-	if err := w.server.Run(w.mux); err != nil {
+	if err := w.server.Start(w.mux); err != nil {
 		return fmt.Errorf("worker failed to run: %w", err)
 	}
+	<-w.shutdownCh
 	return nil
 }
 
 // Shutdown gracefully shuts down the worker
 func (w *Worker) Shutdown() {
-	log.Println("Shutting down worker...")
-	w.server.Shutdown()
+	w.shutdownOnce.Do(func() {
+		log.Println("Shutting down worker...")
+		w.server.Stop()
+		w.server.Shutdown()
+		close(w.shutdownCh)
+	})
 }
