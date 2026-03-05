@@ -50,6 +50,7 @@ docker-up: ## Start PostgreSQL, Redis, and Asynqmon containers for testing
 	done
 	@echo "${GREEN}Creating additional test database...${RESET}"
 	@docker exec statemachine-postgres psql -U $(POSTGRES_USER) -c "CREATE DATABASE $(POSTGRES_DB_GORM);" 2>/dev/null || echo "Database $(POSTGRES_DB_GORM) already exists"
+	@docker exec statemachine-postgres psql -U $(POSTGRES_USER) -c "CREATE DATABASE $(POSTGRES_DB);" 2>/dev/null || echo "Database $(POSTGRES_DB) already exists"
 	@echo "${GREEN}Waiting for Redis...${RESET}"
 	@until docker exec statemachine-redis redis-cli -p 6379 > /dev/null 2>&1; do \
 		echo "Waiting for Redis..."; \
