@@ -21,7 +21,10 @@ func newTestRedis(t *testing.T) (*redis.Client, func()) {
 		t.Fatalf("start miniredis: %v", err)
 	}
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	return client, func() { client.Close(); mr.Close() }
+	return client, func() {
+		_ = client.Close()
+		mr.Close()
+	}
 }
 
 // ─── Barrier ──────────────────────────────────────────────────────────────────
@@ -62,10 +65,15 @@ func TestBarrier_Idempotent_Init(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	b, _ := batch.NewBarrier(ctx, rdb)
+	b, err := batch.NewBarrier(ctx, rdb)
+	if err != nil {
+		t.Fatalf("NewBarrier: %v", err)
+	}
 	const mbID = "test-batch:1"
-	b.Init(ctx, mbID, 5)
-	b.Init(ctx, mbID, 999) // second init must be no-op
+	if err := b.Init(ctx, mbID, 5); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	_ = b.Init(ctx, mbID, 999) // second init must be no-op
 
 	rem, _ := b.Remaining(ctx, mbID)
 	if rem != 5 {
@@ -78,10 +86,17 @@ func TestBarrier_DoubleFire_ReturnsSentinel(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	b, _ := batch.NewBarrier(ctx, rdb)
+	b, err := batch.NewBarrier(ctx, rdb)
+	if err != nil {
+		t.Fatalf("NewBarrier: %v", err)
+	}
 	const mbID = "test-batch:2"
-	b.Init(ctx, mbID, 1)
-	b.Decrement(ctx, mbID) // clears key
+	if err := b.Init(ctx, mbID, 1); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, err := b.Decrement(ctx, mbID); err != nil { // clears key
+		t.Fatalf("first decrement: %v", err)
+	}
 
 	res, err := b.Decrement(ctx, mbID)
 	if err != nil {
@@ -107,10 +122,13 @@ func TestMetrics_InstantaneousRate(t *testing.T) {
 
 	// 3 failures, 7 successes → 30 %
 	for i := 0; i < 10; i++ {
-		m.RecordOutcome(ctx, batch.TaskOutcome{
+		err := m.RecordOutcome(ctx, batch.TaskOutcome{
 			BatchID: batchID, MicroBatchID: "x", TaskID: fmt.Sprintf("t%d", i),
 			Success: i >= 3, CompletedAt: time.Now(),
 		})
+		if err != nil {
+			t.Fatalf("RecordOutcome[%d]: %v", i, err)
+		}
 	}
 
 	rate, _ := m.InstantaneousFailureRate(ctx, batchID)
@@ -129,10 +147,14 @@ func TestMetrics_SlidingWindowTrim(t *testing.T) {
 
 	// 10 failures then 5 successes; window=5 → only successes remain
 	for i := 0; i < 10; i++ {
-		m.RecordOutcome(ctx, batch.TaskOutcome{BatchID: batchID, Success: false, CompletedAt: time.Now()})
+		if err := m.RecordOutcome(ctx, batch.TaskOutcome{BatchID: batchID, Success: false, CompletedAt: time.Now()}); err != nil {
+			t.Fatalf("RecordOutcome(false)[%d]: %v", i, err)
+		}
 	}
 	for i := 0; i < 5; i++ {
-		m.RecordOutcome(ctx, batch.TaskOutcome{BatchID: batchID, Success: true, CompletedAt: time.Now()})
+		if err := m.RecordOutcome(ctx, batch.TaskOutcome{BatchID: batchID, Success: true, CompletedAt: time.Now()}); err != nil {
+			t.Fatalf("RecordOutcome(true)[%d]: %v", i, err)
+		}
 	}
 
 	rate, _ := m.InstantaneousFailureRate(ctx, batchID)
@@ -152,7 +174,9 @@ func TestEvaluator_SevereFailure(t *testing.T) {
 	ev := batch.NewEvaluator(m)
 
 	for i := 0; i < 10; i++ {
-		m.RecordOutcome(ctx, batch.TaskOutcome{BatchID: "ev-batch", Success: i >= 6, CompletedAt: time.Now()})
+		if err := m.RecordOutcome(ctx, batch.TaskOutcome{BatchID: "ev-batch", Success: i >= 6, CompletedAt: time.Now()}); err != nil {
+			t.Fatalf("RecordOutcome[%d]: %v", i, err)
+		}
 	}
 
 	policy := batch.FailurePolicy{SevereFailureThreshold: 0.5, SoftFailureThreshold: 0.2}
@@ -172,7 +196,9 @@ func TestEvaluator_SoftPause(t *testing.T) {
 
 	// 30 % failure – above soft (20 %), below severe (50 %)
 	for i := 0; i < 10; i++ {
-		m.RecordOutcome(ctx, batch.TaskOutcome{BatchID: "pause-batch", Success: i >= 3, CompletedAt: time.Now()})
+		if err := m.RecordOutcome(ctx, batch.TaskOutcome{BatchID: "pause-batch", Success: i >= 3, CompletedAt: time.Now()}); err != nil {
+			t.Fatalf("RecordOutcome[%d]: %v", i, err)
+		}
 	}
 	for i := 0; i < 3; i++ {
 		rdb.Set(ctx, fmt.Sprintf("metrics:pause-batch:mb:%d:rate", i), 0.30, 0)
@@ -197,7 +223,9 @@ func TestEvaluator_Healthy(t *testing.T) {
 	ev := batch.NewEvaluator(m)
 
 	for i := 0; i < 10; i++ {
-		m.RecordOutcome(ctx, batch.TaskOutcome{BatchID: "ok-batch", Success: true, CompletedAt: time.Now()})
+		if err := m.RecordOutcome(ctx, batch.TaskOutcome{BatchID: "ok-batch", Success: true, CompletedAt: time.Now()}); err != nil {
+			t.Fatalf("RecordOutcome[%d]: %v", i, err)
+		}
 	}
 
 	policy := batch.FailurePolicy{SevereFailureThreshold: 0.5, SoftFailureThreshold: 0.2}
@@ -224,7 +252,9 @@ func TestResume_SignalConsumedOnce(t *testing.T) {
 	}
 
 	// Operator signals
-	rc.Signal(ctx, batchID, "ops@co.com", "DB recovered")
+	if err := rc.Signal(ctx, batchID, "ops@co.com", "DB recovered"); err != nil {
+		t.Fatalf("Signal: %v", err)
+	}
 
 	res, _ = rc.Check(ctx, batchID)
 	if !res.ShouldResume {
@@ -283,7 +313,10 @@ func TestIntegration_MicroBatchBarrierCycle(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	barrier, _ := batch.NewBarrier(ctx, rdb)
+	barrier, err := batch.NewBarrier(ctx, rdb)
+	if err != nil {
+		t.Fatalf("NewBarrier: %v", err)
+	}
 	metrics := batch.NewMetricsRecorder(rdb, 50)
 	ev := batch.NewEvaluator(metrics)
 
@@ -295,19 +328,28 @@ func TestIntegration_MicroBatchBarrierCycle(t *testing.T) {
 
 	for mb := 0; mb < totalMBs; mb++ {
 		mbID := fmt.Sprintf("%s:%d", batchID, mb)
-		barrier.Init(ctx, mbID, mbSize)
+		if err := barrier.Init(ctx, mbID, mbSize); err != nil {
+			t.Fatalf("mb%d: Init: %v", mb, err)
+		}
 
 		var winners int
 		for w := 0; w < mbSize; w++ {
-			metrics.RecordOutcome(ctx, batch.TaskOutcome{
+			if err := metrics.RecordOutcome(ctx, batch.TaskOutcome{
 				BatchID: batchID, MicroBatchID: mbID,
 				TaskID:  fmt.Sprintf("id-%04d", mb*mbSize+w),
 				Success: true, CompletedAt: time.Now(),
-			})
-			res, _ := barrier.Decrement(ctx, mbID)
+			}); err != nil {
+				t.Fatalf("mb%d: RecordOutcome[%d]: %v", mb, w, err)
+			}
+			res, err := barrier.Decrement(ctx, mbID)
+			if err != nil {
+				t.Fatalf("mb%d: Decrement[%d]: %v", mb, w, err)
+			}
 			if res.IsLastWorker {
 				winners++
-				metrics.SnapshotMicroBatchRate(ctx, batchID, mb)
+				if _, err := metrics.SnapshotMicroBatchRate(ctx, batchID, mb); err != nil {
+					t.Fatalf("mb%d: SnapshotMicroBatchRate: %v", mb, err)
+				}
 			}
 		}
 		if winners != 1 {

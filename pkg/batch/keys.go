@@ -34,17 +34,17 @@ const (
 	// DefaultSoftFailureThreshold pauses the batch for human review.
 	DefaultSoftFailureThreshold = 0.2
 
-	// BarrierTTLSeconds is how long a barrier key lives in Redis.
-	BarrierTTLSeconds = 24 * time.Hour
+	// BarrierTTL is how long a barrier key lives in Redis.
+	BarrierTTL = 24 * time.Hour
 
-	// MetricsTTLSeconds is the lifetime of per-batch metric keys.
-	MetricsTTLSeconds = 7 * 24 * time.Hour
+	// MetricsTTL is the lifetime of per-batch metric keys.
+	MetricsTTL = 7 * 24 * time.Hour
 
-	// ResumeTTLSeconds is the lifetime of a resume signal key.
-	ResumeTTLSeconds = 24 * time.Hour
+	// ResumeTTL is the lifetime of a resume signal key.
+	ResumeTTL = 24 * time.Hour
 
-	// IDsListTTLSeconds is the lifetime of the stored IDs list in Redis.
-	IDsListTTLSeconds = 7 * 24 * time.Hour
+	// IDsListTTL is the lifetime of the stored IDs list in Redis.
+	IDsListTTL = 7 * 24 * time.Hour
 
 	// MicroBatchCorrelationKey is the CorrelationKey used in the Message state.
 	// Every WaitForMicroBatchCompletion pause is correlated on this key.

@@ -98,10 +98,10 @@ func main() {
 
 	if err := run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("fatal", "err", err)
-		os.Exit(1)
+		stop()
 	}
 	slog.Info("shutdown complete")
-	os.Exit(0)
+	stop()
 }
 
 func run(ctx context.Context) error {
@@ -366,8 +366,8 @@ func run(ctx context.Context) error {
 				"batch_id", activeBatchID,
 				"operator", "ops-engineer@company.com",
 			)
-			signalCtx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-			//defer cancel()
+			signalCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 			if err := orchestrator.Signal(
 				signalCtx,
 				activeBatchID,
@@ -730,13 +730,13 @@ func handleEnrich(_ context.Context, input interface{}) (interface{}, error) {
 	m, _ := input.(map[string]interface{})
 	// Simulate occasional transient errors that the Retry block will absorb.
 
-	//if id, ok := m["record_id"].(string); ok && len(id) > 0 && id[len(id)-1] == '9' {
-	//	// ~10 % of records end in '9' – simulate a retryable error.
-	//	// On retry the input is the same so the second attempt succeeds.
-	//	if _, already := m["_retry_ok"]; !already {
-	//		return nil, fmt.Errorf("transient enrich error (will retry)")
-	//	}
-	//}
+	// if id, ok := m["record_id"].(string); ok && len(id) > 0 && id[len(id)-1] == '9' {
+	// 	// ~10 % of records end in '9' – simulate a retryable error.
+	// 	// On retry the input is the same so the second attempt succeeds.
+	// 	if _, already := m["_retry_ok"]; !already {
+	// 		return nil, fmt.Errorf("transient enrich error (will retry)")
+	// 	}
+	// }
 
 	return map[string]interface{}{
 		"record_id":   m["record_id"],

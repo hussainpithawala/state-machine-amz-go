@@ -288,7 +288,7 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 
 	// ── Advance cursor ────────────────────────────────────────────────────────
 	newCursor := cursorVal + actualSize
-	if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTLSeconds).Err(); err != nil {
+	if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
 		return nil, fmt.Errorf("batch:dispatch: advance cursor: %w", err)
 	}
 
@@ -516,7 +516,7 @@ func (o *Orchestrator) storeIDs(ctx context.Context, batchID string, ids []strin
 		}
 		pipe.RPush(ctx, key, slice...)
 	}
-	pipe.Expire(ctx, key, IDsListTTLSeconds)
+	pipe.Expire(ctx, key, IDsListTTL)
 	_, err := pipe.Exec(ctx)
 	return err
 }
@@ -579,7 +579,7 @@ func remarshal(src, dst interface{}) error {
 // Format: "<batchID>:<index>"
 func parseMicroBatchIndex(batchID, mbID string) int {
 	var idx int
-	fmt.Sscanf(mbID, batchID+":%d", &idx)
+	_, _ = fmt.Sscanf(mbID, batchID+":%d", &idx)
 	return idx
 }
 

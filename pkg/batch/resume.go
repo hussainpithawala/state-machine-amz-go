@@ -36,7 +36,7 @@ func (r *ResumeController) Signal(ctx context.Context, batchID, operator, notes 
 	if err != nil {
 		return fmt.Errorf("resume: marshal: %w", err)
 	}
-	return r.rdb.Set(ctx, keyResume(batchID), string(data), ResumeTTLSeconds).Err()
+	return r.rdb.Set(ctx, keyResume(batchID), string(data), ResumeTTL).Err()
 }
 
 // Revoke removes an unconsumed resume signal (operator changed their mind).

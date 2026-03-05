@@ -40,7 +40,7 @@ func (m *MetricsRecorder) RecordOutcome(ctx context.Context, o TaskOutcome) erro
 	wk := keyMetricsWindow(o.BatchID)
 	pipe.RPush(ctx, wk, bit)
 	pipe.LTrim(ctx, wk, int64(-m.windowN), -1)
-	pipe.Expire(ctx, wk, MetricsTTLSeconds)
+	pipe.Expire(ctx, wk, MetricsTTL)
 	pipe.Incr(ctx, keyTotalProcessed(o.BatchID))
 	if !o.Success {
 		pipe.Incr(ctx, keyTotalFailed(o.BatchID))
@@ -58,7 +58,7 @@ func (m *MetricsRecorder) SnapshotMicroBatchRate(ctx context.Context, batchID st
 		return 0, wrapErr(err, "snapshot lrange %s", batchID)
 	}
 	rate := computeFailureRate(entries)
-	if err := m.rdb.Set(ctx, keyMicroBatchRate(batchID, mbIndex), rate, MetricsTTLSeconds).Err(); err != nil {
+	if err := m.rdb.Set(ctx, keyMicroBatchRate(batchID, mbIndex), rate, MetricsTTL).Err(); err != nil {
 		return 0, wrapErr(err, "snapshot set %s/%d", batchID, mbIndex)
 	}
 	return rate, nil
