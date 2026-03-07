@@ -21,6 +21,7 @@ A powerful, production-ready state machine implementation for Go that's fully co
 - 📩 **Message Correlation** - Pause workflows and resume with external asynchronous messages
 - 🔗 **Execution Chaining** - Chain multiple state machines together for complex multi-stage workflows
 - 📦 **Batch Execution** - Execute chained workflows in batch mode with filtering and concurrency control
+- 🎛️ **Micro-Batch Orchestration** - Streaming framework with adaptive failure-rate control and pause/resume (NEW in v1.2.11)
 - 🌐 **Distributed Queue** - Redis-backed task queue for horizontal scaling across workers
 - 🎯 **REST API** - Complete HTTP API via [state-machine-amz-gin](https://github.com/hussainpithawala/state-machine-amz-gin)
 - 🏗️ **Clean Architecture** - Separation between state machine logic and persistence
@@ -47,9 +48,10 @@ For PostgreSQL persistence with raw SQL:
 go get github.com/lib/pq
 ```
 
-For distributed queue support (optional):
+For distributed queue and micro-batch orchestration (optional):
 ```bash
 go get github.com/hibiken/asynq
+go get github.com/redis/go-redis/v9
 ```
 
 For REST API framework (optional):
@@ -614,7 +616,7 @@ exec.RegisterGoFunction("process:payment", processPaymentHandler)
 
 // Create execution handler with context
 execAdapter := executor.NewExecutionContextAdapter(exec)
-handler := persistent.NewExecutionHandlerWithContext(repoManager, execAdapter)
+handler := handler.NewExecutionHandlerWithContext(repoManager, queueClient, execAdapter, nil)
 
 // Create and start worker
 worker, _ := queue.NewWorker(queueConfig, handler)
@@ -668,6 +670,163 @@ for queueName, stat := range stats {
 - Scalable workflow execution
 
 **[📖 Full Example](examples/distributed_queue/main.go)**
+
+### Micro-Batch Orchestration (NEW v1.2.11)
+
+Process large batches with intelligent failure management, adaptive evaluation, and operator control!
+
+**Key Features:**
+- 🎯 **Streaming Batch Processing** - Process millions of records in manageable micro-batches
+- 📊 **Adaptive Failure-Rate Control** - Statistical monitoring with EMA (Exponential Moving Average)
+- ⏸️ **Pause/Resume Operations** - Operator intervention when failure rates exceed thresholds
+- 🔄 **Redis Barrier Coordination** - Lua-based atomic operations for distributed worker sync
+- 📈 **Real-time Metrics** - Per-batch and per-micro-batch granular tracking
+- 🎛️ **Configurable Thresholds** - Soft (warning) and hard (halt) failure-rate limits
+
+**1. Enable Micro-Batch Mode:**
+
+```go
+// Setup Redis for orchestration
+rdb := redis.NewClient(&redis.Options{
+    Addr: "localhost:6379",
+})
+
+// Configure batch execution with micro-batch support
+filter := &repository.ExecutionFilter{
+    StateMachineID: "source-workflow-v1",
+    Status:         "SUCCEEDED",
+}
+
+batchOpts := &statemachine.BatchExecutionOptions{
+    NamePrefix:     "nightly-processing",
+    DoMicroBatch:   true,           // Enable micro-batch mode
+    MicroBatchSize: 500,            // Process 500 at a time
+    RedisClient:    rdb,            // Redis for coordination
+    StopOnError:    false,
+
+    // Progress callbacks
+    OnExecutionStart: func(sourceExecID string, index int) {
+        log.Printf("Starting execution %d", index)
+    },
+    OnExecutionComplete: func(sourceExecID string, index int, err error) {
+        if err != nil {
+            log.Printf("Execution %d failed: %v", index, err)
+        }
+    },
+}
+
+// Execute with micro-batch orchestration
+results, err := targetSM.ExecuteBatch(ctx, filter, "", batchOpts)
+```
+
+**2. Setup Orchestrator with Factory Functions:**
+
+```go
+// Create factory functions for state machine instantiation
+smFactory := func(ctx context.Context, smID string, mgr *repository.Manager) (batch.StateMachine, error) {
+    return persistent.NewFromDefnId(ctx, smID, mgr)
+}
+
+smCreator := func(def []byte, isJSON bool, smID string, mgr *repository.Manager) (batch.StateMachine, error) {
+    return persistent.New(def, isJSON, smID, mgr)
+}
+
+// Create orchestrator with Redis and state machine
+orchestrator, err := batch.NewOrchestrator(ctx, rdb, targetSM, smFactory, smCreator)
+
+// Register orchestrator definition (idempotent)
+err = orchestrator.EnsureDefinition(ctx,
+    batch.OrchestratorDefinitionJSON(),
+    batch.OrchestratorStateMachineID)
+
+// Register in app-level registry for worker access
+orchRegistry := registry.New()
+orchRegistry.Register(batch.OrchestratorStateMachineID, orchestrator)
+```
+
+**3. Operator Signal for Resume:**
+
+```go
+// When failure rates trigger a pause, operator can signal resume
+err := orchestrator.Signal(ctx, batchID,
+    "ops-engineer@company.com",
+    "API rate limit resolved - safe to continue")
+```
+
+**4. Monitor Progress:**
+
+```go
+// Check orchestrator execution status
+executions, _ := manager.ListExecutions(ctx, &repository.ExecutionFilter{
+    StateMachineID: batch.OrchestratorStateMachineID,
+})
+
+for _, exec := range executions {
+    log.Printf("Batch %s: %s (state: %s)",
+        exec.ExecutionID, exec.Status, exec.CurrentState)
+}
+
+// View metrics
+processed, _ := rdb.Get(ctx, fmt.Sprintf("metrics:%s:total_processed", batchID)).Int64()
+failed, _ := rdb.Get(ctx, fmt.Sprintf("metrics:%s:total_failed", batchID)).Int64()
+rate := float64(failed) / float64(processed) * 100
+log.Printf("Progress: %d processed, %d failed (%.2f%% failure rate)",
+    processed, failed, rate)
+```
+
+**Architecture:**
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    Orchestrator State Machine                │
+│  Initialize → DispatchMicroBatch → WaitForCompletion →      │
+│  → EvaluateAndDecide → [PauseBatch] → Next/Success/Failure  │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+            ┌────────────────────────┐
+            │    Redis Barrier       │
+            │  - Lua atomic ops      │
+            │  - Counter tracking    │
+            │  - Metrics storage     │
+            └──────────┬─────────────┘
+                       │
+        ┌──────────────┼──────────────┐
+        ▼              ▼              ▼
+   ┌─────────┐   ┌─────────┐   ┌─────────┐
+   │Worker 1 │   │Worker 2 │   │Worker N │
+   │Processes│   │Processes│   │Processes│
+   │ + Fires │   │ + Fires │   │ + Fires │
+   │ Barrier │   │ Barrier │   │ Barrier │
+   └─────────┘   └─────────┘   └─────────┘
+```
+
+**Adaptive Evaluator Logic:**
+- Tracks failure rate using Exponential Moving Average (EMA)
+- **Soft Threshold (5%)**: Log warning, continue processing
+- **Hard Threshold (10%)**: Pause batch, wait for operator signal
+- Configurable thresholds based on use case
+- Graceful degradation and automatic recovery
+
+**Use Cases:**
+- **ETL Pipelines**: Process millions of records with failure monitoring
+- **Data Migration**: Migrate large datasets with pause/resume capability
+- **Bulk Operations**: Process orders, invoices, or reports at scale
+- **Nightly Batch Jobs**: Run scheduled data processing with oversight
+- **API Rate Limiting**: Pause when hitting external API limits
+
+**Components:**
+
+| Component | Purpose | Lines of Code |
+|-----------|---------|---------------|
+| `Orchestrator` | Lifecycle management, pause/resume | 937 |
+| `Barrier` | Redis Lua coordination | 115 |
+| `Evaluator` | Adaptive failure-rate analysis | 76 |
+| `Metrics` | Real-time tracking | 141 |
+| `Registry` | Orchestrator lookup | 51 |
+
+**[📖 Complete Example](examples/micro-batch-orchestration/main.go)** (861 lines - fully runnable)
+
+**[📖 Bulk Orchestration Example](examples/micro-bulk-orchestration/main.go)** (721 lines)
 
 ## 📊 Execution Tracking
 
@@ -846,6 +1005,9 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] Distributed Queue Execution - Redis-backed task queues
 - [x] REST API Framework - Complete HTTP API via Gin
 - [x] Async Task Cancellation - Automatic timeout cancellation
+- [x] Micro-Batch Orchestration - Streaming batch processing with adaptive control
+- [x] Bulk Orchestration - Large-scale batch operations
+- [x] Orchestrator Registry - App-level orchestrator management
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring
