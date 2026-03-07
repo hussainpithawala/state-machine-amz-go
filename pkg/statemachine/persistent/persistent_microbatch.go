@@ -114,7 +114,7 @@ func (pm *StateMachine) executeMicroBatch(
 
 	// ── Register definition once (idempotent) ─────────────────────────────────
 	defJSON := batch.OrchestratorDefinitionJSON()
-	if err := orch.EnsureDefinition(ctx, defJSON); err != nil {
+	if err := orch.EnsureDefinition(ctx, defJSON, batch.OrchestratorStateMachineID); err != nil {
 		return nil, fmt.Errorf("executeMicroBatch: ensure definition: %w", err)
 	}
 

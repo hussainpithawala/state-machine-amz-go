@@ -23,14 +23,21 @@ import (
 // ──────────────────────────────────────────────────────────────────────────────
 
 const (
-	ResourceDispatch    = "batch:dispatch"
-	ResourceEvaluate    = "batch:evaluate"
-	ResourceCheckResume = "batch:check-resume"
+	ResourceDispatch        = "batch:dispatch"
+	ResourceEvaluate        = "batch:evaluate"
+	ResourceCheckResume     = "batch:check-resume"
+	ResourceDispatchBulk    = "batch:dispatch-bulk"
+	ResourceEvaluateBulk    = "batch:evaluate-bulk"
+	ResourceCheckResumeBulk = "batch:check-resume-bulk"
 )
 
 // OrchestratorStateMachineID is the ID under which the orchestrator state
 // machine definition is stored in the repository.
 const OrchestratorStateMachineID = "micro-batch-orchestrator-v1"
+
+// BulkOrchestratorStateMachineID is the ID under which the bulk orchestrator
+// state machine definition is stored in the repository.
+const BulkOrchestratorStateMachineID = "bulk-orchestrator-v1"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Orchestrator
@@ -203,6 +210,123 @@ func (o *Orchestrator) Run(
 	return doneCh, nil
 }
 
+// RunBulk stores the bulk input data in Redis, constructs the bulk orchestrator
+// input, and launches the bulk orchestrator state machine as an execution of
+// the parent's StateMachine using the bulk orchestrator definition.
+func (o *Orchestrator) RunBulk(
+	ctx context.Context,
+	batchID string,
+	inputs []interface{},
+	targetMachineID string,
+	opts *statemachine2.BulkExecutionOptions,
+	execOpts []statemachine2.ExecutionOption,
+) (<-chan error, error) {
+	if err := o.storeBulkInputs(ctx, batchID, inputs); err != nil {
+		return nil, err
+	}
+
+	mbSize := opts.MicroBatchSize
+	if mbSize <= 0 {
+		mbSize = DefaultMicroBatchSize
+	}
+
+	policy := getFailurePolicy(opts.FailurePolicyConfig)
+
+	config := &statemachine2.ExecutionConfig{}
+	for _, execOpt := range execOpts {
+		execOpt(config)
+	}
+
+	input := BulkOrchestratorInput{
+		BatchID:              batchID,
+		TotalCount:           len(inputs),
+		MicroBatchSize:       mbSize,
+		TargetStateMachineID: targetMachineID,
+		OrchestratorSMID:     BulkOrchestratorStateMachineID,
+		ExecutionNamePrefix:  opts.NamePrefix,
+		InputTransformerName: config.InputTransformerName,
+		ApplyUnique:          config.ApplyUnique,
+		FailurePolicy:        policy,
+	}
+
+	orchestratorSM, err := o.smFactory(ctx, BulkOrchestratorStateMachineID, o.parentSM.GetRepositoryManager())
+	if err != nil {
+		return nil, fmt.Errorf("bulk orchestrator: load definition: %w", err)
+	}
+
+	exec := executor.NewBaseExecutor()
+	o.RegisterBulkHandlers(exec)
+	orchestratorSM.SetExecutor(exec)
+
+	if qc := o.parentSM.GetQueueClient(); qc != nil {
+		orchestratorSM.SetQueueClient(qc)
+	}
+
+	doneCh := make(chan error, 1)
+	go func() {
+		execName := fmt.Sprintf("bulk-orch-%s-%d", batchID, time.Now().UnixNano())
+		execCtx := execution.NewContext(execName, "DispatchBulkMicroBatch", input)
+		execCtx.ID = fmt.Sprintf("%s-baseExecutor-%d", BulkOrchestratorStateMachineID, time.Now().UnixNano())
+		execCtx.StateMachineID = BulkOrchestratorStateMachineID
+
+		ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
+
+		result, err := orchestratorSM.Execute(ctx, execCtx)
+		if err != nil {
+			doneCh <- err
+			return
+		}
+		if result.Status == "PAUSED" {
+			doneCh <- o.waitForTermination(ctx, orchestratorSM, result.ID)
+			return
+		}
+		doneCh <- nil
+	}()
+
+	return doneCh, nil
+}
+
+// storeBulkInputs writes the bulk input data into Redis as JSON strings.
+func (o *Orchestrator) storeBulkInputs(ctx context.Context, batchID string, inputs []interface{}) error {
+	if len(inputs) == 0 {
+		return nil
+	}
+
+	key := keyBulkInputsList(batchID)
+	pipe := o.rdb.Pipeline()
+
+	for _, input := range inputs {
+		inputJSON, err := json.Marshal(input)
+		if err != nil {
+			return fmt.Errorf("marshal input: %w", err)
+		}
+		pipe.RPush(ctx, key, inputJSON)
+	}
+	pipe.Expire(ctx, key, IDsListTTL)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func getFailurePolicy(config interface{}) FailurePolicy {
+	if config == nil {
+		return FailurePolicy{
+			WindowN:                DefaultWindowN,
+			WindowM:                DefaultWindowM,
+			SevereFailureThreshold: DefaultSevereFailureThreshold,
+			SoftFailureThreshold:   DefaultSoftFailureThreshold,
+		}
+	}
+	if policy, ok := config.(FailurePolicy); ok {
+		return policy
+	}
+	return FailurePolicy{
+		WindowN:                DefaultWindowN,
+		WindowM:                DefaultWindowM,
+		SevereFailureThreshold: DefaultSevereFailureThreshold,
+		SoftFailureThreshold:   DefaultSoftFailureThreshold,
+	}
+}
+
 // waitForTermination polls the repository until the orchestrator execution
 // reaches a terminal status (SUCCEEDED or FAILED) or the context is cancelled.
 func (o *Orchestrator) waitForTermination(ctx context.Context, sm StateMachine, execID string) error {
@@ -333,6 +457,166 @@ func (o *Orchestrator) handleCheckResume(ctx context.Context, rawInput interface
 	return o.resume.Check(ctx, input.BatchID)
 }
 
+// handleDispatchBulk is the local handler for the DispatchBulkMicroBatch Task state.
+//
+// Input:  BulkOrchestratorInput
+// Output: DispatchResult (written to $.dispatchResult via ResultPath)
+func (o *Orchestrator) handleDispatchBulk(ctx context.Context, rawInput interface{}) (interface{}, error) {
+	var input BulkOrchestratorInput
+	if err := remarshal(rawInput, &input); err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: unmarshal input: %w", err)
+	}
+
+	mbSize := input.MicroBatchSize
+	if mbSize <= 0 {
+		mbSize = DefaultMicroBatchSize
+	}
+
+	cursorVal, err := o.rdb.Get(ctx, keyCursor(input.BatchID)).Int()
+	if err == redis.Nil {
+		cursorVal = 0
+	} else if err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: cursor %s: %w", input.BatchID, err)
+	}
+
+	if cursorVal >= input.TotalCount {
+		return map[string]interface{}{
+			"batchID":        input.BatchID,
+			"orchestratorID": input.OrchestratorSMID,
+			"dispatchResult": map[string]interface{}{
+				"isBatchComplete": true,
+			},
+		}, nil
+	}
+
+	end := int64(cursorVal + mbSize - 1)
+	if int(end) >= input.TotalCount {
+		end = int64(input.TotalCount - 1)
+	}
+
+	inputs, err := o.rdb.LRange(ctx, keyBulkInputsList(input.BatchID), int64(cursorVal), end).Result()
+	if err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: lrange: %w", err)
+	}
+
+	mbIndex := cursorVal / mbSize
+	mbID := microBatchID(input.BatchID, mbIndex)
+	actualSize := len(inputs)
+
+	if err := o.barrier.Init(ctx, mbID, actualSize); err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: init barrier: %w", err)
+	}
+
+	if err := o.enqueueBulkInputs(ctx, input, inputs, mbID, mbIndex); err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: enqueue: %w", err)
+	}
+
+	newCursor := cursorVal + actualSize
+	if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: advance cursor: %w", err)
+	}
+
+	return map[string]interface{}{
+		"batchID":        input.BatchID,
+		"orchestratorID": input.OrchestratorSMID,
+		"dispatchResult": map[string]interface{}{
+			"isBatchComplete": false,
+			"microBatchId":    mbID,
+			"microBatchIndex": mbIndex,
+			"size":            actualSize,
+			"dispatchedAt":    time.Now().UTC(),
+		},
+	}, nil
+}
+
+// handleEvaluateBulk is the local handler for the EvaluateBulkMicroBatch Task state.
+//
+// Input:  BulkOrchestratorInput (with $.dispatchResult populated)
+// Output: EvaluationResult (written to $.evaluation via ResultPath)
+func (o *Orchestrator) handleEvaluateBulk(ctx context.Context, rawInput interface{}) (interface{}, error) {
+	var input BulkOrchestratorInput
+	if err := remarshal(rawInput, &input); err != nil {
+		return nil, fmt.Errorf("batch:evaluate-bulk: unmarshal: %w", err)
+	}
+	if input.DispatchResult == nil {
+		return nil, fmt.Errorf("batch:evaluate-bulk: missing dispatchResult in input")
+	}
+
+	return o.evaluator.Evaluate(ctx, input.BatchID, input.DispatchResult.MicroBatchIndex, input.FailurePolicy)
+}
+
+// enqueueBulkInputs pushes one task per input to the queue for bulk execution.
+func (o *Orchestrator) enqueueBulkInputs(
+	ctx context.Context,
+	input BulkOrchestratorInput,
+	inputs []string,
+	mbID string,
+	mbIndex int,
+) error {
+	qc := o.parentSM.GetQueueClient()
+	if qc == nil {
+		return fmt.Errorf("no queue client configured")
+	}
+
+	meta := MicroBatchMeta{
+		BatchID:          input.BatchID,
+		MicroBatchID:     mbID,
+		OrchestratorSMID: input.OrchestratorSMID,
+	}
+	metaJSON, _ := json.Marshal(meta)
+
+	mbStart := mbIndex * input.MicroBatchSize
+
+	for idx, inputJSON := range inputs {
+		var inputData interface{}
+		if err := json.Unmarshal([]byte(inputJSON), &inputData); err != nil {
+			return fmt.Errorf("unmarshal input %d: %w", idx, err)
+		}
+
+		// Embed micro-batch metadata in input so worker can extract it
+		inputMap, ok := inputData.(map[string]interface{})
+		if !ok {
+			inputMap = map[string]interface{}{}
+		}
+		inputMap[MicroBatchInputKey] = string(metaJSON)
+
+		globalIdx := mbStart + idx
+		payload := &queue.ExecutionTaskPayload{
+			StateMachineID:       input.TargetStateMachineID,
+			SourceExecutionID:    "",
+			SourceStateName:      "",
+			InputTransformerName: input.InputTransformerName,
+			ApplyUnique:          input.ApplyUnique,
+			ExecutionName:        fmt.Sprintf("%s-%d", input.ExecutionNamePrefix, globalIdx),
+			ExecutionIndex:       globalIdx,
+			Input:                inputMap,
+		}
+
+		if _, err := qc.EnqueueExecution(payload); err != nil {
+			return fmt.Errorf("enqueue input %d: %w", idx, err)
+		}
+	}
+
+	return nil
+}
+
+func cursorForIndex(mbStart int, mbIndex int, mbSize int) int {
+	return mbStart + (mbIndex * mbSize)
+}
+
+// keyBulkInputsList returns the Redis key for the bulk inputs list.
+func keyBulkInputsList(batchID string) string {
+	return fmt.Sprintf("batch:bulk:inputs:%s", batchID)
+}
+
+// RegisterBulkHandlers registers the bulk local task handlers on exec so the
+// bulk orchestrator state machine can call them as Go functions.
+func (o *Orchestrator) RegisterBulkHandlers(exec *executor.BaseExecutor) {
+	exec.RegisterGoFunction(ResourceDispatchBulk, o.handleDispatchBulk)
+	exec.RegisterGoFunction(ResourceEvaluateBulk, o.handleEvaluateBulk)
+	exec.RegisterGoFunction(ResourceCheckResumeBulk, o.handleCheckResume)
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Worker-side: SignalMicroBatchComplete
 // ──────────────────────────────────────────────────────────────────────────────
@@ -401,8 +685,8 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 		// IMPORTANT: Include the ReceivedMessage marker so the Message state
 		// knows this is a resumption and advances to the Next state.
 
-		// Since WaitForMicroBatchCompletion has no ResultPath, the Message state
-		// will use messageData.Data as the entire output. We MUST preserve the
+		// Since WaitForMicroBatchCompletion/WaitForBulkMicroBatchCompletion has no ResultPath,
+		// the Message state will use messageData.Data as the entire output. We MUST preserve the
 		// complete orchestrator state from rec.Input (which is stored under the "$" key).
 		// Note: We do NOT include the marker itself in data to avoid circular references.
 		var stateData interface{}
@@ -416,10 +700,16 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 			stateData = rec.Input
 		}
 
+		// Use the correct message state marker based on whether this is bulk or not
+		messageStateName := "WaitForMicroBatchCompletion"
+		if mbMeta.OrchestratorSMID == BulkOrchestratorStateMachineID {
+			messageStateName = "WaitForBulkMicroBatchCompletion"
+		}
+
 		completionPayload := map[string]interface{}{
-			// Message state marker - tells WaitForMicroBatchCompletion to advance
+			// Message state marker - tells WaitForMicroBatchCompletion/WaitForBulkMicroBatchCompletion to advance
 			// Key format: __received_message___<StateName>
-			"__received_message___WaitForMicroBatchCompletion": map[string]interface{}{
+			fmt.Sprintf("__received_message___%s", messageStateName): map[string]interface{}{
 				"correlation_key":   MicroBatchCorrelationKey,
 				"correlation_value": mbMeta.MicroBatchID,
 				"received_at":       time.Now().Unix(),
@@ -447,7 +737,12 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 
 		// Register handlers and queue client for this resumed execution
 		exec := executor.NewBaseExecutor()
-		o.RegisterHandlers(exec)
+		// Use bulk handlers if this is the bulk orchestrator
+		if mbMeta.OrchestratorSMID == BulkOrchestratorStateMachineID {
+			o.RegisterBulkHandlers(exec)
+		} else {
+			o.RegisterHandlers(exec)
+		}
 		factory.SetExecutor(exec)
 		if qc := o.parentSM.GetQueueClient(); qc != nil {
 			factory.SetQueueClient(qc)
@@ -482,8 +777,8 @@ func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 // before any micro-batch execution is initiated.
 //
 //	definitionJSON – the content of workflows/microbatch_orchestrator.json
-func (o *Orchestrator) EnsureDefinition(ctx context.Context, definitionJSON []byte) error {
-	sm, err := o.smCreator(definitionJSON, true, OrchestratorStateMachineID, o.parentSM.GetRepositoryManager())
+func (o *Orchestrator) EnsureDefinition(ctx context.Context, definitionJSON []byte, defnId string) error {
+	sm, err := o.smCreator(definitionJSON, true, defnId, o.parentSM.GetRepositoryManager())
 	if err != nil {
 		return fmt.Errorf("orchestrator: parse definition: %w", err)
 	}

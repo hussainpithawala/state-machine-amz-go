@@ -1,19 +1,19 @@
-// cmd/microbatch/main.go
+// cmd/microbulk/main.go
 //
-// Complete, runnable example of the micro-batch streaming framework integrated
+// Complete, runnable example of the micro-bulk streaming framework integrated
 // with state-machine-amz-go.  Run with:
 //
-//	go run ./cmd/microbatch/
+//	go run ./cmd/microbulk/
 //
 // Environment variables (all optional, shown with defaults):
 //
 //	REDIS_ADDR          localhost:6379
 //	POSTGRES_URL        (empty → uses in-memory repository)
-//	SOURCE_EXEC_COUNT   5000   number of source executions to seed
-//	MICRO_BATCH_SIZE    500    IDs per micro-batch
+//	BULK_INPUT_COUNT    5000   number of bulk inputs to process
+//	MICRO_BATCH_SIZE    500    inputs per micro-batch
 //	WORKER_CONCURRENCY  10     parallel queue workers
 //	PAUSE_AT_BATCH      2      micro-batch index that simulates a soft-pause
-//	                           (set to -1 to disable the pause demonstration)
+//	                     (set to -1 to disable the pause demonstration)
 package main
 
 import (
@@ -45,28 +45,10 @@ import (
 
 // ─── Workflow definitions ─────────────────────────────────────────────────────
 
-// sourceWorkflowYAML is the upstream state machine whose SUCCEEDED executions
-// are the "source execution IDs" fed into the micro-batch run.
-const sourceWorkflowYAML = `
-Comment: "Source workflow – produces executions that become micro-batch inputs"
-StartAt: IngestRecord
-States:
-  IngestRecord:
-    Type: Task
-    Resource: "source:ingest"
-    ResultPath: "$.ingestResult"
-    Next: ValidateRecord
-  ValidateRecord:
-    Type: Task
-    Resource: "source:validate"
-    ResultPath: "$.validateResult"
-    End: true
-`
-
-// targetWorkflowYAML is the downstream state machine that processes each source
-// execution.  executeBatchConcurrent (with DoMicroBatch=true) drives this.
+// targetWorkflowYAML is the downstream state machine that processes each bulk input.
+// ExecuteBulk drives this workflow for each input in the bulk.
 const targetWorkflowYAML = `
-Comment: "Target workflow – enriches and stores each ingested record"
+Comment: "Target workflow – enriches and stores each bulk record"
 StartAt: EnrichRecord
 States:
   EnrichRecord:
@@ -130,15 +112,15 @@ func run(ctx context.Context) error {
 	// STEP 1 – Create the persistent state machine.
 	//
 	// This is the TARGET state machine – the one that processes each individual
-	// source execution record.  It is also the machine on which we call
-	// ExecuteBatch, so it owns the micro-batch orchestration lifecycle.
+	// bulk input record.  It is also the machine on which we call
+	// ExecuteBulk, so it owns the micro-bulk orchestration lifecycle.
 	// ─────────────────────────────────────────────────────────────────────────
 	slog.Info("step 1: creating target persistent state machine")
 
 	targetSM, err := persistent.New(
 		[]byte(targetWorkflowYAML),
 		false, // YAML, not JSON
-		"target-workflow-v1",
+		"target-bulk-workflow-v1",
 		manager,
 	)
 	if err != nil {
@@ -212,19 +194,19 @@ func run(ctx context.Context) error {
 	slog.Info("step 3 ✓")
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// STEP 4 – Register the orchestrator state machine definition.
+	// STEP 4 – Register the bulk orchestrator state machine definition.
 	//
-	// EnsureDefinition saves the orchestrator's JSON into the repository so
-	// that persistent.NewFromDefnId can retrieve it when Orchestrator.Run
-	// spins up an orchestrator execution.  This call is fully idempotent –
+	// EnsureDefinition saves the bulk orchestrator's JSON into the repository so
+	// that persistent.NewFromDefnId can retrieve it when Orchestrator.RunBulk
+	// spins up a bulk orchestrator execution.  This call is fully idempotent –
 	// safe to run on every application restart.
 	// ─────────────────────────────────────────────────────────────────────────
-	slog.Info("step 4: registering orchestrator state machine definition")
+	slog.Info("step 4: registering bulk orchestrator state machine definition")
 
-	if err := orchestrator.EnsureDefinition(ctx, batch.OrchestratorDefinitionJSON(), batch.OrchestratorStateMachineID); err != nil {
+	if err := orchestrator.EnsureDefinition(ctx, batch.BulkOrchestratorDefinitionJSON(), batch.BulkOrchestratorStateMachineID); err != nil {
 		return fmt.Errorf("step 4: %w", err)
 	}
-	slog.Info("step 4 ✓", "orchestrator_sm_id", batch.OrchestratorStateMachineID)
+	slog.Info("step 4 ✓", "orchestrator_sm_id", batch.BulkOrchestratorStateMachineID)
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// STEP 5 – Register the orchestrator in the app-level registry.
@@ -234,31 +216,25 @@ func run(ctx context.Context) error {
 	// worker can call orchestrator.SignalMicroBatchComplete without a global variable.
 	// ─────────────────────────────────────────────────────────────────────────
 	slog.Info("step 5: registering orchestrator in app registry",
-		"key", batch.OrchestratorStateMachineID)
+		"key", batch.BulkOrchestratorStateMachineID)
 
-	orchRegistry.Register(batch.OrchestratorStateMachineID, orchestrator)
+	orchRegistry.Register(batch.BulkOrchestratorStateMachineID, orchestrator)
 	slog.Info("step 5 ✓")
 
-	// ── Seed source executions ────────────────────────────────────────────────
-	// Seed the source state machine with N completed executions so there is
-	// something for ExecuteBatch to filter on.  In a real system these already
-	// exist – this block is only here to make the example self-contained.
-
-	// Setup global executor with task handlers
+	// ── Setup global executor with task handlers ────────────────────────────────
 	globalExec := setupExecutor()
 
 	// setup context with executor
 	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(globalExec))
 
-	sourceExecutionIDs, err := seedSourceExecutions(ctx, cfg, manager)
-	if err != nil {
-		return fmt.Errorf("seed: %w", err)
-	}
-	slog.Info("source executions seeded", "count", len(sourceExecutionIDs))
+	// ── Generate bulk inputs ─────────────────────────────────────────────────
+	// Generate bulk inputs directly instead of seeding source executions
+	bulkInputs := generateBulkInputs(cfg.bulkInputCount)
+	slog.Info("bulk inputs generated", "count", len(bulkInputs))
 
 	// ── Start queue worker pool ───────────────────────────────────────────────
 	// Launch workers that pull tasks from the queue, run the target state
-	// machine for each source execution, and drive the Redis barrier hook.
+	// machine for each bulk input, and drive the Redis barrier hook.
 	workerWg, workerShutdown := startWorkerPool(cfg, manager, queueClient, globalExec, orchestrator)
 
 	// ── Start dedicated orchestrator continuation worker ──────────────────────
@@ -267,49 +243,42 @@ func run(ctx context.Context) error {
 	orchWorkerWg, orchWorkerShutdown := startOrchestratorContinuationWorker(ctx, rdb, orchestrator, manager, queueClient, smFactory)
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// STEP 6 – Invoke the micro-batch execution.
+	// STEP 6 – Invoke the micro-bulk execution.
 	//
-	// ExecuteBatch internally calls executeBatchConcurrent, which detects
-	// DoMicroBatch=true and delegates to executeMicroBatch (persistent_microbatch.go).
+	// ExecuteBulk internally calls executeBulkMicroBatch when DoMicroBatch=true,
+	// which uses the bulk orchestrator state machine to manage the micro-batches.
 	// That function:
-	//   • Calls Orchestrator.Run → stores IDs in Redis, launches the orchestrator SM.
+	//   • Calls Orchestrator.RunBulk → stores inputs in Redis, launches the orchestrator SM.
 	//   • Returns immediately with a synthetic BatchExecutionResult.
 	//
-	// The orchestrator SM runs until WaitForMicroBatchCompletion (Message state),
+	// The orchestrator SM runs until WaitForBulkMicroBatchCompletion (Message state),
 	// at which point it pauses.  Workers drive it forward micro-batch by
 	// micro-batch via the Redis barrier.
 	// ─────────────────────────────────────────────────────────────────────────
-	slog.Info("step 6: invoking micro-batch execution",
-		"total_ids", len(sourceExecutionIDs),
+	slog.Info("step 6: invoking micro-bulk execution",
+		"total_inputs", len(bulkInputs),
 		"micro_batch_size", cfg.microBatchSize,
 	)
 
-	filter := &repository.ExecutionFilter{
-		StateMachineID: "source-workflow-v1",
-		Status:         "SUCCEEDED",
-	}
-
-	batchOpts := &statemachine2.BatchExecutionOptions{
-		NamePrefix:     fmt.Sprintf("nightly-run-%s", time.Now().Format("20060102-1504")),
+	bulkOpts := &statemachine2.BulkExecutionOptions{
+		NamePrefix:     fmt.Sprintf("bulk-run-%s", time.Now().Format("20060102-1504")),
 		StopOnError:    false,
 		DoMicroBatch:   true,
 		MicroBatchSize: cfg.microBatchSize,
 		RedisClient:    rdb,
-
-		// Progress callbacks – wired to structured logging.
-		OnExecutionStart: func(sourceExecID string, index int) {
-			slog.Debug("task enqueued", "source_exec_id", sourceExecID, "index", index)
+		OnExecutionStart: func(input interface{}, index int) {
+			slog.Debug("task enqueued", "index", index)
 		},
-		OnExecutionComplete: func(sourceExecID string, index int, err error) {
+		OnExecutionComplete: func(input interface{}, index int, err error) {
 			if err != nil {
-				slog.Warn("task enqueue failed", "source_exec_id", sourceExecID, "index", index, "err", err)
+				slog.Warn("task enqueue failed", "index", index, "err", err)
 			}
 		},
 	}
 
-	results, err := targetSM.ExecuteBatch(ctx, filter, "IngestRecord", batchOpts)
+	results, err := targetSM.ExecuteBulk(ctx, bulkInputs, bulkOpts)
 	if err != nil {
-		return fmt.Errorf("step 6: ExecuteBatch: %w", err)
+		return fmt.Errorf("step 6: ExecuteBulk: %w", err)
 	}
 
 	// The result slice contains one synthetic entry per orchestrator launch.
@@ -326,8 +295,6 @@ func run(ctx context.Context) error {
 	}
 
 	// Derive the batchID from the result so Step 7 can reference it.
-	// (In production this ID would come from a database record, webhook payload,
-	// or an audit log – here we read it straight from the synthetic result.)
 	var activeBatchID string
 	if len(results) > 0 {
 		activeBatchID = results[0].SourceExecutionID
@@ -343,7 +310,7 @@ func run(ctx context.Context) error {
 	// An operator (or automated remediation system) calls orchestrator.Signal to set
 	// the Redis key.  The next CheckResumeSignal poll reads-and-deletes it
 	// (GETDEL) and sets shouldResume=true, allowing the orchestrator to
-	// re-enter DispatchMicroBatch for the next micro-batch.
+	// re-enter DispatchBulkMicroBatch for the next micro-batch.
 	//
 	// Here we simulate this by waiting a few seconds and then sending the
 	// resume signal so the example completes without human intervention.
@@ -413,7 +380,6 @@ func run(ctx context.Context) error {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // startWorkerPool creates and starts a worker pool using the queue.Worker API.
-// This follows the same pattern as distributed_queue/main.go.
 func startWorkerPool(cfg config, manager *repository.Manager, qc *queue.Client, baseExecutor *executor.BaseExecutor, orchestrator *batch.Orchestrator) (*sync.WaitGroup, func()) {
 	var wg sync.WaitGroup
 
@@ -430,9 +396,8 @@ func startWorkerPool(cfg config, manager *repository.Manager, qc *queue.Client, 
 		},
 		Concurrency: cfg.workerConcurrency,
 		Queues: map[string]int{
-			"default":            5,
-			"target-workflow-v1": 5, // Target SM queue
-			"source-workflow-v1": 2, // Source SM queue (lower priority)
+			"default":                 5,
+			"target-bulk-workflow-v1": 5,
 		},
 		RetryPolicy: &queue.RetryPolicy{
 			MaxRetry: 3,
@@ -469,11 +434,6 @@ func startWorkerPool(cfg config, manager *repository.Manager, qc *queue.Client, 
 	slog.Info("worker pool started", "concurrency", cfg.workerConcurrency)
 	return &wg, shutdown
 }
-
-// Note: The processTask and fireMicroBatchHook functions have been removed.
-// Task processing is now handled by the queue.ExecutionHandler which is
-// registered with the Asynq server. The handler in pkg/handler/execution_handler.go
-// automatically handles micro-batch hook signaling via the orchestrator registry.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Orchestrator Continuation Worker
@@ -526,95 +486,32 @@ func startOrchestratorContinuationWorker(
 	return &wg, shutdown
 }
 
-// continueOrchestratorExecutions finds orchestrator executions in RUNNING status
-// and continues their execution. These are orchestrators that were just resumed
-// from a Message state and need to continue running.
-//
-// NOTE: This function is intentionally disabled because the orchestrator continuation
-// is now handled automatically by the resumeOrchestrator method in orchestrator.go.
-// When SignalMicroBatchComplete is called, it already resumes the orchestrator with
-// proper handlers and executes it until it pauses or completes.
+// continueOrchestratorExecutions is disabled - orchestrator continuation is handled
+// by SignalMicroBatchComplete.
 func continueOrchestratorExecutions() error {
-	// Disabled - orchestrator continuation is handled by SignalMicroBatchComplete
 	return nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Source execution seeder (makes the example self-contained)
+// Bulk input generator
 // ─────────────────────────────────────────────────────────────────────────────
 
-// seedSourceExecutions creates N SUCCEEDED executions in the source state machine
-// so ExecuteBatch has records to filter on.  In a real system these already exist.
-func seedSourceExecutions(
-	ctx context.Context,
-	cfg config,
-	manager *repository.Manager,
-) ([]string, error) {
-	slog.Info("seeding source executions", "count", cfg.sourceExecCount)
-
-	sourceSM, err := persistent.New(
-		[]byte(sourceWorkflowYAML),
-		false,
-		"source-workflow-v1",
-		manager,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create source SM: %w", err)
-	}
-
-	sourceExec := executor.NewBaseExecutor()
-	sourceExec.RegisterGoFunction("source:ingest", handleSourceIngest)
-	sourceExec.RegisterGoFunction("source:validate", handleSourceValidate)
-	sourceSM.SetExecutor(sourceExec)
-
-	if err := sourceSM.SaveDefinition(ctx); err != nil {
-		return nil, fmt.Errorf("save source definition: %w", err)
-	}
-
-	ids := make([]string, 0, cfg.sourceExecCount)
-	var mu sync.Mutex
-	sem := make(chan struct{}, 20) // 20 concurrent seeders
-	var wg sync.WaitGroup
-	var seedErr error
-
-	for i := 0; i < cfg.sourceExecCount; i++ {
-		if ctx.Err() != nil {
-			break
+// generateBulkInputs creates N bulk input records directly (no repository queries)
+func generateBulkInputs(count int) []interface{} {
+	inputs := make([]interface{}, count)
+	for i := 0; i < count; i++ {
+		inputs[i] = map[string]interface{}{
+			"record_id": fmt.Sprintf("bulk-record-%06d", i),
+			"source":    "bulk-import",
+			"batch":     time.Now().Format("2006-01-02"),
+			"data": map[string]interface{}{
+				"amount":   100 + (i % 1000),
+				"currency": "USD",
+				"status":   "pending",
+			},
 		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(idx int) {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-			input := map[string]interface{}{
-				"record_id": fmt.Sprintf("record-%06d", idx),
-				"source":    "nightly-export",
-				"batch":     "2026-02-28",
-			}
-			execName := fmt.Sprintf("source-exec-%06d", idx)
-			result, err := sourceSM.Execute(ctx, input,
-				statemachine2.WithExecutionName(execName),
-			)
-			if err != nil {
-				mu.Lock()
-				seedErr = err
-				mu.Unlock()
-				return
-			}
-			mu.Lock()
-			ids = append(ids, result.ID)
-			mu.Unlock()
-		}(i)
 	}
-	wg.Wait()
-
-	if seedErr != nil {
-		return nil, fmt.Errorf("seed worker error: %w", seedErr)
-	}
-	slog.Info("seeding complete", "seeded", len(ids))
-	return ids, nil
+	return inputs
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -623,7 +520,6 @@ func seedSourceExecutions(
 
 // waitForOrchestratorCompletion polls the repository until the orchestrator
 // execution for batchID reaches SUCCEEDED or FAILED, or ctx is cancelled.
-// It prints a progress line every 10 seconds.
 func waitForOrchestratorCompletion(
 	ctx context.Context,
 	targetSM *persistent.StateMachine,
@@ -643,7 +539,7 @@ func waitForOrchestratorCompletion(
 		case <-ticker.C:
 			// List orchestrator executions for this batch.
 			filter := &repository.ExecutionFilter{
-				StateMachineID: batch.OrchestratorStateMachineID,
+				StateMachineID: batch.BulkOrchestratorStateMachineID,
 			}
 			executions, err := targetSM.GetRepositoryManager().ListExecutions(ctx, filter)
 			if err != nil {
@@ -651,7 +547,6 @@ func waitForOrchestratorCompletion(
 				continue
 			}
 			for _, exec := range executions {
-				// Match by the batchID embedded in the execution name.
 				if exec.Name == "" {
 					continue
 				}
@@ -688,7 +583,7 @@ func printFinalMetrics(ctx context.Context, rdb *redis.Client, batchID string) {
 		rate = float64(failed) / float64(processed) * 100
 	}
 	fmt.Printf("\n┌─────────────────────────────────────────┐\n")
-	fmt.Printf("│            Batch Final Metrics          │\n")
+	fmt.Printf("│          Bulk Final Metrics               │\n")
 	fmt.Printf("├─────────────────────────────────────────┤\n")
 	fmt.Printf("│  Batch ID   : %-26s│\n", truncate(batchID, 26))
 	fmt.Printf("│  Processed  : %-26d│\n", processed)
@@ -708,41 +603,12 @@ func truncate(s string, n int) string {
 // Task handlers (business logic)
 // ─────────────────────────────────────────────────────────────────────────────
 
-func handleSourceIngest(_ context.Context, input interface{}) (interface{}, error) {
-	m, _ := input.(map[string]interface{})
-	return map[string]interface{}{
-		"record_id":   m["record_id"],
-		"ingested_at": time.Now().UTC(),
-		"status":      "ingested",
-	}, nil
-}
-
-func handleSourceValidate(_ context.Context, input interface{}) (interface{}, error) {
-	m, _ := input.(map[string]interface{})
-	return map[string]interface{}{
-		"record_id":    m["record_id"],
-		"validated_at": time.Now().UTC(),
-		"valid":        true,
-	}, nil
-}
-
 func handleEnrich(_ context.Context, input interface{}) (interface{}, error) {
 	m, _ := input.(map[string]interface{})
-	// Simulate occasional transient errors that the Retry block will absorb.
-
-	// if id, ok := m["record_id"].(string); ok && len(id) > 0 && id[len(id)-1] == '9' {
-	// 	// ~10 % of records end in '9' – simulate a retryable error.
-	// 	// On retry the input is the same so the second attempt succeeds.
-	// 	if _, already := m["_retry_ok"]; !already {
-	// 		return nil, fmt.Errorf("transient enrich error (will retry)")
-	// 	}
-	// }
-
 	return map[string]interface{}{
 		"record_id":   m["record_id"],
 		"enriched_at": time.Now().UTC(),
 		"tags":        []string{"enriched", "ready"},
-		"_retry_ok":   true,
 	}, nil
 }
 
@@ -762,7 +628,7 @@ func handleStore(_ context.Context, input interface{}) (interface{}, error) {
 type config struct {
 	redisAddr         string
 	postgresURL       string
-	sourceExecCount   int
+	bulkInputCount    int
 	microBatchSize    int
 	workerConcurrency int
 	pauseAtBatch      int
@@ -772,7 +638,7 @@ func loadConfig() config {
 	return config{
 		redisAddr:         envStr("REDIS_ADDR", "localhost:6379"),
 		postgresURL:       envStr("POSTGRES_TEST_URL_GORM", "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"),
-		sourceExecCount:   envInt("SOURCE_EXEC_COUNT", 1000),
+		bulkInputCount:    envInt("BULK_INPUT_COUNT", 1000),
 		microBatchSize:    envInt("MICRO_BATCH_SIZE", 50),
 		workerConcurrency: envInt("WORKER_CONCURRENCY", 4),
 		pauseAtBatch:      envInt("PAUSE_AT_BATCH", 1),
@@ -830,8 +696,6 @@ func buildRepository(ctx context.Context, cfg config) (*repository.Manager, erro
 }
 
 func buildQueueClient(cfg config) (*queue.Client, error) {
-	// Asynq/Redis-backed queue client for distributed task execution
-	// The framework's queue.Client wraps Asynq
 	queueCfg := &queue.Config{
 		RedisClientOpt: &asynq.RedisClientOpt{
 			Addr: cfg.redisAddr,
@@ -844,13 +708,9 @@ func buildQueueClient(cfg config) (*queue.Client, error) {
 	return queue.NewClient(queueCfg)
 }
 
-// setupExecutor registers task handlers for both source and target workflows
+// setupExecutor registers task handlers for target workflow
 func setupExecutor() *executor.BaseExecutor {
 	exec := executor.NewBaseExecutor()
-
-	// Source workflow handlers
-	exec.RegisterGoFunction("source:ingest", handleSourceIngest)
-	exec.RegisterGoFunction("source:validate", handleSourceValidate)
 
 	// Target workflow handlers
 	exec.RegisterGoFunction("target:enrich", handleEnrich)

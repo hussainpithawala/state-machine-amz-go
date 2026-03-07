@@ -389,3 +389,19 @@ type BatchExecutionOptions struct {
 	FailurePolicyConfig interface{} // cast to batch.FailurePolicy at call site
 
 }
+
+// BulkExecutionOptions configures bulk execution behavior
+// Unlike ExecuteBatch which queries source executions from repository,
+// ExecuteBulk takes direct input data and schedules executions directly
+type BulkExecutionOptions struct {
+	NamePrefix          string // Prefix for generated execution names
+	ConcurrentBatches   int    // Number of concurrent executions (0 = sequential, >0 = concurrent)
+	StopOnError         bool   // Stop processing if an execution fails
+	OnExecutionStart    func(input interface{}, index int)
+	OnExecutionComplete func(input interface{}, index int, err error)
+	// Micro-batch streaming fields
+	DoMicroBatch        bool        // Enable adaptive micro-batch streaming
+	MicroBatchSize      int         // Number of inputs per micro-batch
+	RedisClient         interface{} // *redis.Client for barrier/metrics
+	FailurePolicyConfig interface{} // cast to batch.FailurePolicy at call site
+}

@@ -191,3 +191,30 @@ type ResumeSignal struct {
 	ResumedBy string    `json:"resumed_by"`
 	Notes     string    `json:"notes,omitempty"`
 }
+
+// BulkOrchestratorInput is the root input document for the bulk orchestrator execution.
+// Unlike OrchestratorInput which processes source execution IDs from the repository,
+// BulkOrchestratorInput processes direct input data (JSON payloads) stored in Redis.
+type BulkOrchestratorInput struct {
+	BatchID string `json:"batch_id"`
+
+	TotalCount int `json:"total_count"`
+
+	MicroBatchSize int `json:"micro_batch_size"`
+
+	TargetStateMachineID string `json:"target_state_machine_id"`
+
+	OrchestratorSMID string `json:"orchestrator_sm_id"`
+
+	ExecutionNamePrefix string `json:"execution_name_prefix"`
+
+	InputTransformerName string `json:"input_transformer_name"`
+
+	ApplyUnique bool `json:"apply_unique"`
+
+	FailurePolicy FailurePolicy `json:"failure_policy"`
+
+	DispatchResult *DispatchResult    `json:"dispatchResult,omitempty"`
+	Evaluation     *EvaluationResult  `json:"evaluation,omitempty"`
+	ResumeCheck    *ResumeCheckResult `json:"resumeCheck,omitempty"`
+}
