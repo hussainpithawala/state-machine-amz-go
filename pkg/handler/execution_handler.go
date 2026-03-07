@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"time"
 
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/batch"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	statemachine2 "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
@@ -19,6 +22,7 @@ type ExecutionHandler struct {
 	repositoryManager *repository.Manager
 	queueClient       *queue.Client
 	executionContext  types.ExecutionContext
+	orchestrator      *batch.Orchestrator
 }
 
 // NewExecutionHandler creates a new execution handler
@@ -31,11 +35,12 @@ func NewExecutionHandler(repositoryManager *repository.Manager, queueClient *que
 }
 
 // NewExecutionHandlerWithContext creates a new execution handler with an execution context
-func NewExecutionHandlerWithContext(repositoryManager *repository.Manager, queueClient *queue.Client, execCtx types.ExecutionContext) *ExecutionHandler {
+func NewExecutionHandlerWithContext(repositoryManager *repository.Manager, queueClient *queue.Client, execCtx types.ExecutionContext, orchestrator *batch.Orchestrator) *ExecutionHandler {
 	return &ExecutionHandler{
 		repositoryManager: repositoryManager,
 		queueClient:       queueClient,
 		executionContext:  execCtx,
+		orchestrator:      orchestrator,
 	}
 }
 
@@ -65,11 +70,11 @@ func (h *ExecutionHandler) HandleExecution(ctx context.Context, payload *queue.E
 	}
 
 	// Handle regular or chained execution
-	return h.handleRegularExecution(ctx, sm, payload)
+	return h.handleRegularExecution(ctx, sm, payload, h.orchestrator)
 }
 
 // handleRegularExecution handles regular or chained executions
-func (h *ExecutionHandler) handleRegularExecution(ctx context.Context, sm *persistent.StateMachine, payload *queue.ExecutionTaskPayload) error {
+func (h *ExecutionHandler) handleRegularExecution(ctx context.Context, sm *persistent.StateMachine, payload *queue.ExecutionTaskPayload, orchestrator *batch.Orchestrator) error {
 	var input interface{}
 
 	// Determine input source
@@ -108,6 +113,33 @@ func (h *ExecutionHandler) handleRegularExecution(ctx context.Context, sm *persi
 
 	// Execute the state machine
 	exec, err := sm.Execute(ctx, input, execOpts...)
+
+	if meta, ok := batch.WorkerExtractMeta(payload.Input); ok {
+		outcome := batch.TaskOutcome{
+			BatchID:      meta.BatchID,
+			MicroBatchID: meta.MicroBatchID,
+			TaskID:       payload.SourceExecutionID,
+			Success:      err == nil,
+			CompletedAt:  time.Now(),
+		}
+		// TODO: Implement orchestratorRegistry to signal micro-batch completion
+		// This requires an orchestrator registry to be injected into the handler
+		_ = outcome // Suppress unused variable warning
+		log.Printf("info: micro-batch task completed for %s", meta.MicroBatchID)
+		// if hookErr := orchestratorRegistry.Get(meta.OrchestratorSMID).SignalMicroBatchComplete(ctx, meta, outcome); hookErr != nil {
+		// 	log.Printf("warn: micro-batch hook %s: %v", meta.MicroBatchID, hookErr)
+		// }
+
+		if err != nil {
+			return fmt.Errorf("signal: couldn't create orchestrator state machine %s: %w", meta.OrchestratorSMID, err)
+		}
+		err_signal := orchestrator.SignalMicroBatchComplete(ctx, meta, outcome)
+		if err_signal != nil {
+			fmt.Printf("warn: micro-batch orchestrator signal: %v\n", err_signal)
+			return err_signal
+		}
+	}
+
 	if err != nil {
 		return fmt.Errorf("execution failed: %w", err)
 	}

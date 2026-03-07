@@ -1,0 +1,161 @@
+{
+  "Comment": "Adaptive Feedback-Controlled Micro-Batch Orchestrator for state-machine-amz-go. Splits a massive batch into sequentially-streamed micro-batches with Redis barrier-based fork-join and statistical failure-rate control. All Task states execute local Go functions registered on the executor. WaitForMicroBatchCompletion uses the framework's native Message state (pause/resume) instead of AWS Step Functions waitForTaskToken.",
+  "StartAt": "DispatchMicroBatch",
+  "States": {
+    "DispatchMicroBatch": {
+      "Type": "Task",
+      "Comment": "Reads the Redis cursor, slices the next micro-batch of source-execution IDs from the keyIDsList, initialises the Redis barrier counter, and enqueues all tasks to the queue client. Returns isBatchComplete=true when all IDs have been dispatched.",
+      "Resource": "batch:dispatch",
+      "ResultPath": "$",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "BatchFailed",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "CheckIfComplete"
+    },
+    "CheckIfComplete": {
+      "Type": "Choice",
+      "Comment": "Routes to BatchCompleted when all micro-batches have been dispatched and there are no more IDs to process.",
+      "Choices": [
+        {
+          "Variable": "$.dispatchResult.isBatchComplete",
+          "BooleanEquals": true,
+          "Next": "BatchCompleted"
+        }
+      ],
+      "Default": "WaitForMicroBatchCompletion"
+    },
+    "WaitForMicroBatchCompletion": {
+      "Type": "Message",
+      "Comment": "Pauses the orchestrator using the framework's native Message-state pause/resume mechanism. CorrelationKey=micro_batch_id, CorrelationValue=$.dispatchResult.microBatchId. The last barrier worker calls parentSM.ResumeExecution which sends the correlation message and advances to EvaluateMicroBatch. TimeoutSeconds=86400 guards against hung workers.",
+      "CorrelationKey": "micro_batch_id",
+      "CorrelationValuePath": "$.dispatchResult.microBatchId",
+      "TimeoutSeconds": 86400,
+      "Next": "EvaluateMicroBatch",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout"
+          ],
+          "Next": "BatchFailed",
+          "ResultPath": "$.error",
+          "Comment": "All workers stalled or died; halt the orchestration."
+        }
+      ]
+    },
+    "EvaluateMicroBatch": {
+      "Type": "Task",
+      "Comment": "Applies both statistical control measures: (1) instantaneous failure rate over last N tasks, (2) rolling average failure rate across last M micro-batches. Returns severeFailure=true or belowThreshold=true to trigger halt or pause respectively.",
+      "Resource": "batch:evaluate",
+      "ResultPath": "$.evaluation",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "BatchFailed",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "EvaluationDecision"
+    },
+    "EvaluationDecision": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.evaluation.severeFailure",
+          "BooleanEquals": true,
+          "Next": "BatchFailed",
+          "Comment": "Instantaneous failure rate >= SevereFailureThreshold → halt immediately."
+        },
+        {
+          "Variable": "$.evaluation.belowThreshold",
+          "BooleanEquals": true,
+          "Next": "PauseBatch",
+          "Comment": "Rolling-average failure rate >= SoftFailureThreshold → pause for human review."
+        }
+      ],
+      "Default": "DispatchMicroBatch",
+      "Comment": "Healthy → continue streaming to next micro-batch."
+    },
+    "PauseBatch": {
+      "Type": "Wait",
+      "Comment": "Fixed back-off before polling for the operator resume signal. 30 seconds provides enough time for operators to be notified (via SNS/PagerDuty) and start investigating.",
+      "Seconds": 30,
+      "Next": "CheckResumeSignal"
+    },
+    "CheckResumeSignal": {
+      "Type": "Task",
+      "Comment": "Polls the Redis resume key (GETDEL). If an operator called batch.Orchestrator.Signal(), the flag is atomically consumed and shouldResume=true is returned. Otherwise shouldResume=false and the loop returns to PauseBatch.",
+      "Resource": "batch:check-resume",
+      "ResultPath": "$.resumeCheck",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "PauseBatch",
+          "Comment": "On transient error fall back into the poll loop rather than failing."
+        }
+      ],
+      "Next": "ResumeDecision"
+    },
+    "ResumeDecision": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.resumeCheck.shouldResume",
+          "BooleanEquals": true,
+          "Next": "DispatchMicroBatch",
+          "Comment": "Operator cleared the issue → re-enter the dispatch loop."
+        }
+      ],
+      "Default": "PauseBatch",
+      "Comment": "No signal yet → keep waiting."
+    },
+    "BatchCompleted": {
+      "Type": "Succeed",
+      "Comment": "All micro-batches have been dispatched and the final evaluation passed."
+    },
+    "BatchFailed": {
+      "Type": "Fail",
+      "Error": "SevereFailureExceeded",
+      "Cause": "The instantaneous failure rate exceeded SevereFailureThreshold, or a timeout/infrastructure error occurred. Inspect $.evaluation and $.error for details."
+    }
+  }
+}

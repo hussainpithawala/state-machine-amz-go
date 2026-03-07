@@ -187,9 +187,16 @@ func (p *JSONPathProcessor) setValue(data interface{}, path string, value interf
 
 	// Merge with original data if it's a map
 	if dataMap, ok := data.(map[string]interface{}); ok {
-		return mergeMaps(dataMap, result.(map[string]interface{})), nil
+		// Check if result is also a map before merging
+		if resultMap, ok := result.(map[string]interface{}); ok {
+			return mergeMaps(dataMap, resultMap), nil
+		}
+		// If result is not a map (e.g., array or primitive after wrapping),
+		// we can't merge, so just return the result as a fresh structure
+		return result, nil
 	}
 
+	// If data is not a map, return the newly created structure
 	return result, nil
 }
 
@@ -288,17 +295,24 @@ func splitPath(path string) []string {
 	return parts
 }
 
-// mergeMaps deeply merges two maps
+// mergeMaps deeply merges two maps, only copying non-nil values from b
 func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	// Copy all from a
 	for k, v := range a {
+		if v == nil {
+			continue
+		}
 		result[k] = v
 	}
 
-	// Merge from b
+	// Merge from b, only if value is not nil
 	for k, v := range b {
+		if v == nil {
+			continue // Skip nil values from b
+		}
+
 		if existing, exists := result[k]; exists {
 			// Both have this key
 			if aMap, ok := existing.(map[string]interface{}); ok {
@@ -308,7 +322,7 @@ func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
 					continue
 				}
 			}
-			// Not both maps or different types, b wins
+			// Not both maps or different types, b wins (only if b is not nil)
 		}
 		result[k] = v
 	}

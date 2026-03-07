@@ -101,66 +101,27 @@ func (v *StateMachineValidator) getNextStateNames(state states.State) []string {
 	return nextStates
 }
 
-// validateGraph validates the state machine graph
+// validateGraph validates the state machine graph.
+// Allows cycles as long as there is at least one path from StartAt to an end state.
 func (v *StateMachineValidator) validateGraph(startAt string, statesMap map[string]states.State) error {
-	visited := make(map[string]bool)
-	recStack := make(map[string]bool)
-
-	// DFS to detect cycles
-	var dfs func(stateName string) error
-	dfs = func(stateName string) error {
-		if recStack[stateName] {
-			return fmt.Errorf("cycle detected involving state '%s'", stateName)
-		}
-
-		if visited[stateName] {
-			return nil
-		}
-
-		visited[stateName] = true
-		recStack[stateName] = true
-
-		state, exists := statesMap[stateName]
-		if !exists {
-			return fmt.Errorf("state '%s' not found", stateName)
-		}
-
-		// Only follow next states if state is not an end state
-		if !state.IsEnd() {
-			// Get all next state names based on state type
-			nextStateNames := v.getAllNextStateNames(state)
-
-			for _, nextStateName := range nextStateNames {
-				if nextStateName != "" {
-					if err := dfs(nextStateName); err != nil {
-						return err
-					}
-				}
-			}
-		}
-
-		recStack[stateName] = false
-		return nil
-	}
-
-	// Start DFS from StartAt
-	if err := dfs(startAt); err != nil {
-		return err
-	}
+	// First pass: Check reachability from StartAt
+	reachable := make(map[string]bool)
+	v.markReachable(startAt, statesMap, reachable)
 
 	// Check for unreachable states
 	for stateName := range statesMap {
-		if !visited[stateName] {
+		if !reachable[stateName] {
 			return fmt.Errorf("state '%s' is unreachable from StartAt", stateName)
 		}
 	}
 
-	// Check that at least one end state is reachable
+	// Check that at least one end state exists in the definition
 	hasEndState := false
-	for _, state := range statesMap {
+	var endStates []string
+	for stateName, state := range statesMap {
 		if state.IsEnd() {
 			hasEndState = true
-			break
+			endStates = append(endStates, stateName)
 		}
 	}
 
@@ -168,7 +129,131 @@ func (v *StateMachineValidator) validateGraph(startAt string, statesMap map[stri
 		return fmt.Errorf("no end state found in state machine")
 	}
 
+	// Critical validation: Ensure at least one end state is reachable from StartAt
+	// This prevents infinite loops with no exit
+	endStateReachable := false
+	for _, endState := range endStates {
+		if reachable[endState] {
+			endStateReachable = true
+			break
+		}
+	}
+
+	if !endStateReachable {
+		return fmt.Errorf("no path exists from StartAt to any end state - state machine would loop infinitely")
+	}
+
+	// Additional validation: Check for states in cycles that have no path to an end state
+	// This detects "dead cycles" - cycles that can be entered but never exited
+	if err := v.validateCyclesHaveExits(startAt, statesMap, endStates); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// markReachable performs a DFS to mark all states reachable from the given state.
+// Unlike the old implementation, this doesn't fail on cycles - it just marks reachability.
+func (v *StateMachineValidator) markReachable(stateName string, statesMap map[string]states.State, reachable map[string]bool) {
+	if reachable[stateName] {
+		return // Already visited
+	}
+
+	reachable[stateName] = true
+
+	state, exists := statesMap[stateName]
+	if !exists {
+		return
+	}
+
+	// Don't traverse from end states
+	if state.IsEnd() {
+		return
+	}
+
+	// Get all next state names and recursively mark them
+	nextStateNames := v.getAllNextStateNames(state)
+	for _, nextStateName := range nextStateNames {
+		if nextStateName != "" {
+			v.markReachable(nextStateName, statesMap, reachable)
+		}
+	}
+
+	// Also check the simple Next field if getAllNextStateNames didn't return it
+	if next := state.GetNext(); next != nil {
+		v.markReachable(*next, statesMap, reachable)
+	}
+}
+
+// validateCyclesHaveExits ensures that any cycles in the graph have at least one path to an end state.
+// This prevents "dead cycles" where execution could enter a loop with no escape.
+func (v *StateMachineValidator) validateCyclesHaveExits(startAt string, statesMap map[string]states.State, endStates []string) error {
+	// For each non-end state that's reachable, verify there exists a path to at least one end state
+	for stateName, state := range statesMap {
+		if state.IsEnd() {
+			continue // End states don't need paths to other end states
+		}
+
+		// Check if this state can reach any end state
+		canReachEnd := v.canReachAnyEndState(stateName, statesMap, endStates, make(map[string]bool))
+		if !canReachEnd {
+			return fmt.Errorf("state '%s' has no path to any end state - creates a dead loop", stateName)
+		}
+	}
+
+	return nil
+}
+
+// canReachAnyEndState checks if there's a path from the given state to any end state.
+// Uses DFS with a visited set to handle cycles.
+func (v *StateMachineValidator) canReachAnyEndState(stateName string, statesMap map[string]states.State, endStates []string, visited map[string]bool) bool {
+	if visited[stateName] {
+		return false // Already explored this path
+	}
+
+	visited[stateName] = true
+
+	state, exists := statesMap[stateName]
+	if !exists {
+		return false
+	}
+
+	// Check if this is an end state
+	for _, endState := range endStates {
+		if stateName == endState {
+			return true
+		}
+	}
+
+	// Collect all possible next states (from both getAllNextStateNames and GetNext)
+	allNextStates := make(map[string]bool)
+
+	// Add from getAllNextStateNames
+	nextStateNames := v.getAllNextStateNames(state)
+	for _, nextStateName := range nextStateNames {
+		if nextStateName != "" {
+			allNextStates[nextStateName] = true
+		}
+	}
+
+	// Also add the simple Next field
+	if next := state.GetNext(); next != nil {
+		allNextStates[*next] = true
+	}
+
+	// Check all possible next states
+	for nextStateName := range allNextStates {
+		// Make a copy of visited for this branch to allow exploration of different paths
+		visitedCopy := make(map[string]bool)
+		for k, v := range visited {
+			visitedCopy[k] = v
+		}
+		if v.canReachAnyEndState(nextStateName, statesMap, endStates, visitedCopy) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // getAllNextStateNames gets all possible next state names for DFS traversal

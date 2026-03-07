@@ -10,9 +10,12 @@ import (
 
 	// Third-party imports
 	"github.com/davecgh/go-spew/spew"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
+	"github.com/redis/go-redis/v9"
 
 	// Project-specific/Internal imports
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/batch"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
@@ -30,6 +33,7 @@ type StateMachine struct {
 	repositoryManager *repository.Manager
 	stateMachineID    string
 	queueClient       *queue.Client
+	executor          *executor.BaseExecutor // nil = default executor
 }
 
 // Option allows configuring the state machine
@@ -203,7 +207,7 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 
 		currentStateName = *nextState
 		execCtx.CurrentState = currentStateName
-		mergeOutput, errMerge := pm.MergeInputs(&states.JSONPathProcessor{}, output, execCtx.Input)
+		mergeOutput, errMerge := pm.MergeInputs(&states.JSONPathProcessor{}, execCtx.Input, output)
 		if errMerge != nil {
 			return execCtx, errMerge
 		}
@@ -665,7 +669,7 @@ func (pm *StateMachine) ExecuteBatch(
 			stringExecutionIDs[i] = v.ExecutionID
 		}
 
-		return pm.executeBatchConcurrent(ctx, stringExecutionIDs, sourceStateName, opts, execOpts...)
+		return pm.executeBatchConcurrent(ctx, stringExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
 	}
 	// Retrieve source execution IDs based on filter
 	sourceExecutionIDs, err := pm.repositoryManager.ListExecutionIDs(ctx, filter)
@@ -677,7 +681,7 @@ func (pm *StateMachine) ExecuteBatch(
 		return []*BatchExecutionResult{}, nil
 	}
 
-	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
+	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
 }
 
 // executeBatchConcurrent executes chained executions concurrently with controlled parallelism
@@ -686,15 +690,20 @@ func (pm *StateMachine) ExecuteBatch(
 func (pm *StateMachine) executeBatchConcurrent(
 	ctx context.Context,
 	sourceExecutionIDs []string,
+	targetMachineID string,
 	sourceStateName string,
 	opts *statemachine2.BatchExecutionOptions,
 	execOpts ...statemachine2.ExecutionOption,
 ) ([]*BatchExecutionResult, error) {
 	// If queue client is configured, use distributed execution
+	if opts.DoMicroBatch && opts.MicroBatchSize > 0 {
+		return pm.executeMicroBatch(ctx, sourceExecutionIDs, targetMachineID, sourceStateName, opts, execOpts...)
+	}
+
+	// micro batching not requested follow general course of action
 	if pm.queueClient != nil {
 		return pm.executeBatchViaQueue(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
 	}
-
 	// Otherwise, execute locally (original implementation)
 	return pm.executeBatchLocal(ctx, sourceExecutionIDs, sourceStateName, opts, execOpts...)
 }
@@ -849,4 +858,242 @@ func (pm *StateMachine) executeBatchLocal(
 	}
 
 	return results, nil
+}
+
+// SetExecutor attaches a custom executor (with local Go functions registered)
+// to this state machine.  Call before Execute.
+func (pm *StateMachine) SetExecutor(exec *executor.BaseExecutor) {
+	pm.executor = exec
+}
+
+// ExecuteBulk executes a bulk of inputs directly without querying repository
+// Unlike ExecuteBatch which uses filters to find source executions,
+// ExecuteBulk takes input data directly and schedules executions on the queue
+// or executes locally
+func (pm *StateMachine) ExecuteBulk(
+	ctx context.Context,
+	inputs []interface{},
+	opts *statemachine2.BulkExecutionOptions,
+	execOpts ...statemachine2.ExecutionOption,
+) ([]*BatchExecutionResult, error) {
+	if opts == nil {
+		opts = &statemachine2.BulkExecutionOptions{
+			NamePrefix:        fmt.Sprintf("bulk-exec-%d", time.Now().Unix()),
+			ConcurrentBatches: 1,
+			StopOnError:       false,
+		}
+	}
+
+	if len(inputs) == 0 {
+		return []*BatchExecutionResult{}, nil
+	}
+
+	// Micro-batch path
+	if opts.DoMicroBatch && opts.MicroBatchSize > 0 {
+		return pm.executeBulkMicroBatch(ctx, inputs, opts, execOpts...)
+	}
+
+	// If queue client is configured, use distributed execution
+	if pm.queueClient != nil {
+		return pm.executeBulkViaQueue(ctx, inputs, opts, execOpts...)
+	}
+
+	// Otherwise, execute locally
+	return pm.executeBulkLocal(ctx, inputs, opts, execOpts...)
+}
+
+// executeBulkViaQueue enqueues bulk execution tasks to the distributed queue
+func (pm *StateMachine) executeBulkViaQueue(
+	ctx context.Context,
+	inputs []interface{},
+	opts *statemachine2.BulkExecutionOptions,
+	execOpts ...statemachine2.ExecutionOption,
+) ([]*BatchExecutionResult, error) {
+	results := make([]*BatchExecutionResult, len(inputs))
+
+	for idx, input := range inputs {
+		if opts.OnExecutionStart != nil {
+			opts.OnExecutionStart(input, idx)
+		}
+
+		config := &statemachine2.ExecutionConfig{}
+		for _, execOpt := range execOpts {
+			execOpt(config)
+		}
+
+		payload := &queue.ExecutionTaskPayload{
+			StateMachineID:       pm.stateMachineID,
+			SourceExecutionID:    "",
+			SourceStateName:      "",
+			InputTransformerName: config.InputTransformerName,
+			ApplyUnique:          config.ApplyUnique,
+			ExecutionName:        fmt.Sprintf("%s-%d", opts.NamePrefix, idx),
+			ExecutionIndex:       idx,
+			Input:                input,
+		}
+
+		taskInfo, err := pm.queueClient.EnqueueExecution(payload)
+
+		result := &BatchExecutionResult{
+			SourceExecutionID: "",
+			Execution:         nil,
+			Error:             err,
+			Index:             idx,
+		}
+		results[idx] = result
+
+		if opts.OnExecutionComplete != nil {
+			opts.OnExecutionComplete(input, idx, err)
+		}
+
+		if err != nil {
+			if opts.StopOnError {
+				return results, fmt.Errorf("failed to enqueue bulk task at index %d: %w", idx, err)
+			}
+		} else {
+			fmt.Printf("Enqueued bulk execution task: TaskID=%s, Queue=%s, Index=%d\n",
+				taskInfo.ID, taskInfo.Queue, idx)
+		}
+	}
+
+	return results, nil
+}
+
+// executeBulkLocal executes bulk inputs locally with goroutines
+func (pm *StateMachine) executeBulkLocal(
+	ctx context.Context,
+	inputs []interface{},
+	opts *statemachine2.BulkExecutionOptions,
+	execOpts ...statemachine2.ExecutionOption,
+) ([]*BatchExecutionResult, error) {
+	results := make([]*BatchExecutionResult, len(inputs))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	semaphore := make(chan struct{}, opts.ConcurrentBatches)
+	errChan := make(chan error, 1)
+	stopProcessing := false
+
+	for idx, input := range inputs {
+		if stopProcessing {
+			break
+		}
+
+		wg.Add(1)
+		go func(index int, inputData interface{}) {
+			defer wg.Done()
+
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			if stopProcessing {
+				return
+			}
+
+			if opts.OnExecutionStart != nil {
+				opts.OnExecutionStart(inputData, index)
+			}
+
+			execOptsCopy := make([]statemachine2.ExecutionOption, 0, len(execOpts)+1)
+			execOptsCopy = append(execOptsCopy, execOpts...)
+			execOptsCopy = append(execOptsCopy,
+				statemachine2.WithExecutionName(fmt.Sprintf("%s-%d", opts.NamePrefix, index)),
+			)
+
+			exec, err := pm.Execute(ctx, inputData, execOptsCopy...)
+
+			result := &BatchExecutionResult{
+				SourceExecutionID: "",
+				Execution:         exec,
+				Error:             err,
+				Index:             index,
+			}
+
+			mu.Lock()
+			results[index] = result
+			mu.Unlock()
+
+			if opts.OnExecutionComplete != nil {
+				opts.OnExecutionComplete(inputData, index, err)
+			}
+
+			if err != nil && opts.StopOnError {
+				select {
+				case errChan <- fmt.Errorf("bulk execution failed at index %d: %w", index, err):
+					stopProcessing = true
+				default:
+				}
+			}
+		}(idx, input)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	if len(errChan) > 0 {
+		if err := <-errChan; err != nil {
+			return results, err
+		}
+	}
+
+	return results, nil
+}
+
+// executeBulkMicroBatch executes bulk inputs using micro-batch streaming pattern
+// It uses the bulk orchestrator state machine to manage the micro-batch lifecycle
+func (pm *StateMachine) executeBulkMicroBatch(
+	ctx context.Context,
+	inputs []interface{},
+	opts *statemachine2.BulkExecutionOptions,
+	execOpts ...statemachine2.ExecutionOption,
+) ([]*BatchExecutionResult, error) {
+	if opts.RedisClient == nil {
+		return nil, fmt.Errorf("executeBulkMicroBatch: opts.RedisClient must be set when DoMicroBatch=true")
+	}
+
+	rdb, ok := opts.RedisClient.(*redis.Client)
+	if !ok {
+		return nil, fmt.Errorf("executeBulkMicroBatch: opts.RedisClient must be *redis.Client")
+	}
+
+	smFactory := func(ctx context.Context, smID string, mgr *repository.Manager) (batch.StateMachine, error) {
+		sm, err := NewFromDefnId(ctx, smID, mgr)
+		return sm, err
+	}
+	smCreator := func(def []byte, isJSON bool, smID string, mgr *repository.Manager) (batch.StateMachine, error) {
+		sm, err := New(def, isJSON, smID, mgr)
+		return sm, err
+	}
+
+	orch, err := batch.NewOrchestrator(ctx, rdb, pm, smFactory, smCreator)
+	if err != nil {
+		return nil, fmt.Errorf("executeBulkMicroBatch: new orchestrator: %w", err)
+	}
+
+	defJSON := batch.BulkOrchestratorDefinitionJSON()
+	if err := orch.EnsureDefinition(ctx, defJSON, batch.BulkOrchestratorStateMachineID); err != nil {
+		return nil, fmt.Errorf("executeBulkMicroBatch: ensure definition: %w", err)
+	}
+
+	batchID := fmt.Sprintf("bulk-mb-%s-%d", pm.GetID(), time.Now().UnixNano())
+
+	doneCh, err := orch.RunBulk(ctx, batchID, inputs, pm.GetID(), opts, execOpts)
+	if err != nil {
+		return nil, fmt.Errorf("executeBulkMicroBatch: launch: %w", err)
+	}
+
+	result := &BatchExecutionResult{
+		SourceExecutionID: batchID,
+		Execution:         nil,
+		Error:             nil,
+		Index:             0,
+	}
+
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		if orchErr := <-doneCh; orchErr != nil {
+			result.Error = orchErr
+		}
+	}
+
+	return []*BatchExecutionResult{result}, nil
 }
