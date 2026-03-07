@@ -380,6 +380,12 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 
 	if cursorVal >= input.TotalCount {
 		return map[string]interface{}{
+			"batchID":              input.BatchID,
+			"orchestratorID":       input.OrchestratorSMID,
+			"totalCount":           input.TotalCount,
+			"microBatchSize":       input.MicroBatchSize,
+			"sourceStateMachineID": input.SourceStateMachineID,
+			"sourceStateName":      input.SourceStateName,
 			"dispatchResult": map[string]interface{}{
 				"isBatchComplete": true,
 			},
@@ -417,8 +423,12 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 	}
 
 	return map[string]interface{}{
-		"batchID":        input.BatchID,
-		"orchestratorID": input.OrchestratorSMID,
+		"batchID":              input.BatchID,
+		"orchestratorID":       input.OrchestratorSMID,
+		"totalCount":           input.TotalCount,
+		"microBatchSize":       input.MicroBatchSize,
+		"sourceStateMachineID": input.SourceStateMachineID,
+		"sourceStateName":      input.SourceStateName,
 		"dispatchResult": map[string]interface{}{
 			"isBatchComplete": false,
 			"microBatchId":    mbID,
@@ -481,8 +491,15 @@ func (o *Orchestrator) handleDispatchBulk(ctx context.Context, rawInput interfac
 
 	if cursorVal >= input.TotalCount {
 		return map[string]interface{}{
-			"batchID":        input.BatchID,
-			"orchestratorID": input.OrchestratorSMID,
+			"batchID":              input.BatchID,
+			"orchestratorID":       input.OrchestratorSMID,
+			"totalCount":           input.TotalCount,
+			"microBatchSize":       input.MicroBatchSize,
+			"targetStateMachineID": input.TargetStateMachineID,
+			"executionNamePrefix":  input.ExecutionNamePrefix,
+			"inputTransformerName": input.InputTransformerName,
+			"applyUnique":          input.ApplyUnique,
+			"failurePolicy":        input.FailurePolicy,
 			"dispatchResult": map[string]interface{}{
 				"isBatchComplete": true,
 			},
@@ -517,8 +534,15 @@ func (o *Orchestrator) handleDispatchBulk(ctx context.Context, rawInput interfac
 	}
 
 	return map[string]interface{}{
-		"batchID":        input.BatchID,
-		"orchestratorID": input.OrchestratorSMID,
+		"batchID":              input.BatchID,
+		"orchestratorID":       input.OrchestratorSMID,
+		"totalCount":           input.TotalCount,
+		"microBatchSize":       input.MicroBatchSize,
+		"targetStateMachineID": input.TargetStateMachineID,
+		"executionNamePrefix":  input.ExecutionNamePrefix,
+		"inputTransformerName": input.InputTransformerName,
+		"applyUnique":          input.ApplyUnique,
+		"failurePolicy":        input.FailurePolicy,
 		"dispatchResult": map[string]interface{}{
 			"isBatchComplete": false,
 			"microBatchId":    mbID,
