@@ -624,9 +624,9 @@ func (o *Orchestrator) enqueueBulkInputs(
 	return nil
 }
 
-func cursorForIndex(mbStart int, mbIndex int, mbSize int) int {
-	return mbStart + (mbIndex * mbSize)
-}
+//	func cursorForIndex(mbStart int, mbIndex int, mbSize int) int {
+//		return mbStart + (mbIndex * mbSize)
+//	}
 
 // keyBulkInputsList returns the Redis key for the bulk inputs list.
 func keyBulkInputsList(batchID string) string {
