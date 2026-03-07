@@ -37,7 +37,7 @@ const OrchestratorStateMachineID = "micro-batch-orchestrator-v1"
 
 // BulkOrchestratorStateMachineID is the ID under which the bulk orchestrator
 // state machine definition is stored in the repository.
-const BulkOrchestratorStateMachineID = "bulk-orchestrator-v1"
+const BulkOrchestratorStateMachineID = "micro-bulk-orchestrator-v1"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Orchestrator
