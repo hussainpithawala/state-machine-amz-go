@@ -1,6 +1,95 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.2.11] - 2026-03-08
+
+### Added
+- **Micro-Batch Orchestration Framework**: Complete streaming framework for processing large batches of executions with adaptive failure-rate control
+  - Redis-backed orchestration with Lua barrier scripts for coordination
+  - Adaptive batch processing with statistical failure-rate monitoring
+  - Nested merge support and target machine ID tracking in micro-batch orchestration
+  - Continuation worker for orchestrator resumption and enhanced batch signaling logic
+  - Orchestrator support in execution handler with refined micro-batch signaling
+
+- **Bulk Orchestration Support**: Added bulk orchestrator state machine for large-scale batch operations
+  - Bulk orchestrator state machine definition (`micro-bulk-orchestrator-v1`)
+  - Integration with micro-batch streaming framework
+
+- **Enhanced State Machine Validation**: Comprehensive validation improvements
+  - Unit tests for state machine validator with improved validation logic
+  - Better error handling and validation coverage
+
+- **JSONPath Enhancements**: Improved JSONPath processing capabilities
+  - Comprehensive test coverage for `JSONPathProcessor`
+  - Enhanced JSONPath set value functionality with extensive test cases
+
+- **Wait State Improvements**: Enhanced wait state functionality
+  - Wait state marshalling tests for better reliability
+  - Improved wait state handling with additional test coverage
+
+- **Orchestrator Registry**: App-level registry system for orchestrator lookup
+  - Registry implementation for managing orchestrator instances
+  - Integration with queue workers for orchestrator signaling
+
+- **Examples**: Two comprehensive examples demonstrating new capabilities
+  - `examples/micro-batch-orchestration/main.go`: Complete runnable example of micro-batch streaming (861 lines)
+  - `examples/micro-bulk-orchestration/main.go`: Bulk orchestration example (721 lines)
+
+### Changed
+- **Execution Handler**: Updated to support orchestrator integration
+  - Modified `NewExecutionHandlerWithContext` to accept orchestrator parameter
+  - Enhanced message handling with additional metadata for workflow context
+  - Distributed queue example updated to use new handler signature
+
+- **Queue Worker**: Enhanced worker implementation for orchestrator support
+  - Improved worker logic to handle micro-batch signaling
+  - Better integration with orchestrator registry
+
+- **Persistent State Machine**: Major enhancements to support micro-batch operations
+  - Added micro-batch specific execution methods (`persistent_microbatch.go` - 184 lines)
+  - Enhanced state machine with orchestrator integration capabilities
+  - Improved resource cleanup and simplified orchestration logic
+  - Refactored orchestrator resumption logic and consolidated continuation handling
+
+- **Executor**: Enhanced message handling and execution context
+  - Improved executor message processing with 99 additional lines
+  - Better execution context management
+
+- **TTL Constants**: Refactored TTL handling across the codebase
+  - Changed TTL constants to use `time.Duration` type
+  - Removed redundant suffix from TTL constant names
+  - Updated Redis script calls to use new TTL format
+
+- **Database Configuration**: Improved PostgreSQL test setup
+  - Enhanced Makefile database setup with additional test database creation
+  - Updated PostgreSQL test configuration for better local development
+  - Reduced worker concurrency in micro-batch example for default local PostgreSQL config
+
+### Fixed
+- **JSONPath Bug**: Resolved JSONPath processing issues with improved implementation
+- **Async Execution Continue**: Fixed async execution continuation bugs
+- **Timeout Map**: Resolved timeout map handling issues
+- **Merge Output Message**: Fixed message output merging logic
+
+### Infrastructure
+- **CI/CD**: Removed `test-all` dependency from Build job in CI workflow for faster builds
+- **Testing**: Added comprehensive test suites
+  - 228 lines of JSONPath set value tests
+  - 241 lines of wait state marshal tests
+  - 231 lines of validator tests
+  - 373 lines of batch processing tests
+
+### Statistics
+- **Lines Changed**: 5,549 lines added, 77 lines removed
+- **Files Modified**: 34 files
+- **New Features**: 3 major features (micro-batch, bulk orchestration, registry)
+- **Bug Fixes**: 4 significant fixes
+- **Test Coverage**: 1,073 lines of new tests
+
 ## [1.2.10] - 2026-02-24
 
 ### Changed
