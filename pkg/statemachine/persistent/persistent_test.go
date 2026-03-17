@@ -1148,9 +1148,9 @@ States:
 	// Verify history has 4 entries
 	require.Equal(t, 4, len(execCtx.History), "Should have 4 state history entries")
 
-	// Verify sequence numbers are correct (0-indexed based on history length)
+	// Verify sequence numbers are correct (1-indexed, incrementing counter)
 	for i, history := range execCtx.History {
-		expectedSeq := i
+		expectedSeq := i + 1
 		require.Equal(t, expectedSeq, history.SequenceNumber,
 			"Sequence number for state %s should be %d, got %d",
 			history.StateName, expectedSeq, history.SequenceNumber)
@@ -1163,15 +1163,16 @@ States:
 			"State at position %d should be %s", i, expectedState)
 	}
 
-	// Verify persisted state history has correct sequence numbers
+	// Verify persisted state history has correct sequence numbers (1-indexed)
 	persistedHistories, err := manager.GetStateHistory(ctx, execCtx.ID)
 	require.NoError(t, err)
 	require.Len(t, persistedHistories, 4)
 
 	for i, persistedHistory := range persistedHistories {
-		require.Equal(t, i, persistedHistory.SequenceNumber,
+		expectedSeq := i + 1
+		require.Equal(t, expectedSeq, persistedHistory.SequenceNumber,
 			"Persisted sequence number for state %s should be %d",
-			persistedHistory.StateName, i)
+			persistedHistory.StateName, expectedSeq)
 	}
 }
 
@@ -1245,10 +1246,11 @@ States:
 	// Should have: CheckValue -> HighValuePath -> MergePath (3 states)
 	require.Equal(t, 3, len(execCtx.History), "Should have 3 state history entries")
 
-	// Verify sequence numbers
+	// Verify sequence numbers (1-indexed, incrementing counter)
 	for i, history := range execCtx.History {
-		require.Equal(t, i, history.SequenceNumber,
-			"Sequence number should match history index")
+		expectedSeq := i + 1
+		require.Equal(t, expectedSeq, history.SequenceNumber,
+			"Sequence number should be %d, got %d", expectedSeq, history.SequenceNumber)
 	}
 
 	// Verify state order
@@ -1321,10 +1323,11 @@ States:
 	// The parallel branches execute within the ParallelState
 	require.NotEmpty(t, execCtx.History)
 
-	// Verify sequence numbers are sequential
+	// Verify sequence numbers are sequential (1-indexed, incrementing counter)
 	for i, history := range execCtx.History {
-		require.Equal(t, i, history.SequenceNumber,
-			"Sequence number should match history index for state %s",
+		expectedSeq := i + 1
+		require.Equal(t, expectedSeq, history.SequenceNumber,
+			"Sequence number should be %d for state %s", expectedSeq,
 			history.StateName)
 	}
 }
@@ -1381,9 +1384,9 @@ States:
 	// Should have: WaitForSeconds -> ProcessState (2 states)
 	require.Equal(t, 2, len(execCtx.History), "Should have 2 state history entries")
 
-	// Verify sequence numbers
-	require.Equal(t, 0, execCtx.History[0].SequenceNumber, "WaitForSeconds should have sequence 0")
-	require.Equal(t, 1, execCtx.History[1].SequenceNumber, "ProcessState should have sequence 1")
+	// Verify sequence numbers (1-indexed, incrementing counter)
+	require.Equal(t, 1, execCtx.History[0].SequenceNumber, "WaitForSeconds should have sequence 1")
+	require.Equal(t, 2, execCtx.History[1].SequenceNumber, "ProcessState should have sequence 2")
 
 	// Verify state order
 	require.Equal(t, "WaitForSeconds", execCtx.History[0].StateName)
@@ -1525,8 +1528,9 @@ States:
 	for i, expectedState := range expectedStates {
 		require.Equal(t, expectedState, persistedHistories[i].StateName,
 			"State name mismatch at position %d", i)
-		require.Equal(t, i, persistedHistories[i].SequenceNumber,
-			"Sequence number mismatch at position %d", i)
+		expectedSeq := i + 1
+		require.Equal(t, expectedSeq, persistedHistories[i].SequenceNumber,
+			"Sequence number mismatch at position %d (expected %d)", i, expectedSeq)
 		require.Equal(t, "SUCCEEDED", persistedHistories[i].Status,
 			"Status should be SUCCEEDED for %s", expectedState)
 	}
@@ -1600,9 +1604,9 @@ States:
 	// Should have history for State1 (success) and State2 (failure)
 	require.Equal(t, 2, len(execCtx.History), "Should have 2 state history entries")
 
-	// Verify sequence numbers
-	require.Equal(t, 0, execCtx.History[0].SequenceNumber, "State1 should have sequence 0")
-	require.Equal(t, 1, execCtx.History[1].SequenceNumber, "State2 should have sequence 1")
+	// Verify sequence numbers (1-indexed, incrementing counter)
+	require.Equal(t, 1, execCtx.History[0].SequenceNumber, "State1 should have sequence 1")
+	require.Equal(t, 2, execCtx.History[1].SequenceNumber, "State2 should have sequence 2")
 
 	// Verify first state succeeded
 	require.Equal(t, "State1", execCtx.History[0].StateName)

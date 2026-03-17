@@ -82,6 +82,12 @@ func (h *ExecutionHandler) handleRegularExecution(ctx context.Context, sm *persi
 		// Chained execution - derive input from source execution
 		output, err := h.repositoryManager.GetExecutionOutput(ctx, payload.SourceExecutionID, payload.SourceStateName)
 		if err != nil {
+			err2 := h.processBatchBarrier(ctx, payload, err, orchestrator)
+
+			if err2 != nil {
+				return fmt.Errorf("failed to processBatch Barrier: %w", err2)
+			}
+
 			return fmt.Errorf("failed to get source execution output: %w", err)
 		}
 		input = output
@@ -114,6 +120,25 @@ func (h *ExecutionHandler) handleRegularExecution(ctx context.Context, sm *persi
 	// Execute the state machine
 	exec, err := sm.Execute(ctx, input, execOpts...)
 
+	err2 := h.processBatchBarrier(ctx, payload, err, orchestrator)
+	if err2 != nil {
+		return err2
+	}
+
+	if err != nil {
+		return fmt.Errorf("execution failed: %w", err)
+	}
+
+	// Check execution status
+	if exec.Status == persistent.FAILED {
+		return fmt.Errorf("execution completed with FAILED status: %v", exec.Error)
+	}
+
+	fmt.Printf("Execution completed: ID=%s, Status=%s\n", exec.ID, exec.Status)
+	return nil
+}
+
+func (h *ExecutionHandler) processBatchBarrier(ctx context.Context, payload *queue.ExecutionTaskPayload, err error, orchestrator *batch.Orchestrator) error {
 	if meta, ok := batch.WorkerExtractMeta(payload.Input); ok {
 		outcome := batch.TaskOutcome{
 			BatchID:      meta.BatchID,
@@ -133,23 +158,12 @@ func (h *ExecutionHandler) handleRegularExecution(ctx context.Context, sm *persi
 		if err != nil {
 			return fmt.Errorf("signal: couldn't create orchestrator state machine %s: %w", meta.OrchestratorSMID, err)
 		}
-		err_signal := orchestrator.SignalMicroBatchComplete(ctx, meta, outcome)
-		if err_signal != nil {
-			fmt.Printf("warn: micro-batch orchestrator signal: %v\n", err_signal)
-			return err_signal
+		errSignal := orchestrator.SignalMicroBatchComplete(ctx, meta, outcome)
+		if errSignal != nil {
+			fmt.Printf("warn: micro-batch orchestrator signal: %v\n", errSignal)
+			return errSignal
 		}
 	}
-
-	if err != nil {
-		return fmt.Errorf("execution failed: %w", err)
-	}
-
-	// Check execution status
-	if exec.Status == persistent.FAILED {
-		return fmt.Errorf("execution completed with FAILED status: %v", exec.Error)
-	}
-
-	fmt.Printf("Execution completed: ID=%s, Status=%s\n", exec.ID, exec.Status)
 	return nil
 }
 
