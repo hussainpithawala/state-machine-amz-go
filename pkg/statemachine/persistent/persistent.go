@@ -168,7 +168,8 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 
 		history := pm.newStateHistory(currentStateName, state, execCtx)
 
-		output, nextState, err := state.Execute(ctx, execCtx.Input)
+		// Execute state with panic recovery for unexpected failures
+		output, nextState, err := pm.executeStateWithRecovery(ctx, state, execCtx.Input, currentStateName)
 
 		// Handle WAITING message state early
 		if pm.isWaitingMessageState(output) {
@@ -244,6 +245,40 @@ func (pm *StateMachine) newStateHistory(stateName string, state states.State, ex
 		StartTime:      time.Now(),
 		SequenceNumber: len(execCtx.History),
 	}
+}
+
+// executeStateWithRecovery executes the state and recovers from panics
+func (pm *StateMachine) executeStateWithRecovery(ctx context.Context, state states.State, input interface{}, stateName string) (output interface{}, nextState *string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("ERROR: Panic recovered during state execution [state=%s]: %v", stateName, r)
+			err = fmt.Errorf("state execution panic in %s: %v", stateName, r)
+			errorMessageKey := fmt.Sprintf("%s_%s", states.ExecFailureMessage, state.GetName())
+			execFailureInput := map[string]interface{}{
+				errorMessageKey: map[string]interface{}{
+					"error": r,
+				},
+			}
+			processor := states.JSONPathProcessor{}
+			mergedOutput, err := pm.MergeInputs(&processor, input, execFailureInput)
+			if err != nil {
+				log.Printf("ERROR: Failed to merge exec failure input [state=%s]: %v", stateName, err)
+				output = input
+			} else {
+				output = mergedOutput
+				nextState = nil
+			}
+		}
+	}()
+
+	output, nextState, err = state.Execute(ctx, input)
+	if err != nil {
+		log.Printf("ERROR: State execution failed [state=%s]: %v", stateName, err)
+		if output == nil {
+			output = input
+		}
+	}
+	return output, nextState, err
 }
 
 func (pm *StateMachine) isWaitingMessageState(output interface{}) bool {

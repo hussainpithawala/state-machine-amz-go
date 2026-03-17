@@ -6,6 +6,9 @@ import (
 	"fmt"
 )
 
+// ExecFailureMessage is the prefix for panic message keys in state data, which results when a recovery has to be made
+const ExecFailureMessage = "__exec_failure__"
+
 // State is the interface that all state types must implement
 type State interface {
 	// GetName returns the name of the state

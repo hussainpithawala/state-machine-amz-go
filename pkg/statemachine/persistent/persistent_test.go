@@ -774,9 +774,11 @@ States:
 	require.Equal(t, 10.0, summary["avgDiscount"])
 }
 
+const testPostgresConnURL = "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
+
 func TestExecute_FailState_MarkedAsFailed(t *testing.T) {
 	// Skip if no PostgreSQL connection available
-	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
+	connURL := testPostgresConnURL
 
 	config := &repository.Config{
 		Strategy:      "postgres_gorm",
@@ -844,7 +846,7 @@ States:
 
 func TestExecute_TaskStateError_MarkedAsFailed(t *testing.T) {
 	// Skip if no PostgreSQL connection available
-	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
+	connURL := testPostgresConnURL
 
 	config := &repository.Config{
 		Strategy:      "postgres_gorm",
@@ -942,4 +944,135 @@ States:
 		*execution.EndTime,
 		time.Millisecond, // Or whatever tolerance you need
 		"End times should be within tolerance")
+}
+
+func TestExecute_TaskStatePanic_OutputPreserved(t *testing.T) {
+	// Skip if no PostgreSQL connection available
+	connURL := testPostgresConnURL
+
+	config := &repository.Config{
+		Strategy:      "postgres_gorm",
+		ConnectionURL: connURL,
+		Options: map[string]interface{}{
+			"max_open_conns": 10,
+			"max_idle_conns": 2,
+			"log_level":      "warn",
+		},
+	}
+
+	repo, err := repository.NewGormPostgresRepository(config)
+	if err != nil {
+		t.Skipf("Skipping test: PostgreSQL not available: %v", err)
+	}
+	defer func(repo *repository.GormPostgresRepository) {
+		err := repo.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close PostgreSQL repository: %v\n", err)
+		}
+	}(repo)
+
+	ctx := context.Background()
+	err = repo.Initialize(ctx)
+	require.NoError(t, err)
+
+	manager := repository.NewManagerWithRepository(repo)
+
+	// Create a mock task handler that panics
+	mockHandler := &mockTaskHandler{
+		executeFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+			panic("unexpected API failure: nil pointer dereference")
+		},
+	}
+
+	definition := []byte(`
+StartAt: ProcessTask
+States:
+  ProcessTask:
+    Type: Task
+    Resource: arn:aws:lambda:us-east-1:123456789012:function:ProcessData
+    Next: SuccessState
+  SuccessState:
+    Type: Succeed
+`)
+
+	sm, err := New(definition, false, "test-sm-task-panic", manager)
+	require.NoError(t, err)
+
+	// Register the mock task handler
+	taskState, err := sm.GetState("ProcessTask")
+	require.NoError(t, err)
+	if ts, ok := taskState.(*states.TaskState); ok {
+		ts.TaskHandler = mockHandler
+	}
+
+	// Input data to preserve on failure
+	inputData := map[string]interface{}{
+		"orderId":    "ORD-123",
+		"customerId": "CUST-456",
+		"amount":     100.0,
+	}
+
+	// Execute the state machine - ProcessTask will panic
+	execCtx, execErr := sm.Execute(ctx, inputData)
+
+	// Verify error occurred
+	require.Error(t, execErr)
+	require.Contains(t, execErr.Error(), "panic")
+	require.Contains(t, execErr.Error(), "ProcessTask")
+
+	// Verify execution context is marked as FAILED
+	require.NotNil(t, execCtx)
+	require.Equal(t, FAILED, execCtx.Status)
+	require.NotNil(t, execCtx.Error)
+
+	// Verify EndTime is set
+	require.False(t, execCtx.EndTime.IsZero())
+
+	// Verify execution has history from the failed task
+	require.NotEmpty(t, execCtx.History)
+	require.Equal(t, 1, len(execCtx.History))
+
+	// Verify the failed state history
+	failedHistory := execCtx.History[0]
+	failedState := failedHistory.StateName
+	require.Equal(t, "ProcessTask", failedState)
+	require.Equal(t, "Task", failedHistory.StateType)
+	require.Equal(t, FAILED, failedHistory.Status)
+	require.NotNil(t, failedHistory.Error)
+
+	// CRITICAL: Verify that output is preserved as input for chained executions
+	require.NotNil(t, failedHistory.Output, "Output should not be nil even on panic")
+	outputMap, ok := failedHistory.Output.(map[string]interface{})
+	require.True(t, ok, "Output should be a map")
+	require.Equal(t, "ORD-123", outputMap["orderId"], "Output should preserve input orderId")
+	require.Equal(t, "CUST-456", outputMap["customerId"], "Output should preserve input customerId")
+	require.Equal(t, 100.0, outputMap["amount"], "Output should preserve input amount")
+
+	// Verify the execution was persisted correctly
+	execution, err := manager.GetExecution(ctx, execCtx.ID)
+	require.NoError(t, err)
+	require.Equal(t, FAILED, execution.Status)
+	require.NotNil(t, execution.Error)
+
+	// Verify state history was persisted with preserved output
+	histories, err := manager.GetStateHistory(ctx, execCtx.ID)
+	require.NoError(t, err)
+	require.Len(t, histories, 1)
+
+	persistedHistory := histories[0]
+	require.Equal(t, "ProcessTask", persistedHistory.StateName)
+	require.Equal(t, FAILED, persistedHistory.Status)
+
+	// Verify persisted output contains original input data
+	persistedOutput, ok := persistedHistory.Output.(map[string]interface{})
+	require.True(t, ok, "Persisted output should be a map")
+	require.Equal(t, "ORD-123", persistedOutput["orderId"], "Persisted output should preserve input orderId")
+	require.Equal(t, "CUST-456", persistedOutput["customerId"], "Persisted output should preserve input customerId")
+	require.Equal(t, 100.0, persistedOutput["amount"], "Persisted output should preserve input amount")
+
+	// Verify persisted output contains error data as well
+	errorMessageKey := fmt.Sprintf("%s_%s", states.ExecFailureMessage, failedState)
+	errorMap := persistedOutput[errorMessageKey].(map[string]interface{})
+
+	require.Equal(t, errorMap["error"], "unexpected API failure: nil pointer dereference")
 }
