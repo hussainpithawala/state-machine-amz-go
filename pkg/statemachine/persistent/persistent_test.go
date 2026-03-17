@@ -1082,11 +1082,9 @@ States:
 // ============================================================================
 
 func TestExecute_SequenceNumbers_IncrementCorrectly(t *testing.T) {
-	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
-
 	config := &repository.Config{
 		Strategy:      "postgres_gorm",
-		ConnectionURL: connURL,
+		ConnectionURL: testPostgresConnURL,
 		Options: map[string]interface{}{
 			"max_open_conns": 10,
 			"max_idle_conns": 2,
@@ -1178,11 +1176,9 @@ States:
 }
 
 func TestExecute_SequenceNumbers_WithChoiceState(t *testing.T) {
-	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
-
 	config := &repository.Config{
 		Strategy:      "postgres_gorm",
-		ConnectionURL: connURL,
+		ConnectionURL: testPostgresConnURL,
 		Options: map[string]interface{}{
 			"max_open_conns": 10,
 			"max_idle_conns": 2,
@@ -1262,11 +1258,9 @@ States:
 }
 
 func TestExecute_SequenceNumbers_WithParallelState(t *testing.T) {
-	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
-
 	config := &repository.Config{
 		Strategy:      "postgres_gorm",
-		ConnectionURL: connURL,
+		ConnectionURL: testPostgresConnURL,
 		Options: map[string]interface{}{
 			"max_open_conns": 10,
 			"max_idle_conns": 2,
@@ -1336,11 +1330,9 @@ States:
 }
 
 func TestExecute_SequenceNumbers_WithWaitState(t *testing.T) {
-	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
-
 	config := &repository.Config{
 		Strategy:      "postgres_gorm",
-		ConnectionURL: connURL,
+		ConnectionURL: testPostgresConnURL,
 		Options: map[string]interface{}{
 			"max_open_conns": 10,
 			"max_idle_conns": 2,
@@ -1399,11 +1391,9 @@ States:
 }
 
 func TestExecute_StateHistory_TimestampsAreSequential(t *testing.T) {
-	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
-
 	config := &repository.Config{
 		Strategy:      "postgres_gorm",
-		ConnectionURL: connURL,
+		ConnectionURL: testPostgresConnURL,
 		Options: map[string]interface{}{
 			"max_open_conns": 10,
 			"max_idle_conns": 2,
@@ -1463,11 +1453,9 @@ States:
 }
 
 func TestExecute_StateHistory_PersistedCorrectly(t *testing.T) {
-	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
-
 	config := &repository.Config{
 		Strategy:      "postgres_gorm",
-		ConnectionURL: connURL,
+		ConnectionURL: testPostgresConnURL,
 		Options: map[string]interface{}{
 			"max_open_conns": 10,
 			"max_idle_conns": 2,
@@ -1545,11 +1533,9 @@ States:
 }
 
 func TestExecute_SequenceNumbers_OnFailure(t *testing.T) {
-	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
-
 	config := &repository.Config{
 		Strategy:      "postgres_gorm",
-		ConnectionURL: connURL,
+		ConnectionURL: testPostgresConnURL,
 		Options: map[string]interface{}{
 			"max_open_conns": 10,
 			"max_idle_conns": 2,
