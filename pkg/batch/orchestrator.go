@@ -684,11 +684,11 @@ func (o *Orchestrator) SignalMicroBatchComplete(
 		fmt.Printf("warn: snapshot mb rate: %v\n", err)
 	}
 
-	return o.resumeOrchestrator(ctx, mbMeta, outcome)
+	return o.ResumeOrchestrator(ctx, mbMeta)
 }
 
-// resumeOrchestrator finds the waiting orchestrator execution and resumes it.
-func (o *Orchestrator) resumeOrchestrator(ctx context.Context, mbMeta MicroBatchMeta, outcome TaskOutcome) error {
+// ResumeOrchestrator finds the waiting orchestrator execution and resumes it.
+func (o *Orchestrator) ResumeOrchestrator(ctx context.Context, mbMeta MicroBatchMeta) error {
 	// Find the orchestrator execution that is paused at WaitForMicroBatchCompletion
 	// with CorrelationKey="micro_batch_id", CorrelationValue=mbMeta.MicroBatchID.
 	executions, err := o.parentSM.FindWaitingExecutionsByCorrelation(
