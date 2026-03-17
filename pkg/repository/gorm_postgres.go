@@ -296,7 +296,7 @@ func (r *GormPostgresRepository) SaveExecution(ctx context.Context, exec *Execut
 	result := r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "execution_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"status", "current_state", "output", "error", "end_time", "updated_at"}),
+			DoUpdates: clause.AssignmentColumns([]string{"status", "current_state", "output", "error", "end_time", "updated_at", "history_sequence_number"}),
 		}).
 		Create(model)
 
@@ -635,11 +635,12 @@ func (r *GormPostgresRepository) HealthCheck(ctx context.Context) error {
 
 func toExecutionModel(exec *ExecutionRecord) *ExecutionModel {
 	model := &ExecutionModel{
-		ExecutionID:    exec.ExecutionID,
-		StateMachineID: exec.StateMachineID,
-		Name:           exec.Name,
-		Status:         exec.Status,
-		CurrentState:   exec.CurrentState,
+		ExecutionID:           exec.ExecutionID,
+		StateMachineID:        exec.StateMachineID,
+		Name:                  exec.Name,
+		Status:                exec.Status,
+		CurrentState:          exec.CurrentState,
+		HistorySequenceNumber: exec.HistorySequenceNumber,
 	}
 
 	if exec.Input != nil {
@@ -666,12 +667,13 @@ func toExecutionModel(exec *ExecutionRecord) *ExecutionModel {
 
 func fromExecutionModel(model *ExecutionModel) *ExecutionRecord {
 	exec := &ExecutionRecord{
-		ExecutionID:    model.ExecutionID,
-		StateMachineID: model.StateMachineID,
-		Name:           model.Name,
-		Status:         model.Status,
-		StartTime:      &model.StartTime,
-		CurrentState:   model.CurrentState,
+		ExecutionID:           model.ExecutionID,
+		StateMachineID:        model.StateMachineID,
+		Name:                  model.Name,
+		Status:                model.Status,
+		StartTime:             &model.StartTime,
+		CurrentState:          model.CurrentState,
+		HistorySequenceNumber: model.HistorySequenceNumber,
 	}
 
 	if model.Input != nil {
@@ -692,7 +694,6 @@ func fromExecutionModel(model *ExecutionModel) *ExecutionRecord {
 	if model.Metadata != nil {
 		exec.Metadata = fromJSONB(model.Metadata)
 	}
-
 	return exec
 }
 
@@ -731,6 +732,7 @@ func toStateHistoryModel(history *StateHistoryRecord) *StateHistoryModel {
 		model.Metadata = toJSONB(history.Metadata)
 	}
 
+	model.SequenceNumber = history.SequenceNumber
 	return model
 }
 
@@ -767,6 +769,7 @@ func fromStateHistoryModel(model *StateHistoryModel) *StateHistoryRecord {
 	if model.Metadata != nil {
 		history.Metadata = fromJSONB(model.Metadata)
 	}
+	history.SequenceNumber = model.SequenceNumber
 
 	return history
 }

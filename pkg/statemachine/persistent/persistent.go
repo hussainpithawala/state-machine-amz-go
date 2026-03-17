@@ -119,6 +119,7 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 		execCtx.StateMachineID = pm.stateMachineID
 	}
 
+	execCtx.HistorySequenceNumber = 0
 	// Save initial execution state if repositoryManager is enabled
 	pm.persistExecution(ctx, execCtx)
 
@@ -238,12 +239,13 @@ func (pm *StateMachine) getState(stateName string) (states.State, error) {
 }
 
 func (pm *StateMachine) newStateHistory(stateName string, state states.State, execCtx *execution.Execution) *execution.StateHistory {
+	execCtx.HistorySequenceNumber += 1
 	return &execution.StateHistory{
 		StateName:      stateName,
 		StateType:      state.GetType(),
 		Input:          execCtx.Input,
 		StartTime:      time.Now(),
-		SequenceNumber: len(execCtx.History),
+		SequenceNumber: execCtx.HistorySequenceNumber,
 	}
 }
 
@@ -588,13 +590,14 @@ func (pm *StateMachine) ProcessTimeoutTrigger(ctx context.Context, correlationID
 
 	// Create executionRecord context for resumption
 	execCtx := execution.Execution{
-		ID:             executionRecord.ExecutionID,
-		StateMachineID: executionRecord.StateMachineID,
-		Name:           executionRecord.Name,
-		Status:         executionRecord.Status,
-		CurrentState:   executionRecord.CurrentState,
-		Input:          mergedInput,
-		StartTime:      *executionRecord.StartTime,
+		ID:                    executionRecord.ExecutionID,
+		StateMachineID:        executionRecord.StateMachineID,
+		Name:                  executionRecord.Name,
+		Status:                executionRecord.Status,
+		CurrentState:          executionRecord.CurrentState,
+		Input:                 mergedInput,
+		StartTime:             *executionRecord.StartTime,
+		HistorySequenceNumber: executionRecord.HistorySequenceNumber,
 	}
 
 	// Resume executionRecord with timeout trigger

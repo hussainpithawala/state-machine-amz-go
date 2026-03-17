@@ -12,18 +12,19 @@ const FAILED = "FAILED"
 
 // Execution represents a state machine execution instance
 type Execution struct {
-	StateMachineID string
-	ID             string
-	Name           string
-	Status         string
-	StartTime      time.Time
-	EndTime        time.Time
-	Input          interface{}
-	Output         interface{}
-	Error          error
-	CurrentState   string
-	History        []StateHistory
-	Metadata       map[string]interface{}
+	StateMachineID        string
+	ID                    string
+	Name                  string
+	Status                string
+	StartTime             time.Time
+	EndTime               time.Time
+	Input                 interface{}
+	Output                interface{}
+	Error                 error
+	CurrentState          string
+	History               []StateHistory
+	HistorySequenceNumber int
+	Metadata              map[string]interface{}
 }
 
 // MarkFailed marks the execution as failed with the given error.

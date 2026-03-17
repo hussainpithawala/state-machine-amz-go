@@ -11,17 +11,18 @@ import (
 
 // ExecutionRecord represents the execution data to be persisted
 type ExecutionRecord struct {
-	ExecutionID    string                 `json:"execution_id"`
-	StateMachineID string                 `json:"state_machine_id"`
-	Name           string                 `json:"name"`
-	Input          interface{}            `json:"input"`
-	Output         interface{}            `json:"output,omitempty"`
-	Status         string                 `json:"status"`
-	StartTime      *time.Time             `json:"start_time"`
-	EndTime        *time.Time             `json:"end_time,omitempty"`
-	CurrentState   string                 `json:"current_state"`
-	Error          string                 `json:"error,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	ExecutionID           string                 `json:"execution_id"`
+	StateMachineID        string                 `json:"state_machine_id"`
+	Name                  string                 `json:"name"`
+	Input                 interface{}            `json:"input"`
+	Output                interface{}            `json:"output,omitempty"`
+	Status                string                 `json:"status"`
+	StartTime             *time.Time             `json:"start_time"`
+	EndTime               *time.Time             `json:"end_time,omitempty"`
+	CurrentState          string                 `json:"current_state"`
+	Error                 string                 `json:"error,omitempty"`
+	Metadata              map[string]interface{} `json:"metadata,omitempty"`
+	HistorySequenceNumber int                    `json:"history_sequence_number"`
 }
 
 // StateHistoryRecord represents a single state execution in history
@@ -128,14 +129,15 @@ func (pm *Manager) GetRepository() Repository {
 // SaveExecution saves an execution record
 func (pm *Manager) SaveExecution(ctx context.Context, exec *execution.Execution) error {
 	record := &ExecutionRecord{
-		ExecutionID:    exec.ID,
-		StateMachineID: exec.StateMachineID,
-		Name:           exec.Name,
-		Input:          exec.Input,
-		Output:         exec.Output,
-		Status:         exec.Status,
-		StartTime:      &exec.StartTime,
-		CurrentState:   exec.CurrentState,
+		ExecutionID:           exec.ID,
+		StateMachineID:        exec.StateMachineID,
+		Name:                  exec.Name,
+		Input:                 exec.Input,
+		Output:                exec.Output,
+		Status:                exec.Status,
+		StartTime:             &exec.StartTime,
+		CurrentState:          exec.CurrentState,
+		HistorySequenceNumber: exec.HistorySequenceNumber,
 	}
 
 	if !exec.EndTime.IsZero() {

@@ -189,6 +189,7 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		current_state VARCHAR(255) NOT NULL,
 		error TEXT,
 		metadata JSONB DEFAULT '{}'::jsonb,
+	    history_sequence_number INTEGER NOT NULL CHECK (history_sequence_number >= 0) DEFAULT 0,
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (execution_id, start_time)
@@ -509,8 +510,8 @@ func (ps *PostgresRepository) SaveExecution(ctx context.Context, record *Executi
 	query := `
 		INSERT INTO executions (
 			execution_id, state_machine_id, name, input, output, status,
-			start_time, end_time, current_state, error, metadata
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			start_time, end_time, current_state, error, metadata, history_sequence_number
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (execution_id, start_time) DO UPDATE SET
 			output = EXCLUDED.output,
 			status = EXCLUDED.status,
@@ -518,6 +519,7 @@ func (ps *PostgresRepository) SaveExecution(ctx context.Context, record *Executi
 			current_state = EXCLUDED.current_state,
 			error = EXCLUDED.error,
 			metadata = EXCLUDED.metadata,
+		    history_sequence_number = EXCLUDED.history_sequence_number,
 			updated_at = CURRENT_TIMESTAMP
 		RETURNING execution_id, created_at, updated_at
 	`
@@ -537,6 +539,7 @@ func (ps *PostgresRepository) SaveExecution(ctx context.Context, record *Executi
 		record.CurrentState,
 		record.Error,
 		metadataJSON,
+		record.HistorySequenceNumber,
 	).Scan(&returnedID, &createdAt, &updatedAt)
 
 	if err != nil {

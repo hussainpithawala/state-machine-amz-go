@@ -139,14 +139,15 @@ func (executor *BaseExecutor) findAllWaitingExecutions(ctx context.Context, key 
 
 			// Convert repository.ExecutionRecord to execution.Execution
 			exec := &execution.Execution{
-				ID:             rec.ExecutionID,
-				StateMachineID: rec.StateMachineID,
-				Name:           rec.Name,
-				Status:         rec.Status,
-				Input:          rec.Input,
-				Output:         rec.Output,
-				CurrentState:   rec.CurrentState,
-				Metadata:       rec.Metadata,
+				ID:                    rec.ExecutionID,
+				StateMachineID:        rec.StateMachineID,
+				Name:                  rec.Name,
+				Status:                rec.Status,
+				Input:                 rec.Input,
+				Output:                rec.Output,
+				CurrentState:          rec.CurrentState,
+				Metadata:              rec.Metadata,
+				HistorySequenceNumber: rec.HistorySequenceNumber,
 			}
 			if rec.StartTime != nil {
 				exec.StartTime = *rec.StartTime
