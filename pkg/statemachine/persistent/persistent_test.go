@@ -1076,3 +1076,554 @@ States:
 
 	require.Equal(t, errorMap["error"], "unexpected API failure: nil pointer dereference")
 }
+
+// ============================================================================
+// Sequence Number and State History Tests
+// ============================================================================
+
+func TestExecute_SequenceNumbers_IncrementCorrectly(t *testing.T) {
+	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
+
+	config := &repository.Config{
+		Strategy:      "postgres_gorm",
+		ConnectionURL: connURL,
+		Options: map[string]interface{}{
+			"max_open_conns": 10,
+			"max_idle_conns": 2,
+			"log_level":      "warn",
+		},
+	}
+
+	repo, err := repository.NewGormPostgresRepository(config)
+	if err != nil {
+		t.Skipf("Skipping test: PostgreSQL not available: %v", err)
+	}
+	defer func(repo *repository.GormPostgresRepository) {
+		err := repo.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close PostgreSQL repository: %v\n", err)
+		}
+	}(repo)
+
+	ctx := context.Background()
+	err = repo.Initialize(ctx)
+	require.NoError(t, err)
+
+	manager := repository.NewManagerWithRepository(repo)
+
+	// Create a state machine with multiple sequential states
+	definition := []byte(`
+StartAt: State1
+States:
+  State1:
+    Type: Pass
+    Result: { "step": 1 }
+    Next: State2
+  State2:
+    Type: Pass
+    Result: { "step": 2 }
+    Next: State3
+  State3:
+    Type: Pass
+    Result: { "step": 3 }
+    Next: State4
+  State4:
+    Type: Pass
+    Result: { "step": 4 }
+    End: true
+`)
+
+	sm, err := New(definition, false, "test-sm-sequence", manager)
+	require.NoError(t, err)
+
+	inputData := map[string]interface{}{
+		"testId": "sequence-test-001",
+	}
+
+	execCtx, execErr := sm.Execute(ctx, inputData)
+
+	// Verify execution succeeded
+	require.NoError(t, execErr)
+	require.NotNil(t, execCtx)
+	require.Equal(t, "SUCCEEDED", execCtx.Status)
+
+	// Verify history has 4 entries
+	require.Equal(t, 4, len(execCtx.History), "Should have 4 state history entries")
+
+	// Verify sequence numbers are correct (0-indexed based on history length)
+	for i, history := range execCtx.History {
+		expectedSeq := i
+		require.Equal(t, expectedSeq, history.SequenceNumber,
+			"Sequence number for state %s should be %d, got %d",
+			history.StateName, expectedSeq, history.SequenceNumber)
+	}
+
+	// Verify state order
+	expectedStates := []string{"State1", "State2", "State3", "State4"}
+	for i, expectedState := range expectedStates {
+		require.Equal(t, expectedState, execCtx.History[i].StateName,
+			"State at position %d should be %s", i, expectedState)
+	}
+
+	// Verify persisted state history has correct sequence numbers
+	persistedHistories, err := manager.GetStateHistory(ctx, execCtx.ID)
+	require.NoError(t, err)
+	require.Len(t, persistedHistories, 4)
+
+	for i, persistedHistory := range persistedHistories {
+		require.Equal(t, i, persistedHistory.SequenceNumber,
+			"Persisted sequence number for state %s should be %d",
+			persistedHistory.StateName, i)
+	}
+}
+
+func TestExecute_SequenceNumbers_WithChoiceState(t *testing.T) {
+	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
+
+	config := &repository.Config{
+		Strategy:      "postgres_gorm",
+		ConnectionURL: connURL,
+		Options: map[string]interface{}{
+			"max_open_conns": 10,
+			"max_idle_conns": 2,
+			"log_level":      "warn",
+		},
+	}
+
+	repo, err := repository.NewGormPostgresRepository(config)
+	if err != nil {
+		t.Skipf("Skipping test: PostgreSQL not available: %v", err)
+	}
+	defer func(repo *repository.GormPostgresRepository) {
+		err := repo.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close PostgreSQL repository: %v\n", err)
+		}
+	}(repo)
+
+	ctx := context.Background()
+	err = repo.Initialize(ctx)
+	require.NoError(t, err)
+
+	manager := repository.NewManagerWithRepository(repo)
+
+	// Create a state machine with Choice state
+	definition := []byte(`
+StartAt: CheckValue
+States:
+  CheckValue:
+    Type: Choice
+    Choices:
+      - Variable: "$.value"
+        NumericGreaterThanEquals: 10
+        Next: HighValuePath
+      - Variable: "$.value"
+        NumericLessThan: 10
+        Next: LowValuePath
+    Default: DefaultPath
+  HighValuePath:
+    Type: Pass
+    Result: { "path": "high" }
+    Next: MergePath
+  LowValuePath:
+    Type: Pass
+    Result: { "path": "low" }
+    Next: MergePath
+  DefaultPath:
+    Type: Pass
+    Result: { "path": "default" }
+    Next: MergePath
+  MergePath:
+    Type: Pass
+    End: true
+`)
+
+	sm, err := New(definition, false, "test-sm-choice-sequence", manager)
+	require.NoError(t, err)
+
+	// Test with high value
+	execCtx, execErr := sm.Execute(ctx, map[string]interface{}{"value": 15})
+	require.NoError(t, execErr)
+	require.Equal(t, "SUCCEEDED", execCtx.Status)
+
+	// Should have: CheckValue -> HighValuePath -> MergePath (3 states)
+	require.Equal(t, 3, len(execCtx.History), "Should have 3 state history entries")
+
+	// Verify sequence numbers
+	for i, history := range execCtx.History {
+		require.Equal(t, i, history.SequenceNumber,
+			"Sequence number should match history index")
+	}
+
+	// Verify state order
+	require.Equal(t, "CheckValue", execCtx.History[0].StateName)
+	require.Equal(t, "HighValuePath", execCtx.History[1].StateName)
+	require.Equal(t, "MergePath", execCtx.History[2].StateName)
+}
+
+func TestExecute_SequenceNumbers_WithParallelState(t *testing.T) {
+	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
+
+	config := &repository.Config{
+		Strategy:      "postgres_gorm",
+		ConnectionURL: connURL,
+		Options: map[string]interface{}{
+			"max_open_conns": 10,
+			"max_idle_conns": 2,
+			"log_level":      "warn",
+		},
+	}
+
+	repo, err := repository.NewGormPostgresRepository(config)
+	if err != nil {
+		t.Skipf("Skipping test: PostgreSQL not available: %v", err)
+	}
+	defer func(repo *repository.GormPostgresRepository) {
+		err := repo.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close PostgreSQL repository: %v\n", err)
+		}
+	}(repo)
+
+	ctx := context.Background()
+	err = repo.Initialize(ctx)
+	require.NoError(t, err)
+
+	manager := repository.NewManagerWithRepository(repo)
+
+	// Create a state machine with Parallel state
+	definition := []byte(`
+StartAt: ParallelState
+States:
+  ParallelState:
+    Type: Parallel
+    Branches:
+      - StartAt: Branch1Step1
+        States:
+          Branch1Step1:
+            Type: Pass
+            Result: { "branch": 1, "step": 1 }
+            End: true
+      - StartAt: Branch2Step1
+        States:
+          Branch2Step1:
+            Type: Pass
+            Result: { "branch": 2, "step": 1 }
+            End: true
+    Next: FinalState
+  FinalState:
+    Type: Pass
+    End: true
+`)
+
+	sm, err := New(definition, false, "test-sm-parallel-sequence", manager)
+	require.NoError(t, err)
+
+	execCtx, execErr := sm.Execute(ctx, map[string]interface{}{"test": "parallel"})
+	require.NoError(t, execErr)
+	require.Equal(t, "SUCCEEDED", execCtx.Status)
+
+	// Should have: ParallelState (with branches) -> FinalState
+	// The parallel branches execute within the ParallelState
+	require.NotEmpty(t, execCtx.History)
+
+	// Verify sequence numbers are sequential
+	for i, history := range execCtx.History {
+		require.Equal(t, i, history.SequenceNumber,
+			"Sequence number should match history index for state %s",
+			history.StateName)
+	}
+}
+
+func TestExecute_SequenceNumbers_WithWaitState(t *testing.T) {
+	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
+
+	config := &repository.Config{
+		Strategy:      "postgres_gorm",
+		ConnectionURL: connURL,
+		Options: map[string]interface{}{
+			"max_open_conns": 10,
+			"max_idle_conns": 2,
+			"log_level":      "warn",
+		},
+	}
+
+	repo, err := repository.NewGormPostgresRepository(config)
+	if err != nil {
+		t.Skipf("Skipping test: PostgreSQL not available: %v", err)
+	}
+	defer func(repo *repository.GormPostgresRepository) {
+		err := repo.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close PostgreSQL repository: %v\n", err)
+		}
+	}(repo)
+
+	ctx := context.Background()
+	err = repo.Initialize(ctx)
+	require.NoError(t, err)
+
+	manager := repository.NewManagerWithRepository(repo)
+
+	// Create a state machine with Wait state
+	definition := []byte(`
+StartAt: WaitForSeconds
+States:
+  WaitForSeconds:
+    Type: Wait
+    Seconds: 1
+    Next: ProcessState
+  ProcessState:
+    Type: Pass
+    Result: { "processed": true }
+    End: true
+`)
+
+	sm, err := New(definition, false, "test-sm-wait-sequence", manager)
+	require.NoError(t, err)
+
+	execCtx, execErr := sm.Execute(ctx, map[string]interface{}{"test": "wait"})
+	require.NoError(t, execErr)
+	require.Equal(t, "SUCCEEDED", execCtx.Status)
+
+	// Should have: WaitForSeconds -> ProcessState (2 states)
+	require.Equal(t, 2, len(execCtx.History), "Should have 2 state history entries")
+
+	// Verify sequence numbers
+	require.Equal(t, 0, execCtx.History[0].SequenceNumber, "WaitForSeconds should have sequence 0")
+	require.Equal(t, 1, execCtx.History[1].SequenceNumber, "ProcessState should have sequence 1")
+
+	// Verify state order
+	require.Equal(t, "WaitForSeconds", execCtx.History[0].StateName)
+	require.Equal(t, "ProcessState", execCtx.History[1].StateName)
+}
+
+func TestExecute_StateHistory_TimestampsAreSequential(t *testing.T) {
+	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
+
+	config := &repository.Config{
+		Strategy:      "postgres_gorm",
+		ConnectionURL: connURL,
+		Options: map[string]interface{}{
+			"max_open_conns": 10,
+			"max_idle_conns": 2,
+			"log_level":      "warn",
+		},
+	}
+
+	repo, err := repository.NewGormPostgresRepository(config)
+	if err != nil {
+		t.Skipf("Skipping test: PostgreSQL not available: %v", err)
+	}
+	defer func(repo *repository.GormPostgresRepository) {
+		err := repo.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close PostgreSQL repository: %v\n", err)
+		}
+	}(repo)
+
+	ctx := context.Background()
+	err = repo.Initialize(ctx)
+	require.NoError(t, err)
+
+	manager := repository.NewManagerWithRepository(repo)
+
+	definition := []byte(`
+StartAt: State1
+States:
+  State1:
+    Type: Pass
+    Result: { "step": 1 }
+    Next: State2
+  State2:
+    Type: Pass
+    Result: { "step": 2 }
+    Next: State3
+  State3:
+    Type: Pass
+    End: true
+`)
+
+	sm, err := New(definition, false, "test-sm-timestamps", manager)
+	require.NoError(t, err)
+
+	execCtx, execErr := sm.Execute(ctx, map[string]interface{}{})
+	require.NoError(t, execErr)
+
+	// Verify timestamps are sequential
+	require.GreaterOrEqual(t,
+		execCtx.History[1].StartTime.UnixNano(),
+		execCtx.History[0].StartTime.UnixNano(),
+		"State2 should start after or at same time as State1")
+
+	require.GreaterOrEqual(t,
+		execCtx.History[2].StartTime.UnixNano(),
+		execCtx.History[1].StartTime.UnixNano(),
+		"State3 should start after or at same time as State2")
+}
+
+func TestExecute_StateHistory_PersistedCorrectly(t *testing.T) {
+	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
+
+	config := &repository.Config{
+		Strategy:      "postgres_gorm",
+		ConnectionURL: connURL,
+		Options: map[string]interface{}{
+			"max_open_conns": 10,
+			"max_idle_conns": 2,
+			"log_level":      "warn",
+		},
+	}
+
+	repo, err := repository.NewGormPostgresRepository(config)
+	if err != nil {
+		t.Skipf("Skipping test: PostgreSQL not available: %v", err)
+	}
+	defer func(repo *repository.GormPostgresRepository) {
+		err := repo.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close PostgreSQL repository: %v\n", err)
+		}
+	}(repo)
+
+	ctx := context.Background()
+	err = repo.Initialize(ctx)
+	require.NoError(t, err)
+
+	manager := repository.NewManagerWithRepository(repo)
+
+	definition := []byte(`
+StartAt: Init
+States:
+  Init:
+    Type: Pass
+    Result: { "initialized": true }
+    Next: Transform
+  Transform:
+    Type: Pass
+    Result: { "transformed": true }
+    Next: Complete
+  Complete:
+    Type: Pass
+    Result: { "completed": true }
+    End: true
+`)
+
+	sm, err := New(definition, false, "test-sm-persist-history", manager)
+	require.NoError(t, err)
+
+	inputData := map[string]interface{}{
+		"requestId": "req-12345",
+		"userId":    "user-67890",
+	}
+
+	execCtx, execErr := sm.Execute(ctx, inputData)
+	require.NoError(t, execErr)
+	require.Equal(t, "SUCCEEDED", execCtx.Status)
+
+	// Verify persisted execution
+	persistedExec, err := manager.GetExecution(ctx, execCtx.ID)
+	require.NoError(t, err)
+	require.Equal(t, "SUCCEEDED", persistedExec.Status)
+	require.Equal(t, "Complete", persistedExec.CurrentState)
+
+	// Verify persisted state history
+	persistedHistories, err := manager.GetStateHistory(ctx, execCtx.ID)
+	require.NoError(t, err)
+	require.Len(t, persistedHistories, 3)
+
+	// Verify each persisted history entry
+	expectedStates := []string{"Init", "Transform", "Complete"}
+	for i, expectedState := range expectedStates {
+		require.Equal(t, expectedState, persistedHistories[i].StateName,
+			"State name mismatch at position %d", i)
+		require.Equal(t, i, persistedHistories[i].SequenceNumber,
+			"Sequence number mismatch at position %d", i)
+		require.Equal(t, "SUCCEEDED", persistedHistories[i].Status,
+			"Status should be SUCCEEDED for %s", expectedState)
+	}
+}
+
+func TestExecute_SequenceNumbers_OnFailure(t *testing.T) {
+	connURL := "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"
+
+	config := &repository.Config{
+		Strategy:      "postgres_gorm",
+		ConnectionURL: connURL,
+		Options: map[string]interface{}{
+			"max_open_conns": 10,
+			"max_idle_conns": 2,
+			"log_level":      "warn",
+		},
+	}
+
+	repo, err := repository.NewGormPostgresRepository(config)
+	if err != nil {
+		t.Skipf("Skipping test: PostgreSQL not available: %v", err)
+	}
+	defer func(repo *repository.GormPostgresRepository) {
+		err := repo.Close()
+		if err != nil {
+			log.Printf("Warning: failed to close PostgreSQL repository: %v\n", err)
+		}
+	}(repo)
+
+	ctx := context.Background()
+	err = repo.Initialize(ctx)
+	require.NoError(t, err)
+
+	manager := repository.NewManagerWithRepository(repo)
+
+	// Create a state machine that will fail on the second state
+	definition := []byte(`
+StartAt: State1
+States:
+  State1:
+    Type: Pass
+    Result: { "step": 1 }
+    Next: State2
+  State2:
+    Type: Task
+    Resource: arn:aws:lambda:us-east-1:123456789012:function:FailFunction
+    Next: State3
+  State3:
+    Type: Pass
+    End: true
+`)
+
+	sm, err := New(definition, false, "test-sm-fail-sequence", manager)
+	require.NoError(t, err)
+
+	// Register a mock task handler that fails
+	taskState, err := sm.GetState("State2")
+	require.NoError(t, err)
+	if ts, ok := taskState.(*states.TaskState); ok {
+		ts.TaskHandler = &mockTaskHandler{
+			executeFunc: func(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+				return nil, fmt.Errorf("intentional failure for testing")
+			},
+		}
+	}
+
+	execCtx, execErr := sm.Execute(ctx, map[string]interface{}{"test": "failure"})
+
+	// Verify execution failed
+	require.Error(t, execErr)
+	require.Equal(t, "FAILED", execCtx.Status)
+
+	// Should have history for State1 (success) and State2 (failure)
+	require.Equal(t, 2, len(execCtx.History), "Should have 2 state history entries")
+
+	// Verify sequence numbers
+	require.Equal(t, 0, execCtx.History[0].SequenceNumber, "State1 should have sequence 0")
+	require.Equal(t, 1, execCtx.History[1].SequenceNumber, "State2 should have sequence 1")
+
+	// Verify first state succeeded
+	require.Equal(t, "State1", execCtx.History[0].StateName)
+	require.Equal(t, "SUCCEEDED", execCtx.History[0].Status)
+
+	// Verify second state failed
+	require.Equal(t, "State2", execCtx.History[1].StateName)
+	require.Equal(t, "FAILED", execCtx.History[1].Status)
+	require.NotNil(t, execCtx.History[1].Error)
+}

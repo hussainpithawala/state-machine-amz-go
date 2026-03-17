@@ -81,11 +81,12 @@ func New(id, name string, input interface{}) *Execution {
 // AddStateHistory adds a state execution to history
 func (e *Execution) AddStateHistory(stateName string, input, output interface{}, status string) {
 	e.History = append(e.History, StateHistory{
-		StateName: stateName,
-		Status:    status,
-		Input:     input,
-		Output:    output,
-		Timestamp: time.Now(),
+		StateName:      stateName,
+		Status:         status,
+		Input:          input,
+		Output:         output,
+		Timestamp:      time.Now(),
+		SequenceNumber: len(e.History),
 	})
 }
 
