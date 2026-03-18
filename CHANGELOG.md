@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.12] - 2026-03-18
+
+### Removed
+- **Panic Recovery Mechanism**: Removed panic recovery logic from state machine execution
+  - Removed `ExecFailureMessage` constant from `internal/states/state.go`
+  - Removed `executeStateWithRecovery()` wrapper function from `pkg/statemachine/statemachine.go`
+  - Removed `MergeInputs()` helper function from `pkg/statemachine/statemachine.go`
+  - Simplified state execution to direct `state.Execute()` calls
+
+- **Sequence Number Tracking**: Removed explicit sequence number tracking from execution history
+  - Removed `HistorySequenceNumber` field from `Execution` struct in `pkg/execution/execution.go`
+  - Removed `SequenceNumber` field from `StateHistory` tracking
+  - Updated `AddStateHistory()` to no longer track sequence numbers
+  - Removed `HistorySequenceNumber` from repository `ExecutionRecord` mapping
+
+- **Test Files**: Removed test files as part of code simplification
+  - `pkg/handler/batch_barrier_test.go` (473 lines)
+  - `pkg/handler/batch_barrier_integration_test.go` (457 lines)
+  - Sequence number tests from `pkg/statemachine/statemachine_test.go` (358 lines)
+  - Sequence number tests from `pkg/statemachine/persistent/persistent_test.go` (678 lines)
+
+### Changed
+- **Simplified Execution Flow**: Streamlined state machine execution logic
+  - Direct state execution without recovery wrapper
+  - Simplified error handling in `RunExecution()`
+  - Removed redundant status tracking in `AddStateHistory()`
+
+- **Handler Package**: Added new handler implementation
+  - New `pkg/statemachine/handler/handler.go` (222 lines)
+  - Consolidated execution handling logic
+
+- **Repository Updates**: Updated repository layer to reflect execution changes
+  - `pkg/repository/models.go`: Removed `HistorySequenceNumber` from `ExecutionRecord`
+  - `pkg/executor/executor_message.go`: Updated execution mapping
+  - `pkg/repository/postgres.go`: Updated queries
+  - `pkg/repository/gorm_postgres.go`: Updated GORM mappings
+
+### Fixed
+- Reduced code complexity by removing unnecessary abstraction layers
+- Improved execution flow clarity
+
+### Dependencies
+- Removed `github.com/stretchr/objx` v0.5.0 from `go.mod` and `go.sum`
+
+### Statistics
+- **Lines Changed**: 328 added, 2,194 removed (net: -1,866 lines)
+- **Files Modified**: 18 files
+
 ## [1.2.11] - 2026-03-08
 
 ### Added

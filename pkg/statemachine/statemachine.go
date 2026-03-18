@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -188,19 +189,21 @@ func (sm *StateMachine) RunExecution(ctx context.Context, execCtx *execution.Exe
 		execCtx.CurrentState = currentStateName
 
 		// Execute the state
-		output, nextState, err := state.Execute(ctx, currentInput)
-
-		// Record state history
-		execCtx.AddStateHistory(currentStateName, currentInput, output)
+		output, nextState, err := sm.executeStateWithRecovery(ctx, state, execCtx.Input, currentStateName)
 
 		// Handle state execution result
 		if err != nil {
+			execCtx.AddStateHistory(currentStateName, currentInput, output, "FAILED")
+
 			// State execution failed
 			execCtx.Status = "FAILED"
 			execCtx.EndTime = time.Now()
 			execCtx.Error = err
 			execCtx.Output = output
 			return execCtx, err
+		} else {
+			// Record state history
+			execCtx.AddStateHistory(currentStateName, currentInput, output, "SUCCEEDED")
 		}
 
 		// Check if this is an end state
@@ -218,6 +221,56 @@ func (sm *StateMachine) RunExecution(ctx context.Context, execCtx *execution.Exe
 	}
 
 	return execCtx, nil
+}
+
+func (sm *StateMachine) executeStateWithRecovery(ctx context.Context, state states.State, input interface{}, stateName string) (output interface{}, nextState *string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("ERROR: Panic recovered during state execution [state=%s]: %v", stateName, r)
+			err = fmt.Errorf("state execution panic in %s: %v", stateName, r)
+			errorMessageKey := fmt.Sprintf("%s_%s", states.ExecFailureMessage, state.GetName())
+			execFailureInput := map[string]interface{}{
+				errorMessageKey: map[string]interface{}{
+					"error": r,
+				},
+			}
+			processor := states.JSONPathProcessor{}
+			mergedOutput, err := sm.MergeInputs(&processor, input, execFailureInput)
+			if err != nil {
+				log.Printf("ERROR: Failed to merge exec failure input [state=%s]: %v", stateName, err)
+				output = input
+			} else {
+				output = mergedOutput
+				nextState = nil
+			}
+		}
+	}()
+
+	output, nextState, err = state.Execute(ctx, input)
+	if err != nil {
+		log.Printf("ERROR: State execution failed [state=%s]: %v", stateName, err)
+		if output == nil {
+			output = input
+		}
+	}
+	return output, nextState, err
+}
+
+func (sm *StateMachine) MergeInputs(processor *states.JSONPathProcessor,
+	processedInput interface{}, result interface{}) (op2 interface{}, op4 error) {
+	output := result
+	var err error
+
+	if processedInput == nil {
+		return output, nil
+	}
+	if result == nil {
+		return processedInput, nil
+	}
+
+	// Apply result path
+	output, err = processor.ApplyResultPath(processedInput, output, states.StringPtr("$."))
+	return output, err
 }
 
 // GetExecutionSummary returns a summary of the state machine

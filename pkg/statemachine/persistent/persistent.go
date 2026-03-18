@@ -119,6 +119,7 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 		execCtx.StateMachineID = pm.stateMachineID
 	}
 
+	execCtx.HistorySequenceNumber = 0
 	// Save initial execution state if repositoryManager is enabled
 	pm.persistExecution(ctx, execCtx)
 
@@ -168,7 +169,8 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 
 		history := pm.newStateHistory(currentStateName, state, execCtx)
 
-		output, nextState, err := state.Execute(ctx, execCtx.Input)
+		// Execute state with panic recovery for unexpected failures
+		output, nextState, err := pm.executeStateWithRecovery(ctx, state, execCtx.Input, currentStateName)
 
 		// Handle WAITING message state early
 		if pm.isWaitingMessageState(output) {
@@ -237,13 +239,48 @@ func (pm *StateMachine) getState(stateName string) (states.State, error) {
 }
 
 func (pm *StateMachine) newStateHistory(stateName string, state states.State, execCtx *execution.Execution) *execution.StateHistory {
+	execCtx.HistorySequenceNumber += 1
 	return &execution.StateHistory{
 		StateName:      stateName,
 		StateType:      state.GetType(),
 		Input:          execCtx.Input,
 		StartTime:      time.Now(),
-		SequenceNumber: len(execCtx.History),
+		SequenceNumber: execCtx.HistorySequenceNumber,
 	}
+}
+
+// executeStateWithRecovery executes the state and recovers from panics
+func (pm *StateMachine) executeStateWithRecovery(ctx context.Context, state states.State, input interface{}, stateName string) (output interface{}, nextState *string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("ERROR: Panic recovered during state execution [state=%s]: %v", stateName, r)
+			err = fmt.Errorf("state execution panic in %s: %v", stateName, r)
+			errorMessageKey := fmt.Sprintf("%s_%s", states.ExecFailureMessage, state.GetName())
+			execFailureInput := map[string]interface{}{
+				errorMessageKey: map[string]interface{}{
+					"error": r,
+				},
+			}
+			processor := states.JSONPathProcessor{}
+			mergedOutput, err := pm.MergeInputs(&processor, input, execFailureInput)
+			if err != nil {
+				log.Printf("ERROR: Failed to merge exec failure input [state=%s]: %v", stateName, err)
+				output = input
+			} else {
+				output = mergedOutput
+				nextState = nil
+			}
+		}
+	}()
+
+	output, nextState, err = state.Execute(ctx, input)
+	if err != nil {
+		log.Printf("ERROR: State execution failed [state=%s]: %v", stateName, err)
+		if output == nil {
+			output = input
+		}
+	}
+	return output, nextState, err
 }
 
 func (pm *StateMachine) isWaitingMessageState(output interface{}) bool {
@@ -553,13 +590,14 @@ func (pm *StateMachine) ProcessTimeoutTrigger(ctx context.Context, correlationID
 
 	// Create executionRecord context for resumption
 	execCtx := execution.Execution{
-		ID:             executionRecord.ExecutionID,
-		StateMachineID: executionRecord.StateMachineID,
-		Name:           executionRecord.Name,
-		Status:         executionRecord.Status,
-		CurrentState:   executionRecord.CurrentState,
-		Input:          mergedInput,
-		StartTime:      *executionRecord.StartTime,
+		ID:                    executionRecord.ExecutionID,
+		StateMachineID:        executionRecord.StateMachineID,
+		Name:                  executionRecord.Name,
+		Status:                executionRecord.Status,
+		CurrentState:          executionRecord.CurrentState,
+		Input:                 mergedInput,
+		StartTime:             *executionRecord.StartTime,
+		HistorySequenceNumber: executionRecord.HistorySequenceNumber,
 	}
 
 	// Resume executionRecord with timeout trigger
