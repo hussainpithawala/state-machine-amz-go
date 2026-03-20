@@ -23,7 +23,7 @@ func (s *FailState) Execute(_ context.Context, input interface{}) (result interf
 		errMsg += fmt.Sprintf(" (cause: %s)", s.Cause)
 		// we need to stop over here the error is already logged
 		// the execution of state machine will be stopped
-		log.Printf(errMsg)
+		log.Println(errMsg)
 	}
 
 	return input, nil, nil
