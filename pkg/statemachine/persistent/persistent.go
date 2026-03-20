@@ -23,6 +23,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
+const SUCCEEDED = "SUCCEEDED"
 const FAILED = "FAILED"
 const PAUSED = "PAUSED"
 const WAITING = "WAITING"

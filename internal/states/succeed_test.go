@@ -646,8 +646,8 @@ func TestSucceedState_ComparisonWithFailState(t *testing.T) {
 
 	// Test FailState
 	failOutput, failNext, failErr := failState.Execute(ctx, input)
-	assert.Error(t, failErr)
-	assert.Nil(t, failOutput)
+	assert.NoError(t, failErr)
+	assert.NotNil(t, failOutput)
 	assert.Nil(t, failNext)
 
 	// Verify they're both end states

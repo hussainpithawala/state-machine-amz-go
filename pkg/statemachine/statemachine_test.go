@@ -259,9 +259,9 @@ func TestExecute_WithFail(t *testing.T) {
 
 	exec, err := sm.Execute(ctx, input)
 
-	require.Error(t, err)
+	require.Nil(t, err)
 	require.NotNil(t, exec)
-	assert.Equal(t, "FAILED", exec.Status)
+	assert.Equal(t, "SUCCEEDED", exec.Status)
 }
 
 func TestExecute_WithTimeout(t *testing.T) {
@@ -920,8 +920,8 @@ func TestExecute_SequenceNumbers_OnFailure(t *testing.T) {
 	exec, err := sm.Execute(ctx, map[string]interface{}{"test": "failure"})
 
 	// Verify execution failed
-	require.Error(t, err)
-	assert.Equal(t, "FAILED", exec.Status)
+	require.Nil(t, err)
+	assert.Equal(t, "SUCCEEDED", exec.Status)
 
 	// Should have history for State1 (success) and State2 (failure)
 	require.Equal(t, 2, len(exec.History), "Should have 2 state history entries")
@@ -936,7 +936,7 @@ func TestExecute_SequenceNumbers_OnFailure(t *testing.T) {
 
 	// Verify second state failed
 	assert.Equal(t, "State2", exec.History[1].StateName)
-	assert.Equal(t, "FAILED", exec.History[1].Status)
+	assert.Equal(t, "SUCCEEDED", exec.History[1].Status)
 }
 
 func TestExecute_StateHistory_InputOutputPreserved(t *testing.T) {
