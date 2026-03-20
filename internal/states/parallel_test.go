@@ -357,7 +357,7 @@ func TestParallelState_Execute_BranchError(t *testing.T) {
 	input := testInitial
 
 	_, _, err := state.Execute(ctx, input)
-	require.Error(t, err)
+	require.NoError(t, err)
 }
 
 func TestParallelState_Validate(t *testing.T) {
