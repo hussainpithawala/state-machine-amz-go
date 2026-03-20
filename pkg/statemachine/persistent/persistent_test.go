@@ -838,7 +838,7 @@ States:
 
 	// Verify that a failed state has been reached
 
-	lastState, err := execCtx.GetLastState()
+	lastState, _ := execCtx.GetLastState()
 
 	log.Printf("Last state: %v\n", lastState)
 	require.Equal(t, "Fail", lastState.StateType)
