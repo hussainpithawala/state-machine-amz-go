@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 )
 
 // FailState represents a Fail state
@@ -17,12 +18,15 @@ type FailState struct {
 // Execute executes the Fail state
 func (s *FailState) Execute(_ context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	// Fail states always return an error
-	errMsg := fmt.Sprintf("State machine failed at state '%s' with error: %s", s.Name, s.Error)
+	errMsg := fmt.Sprintf("State machine at a Failed state '%s' with error: %s", s.Name, s.Error)
 	if s.Cause != "" {
 		errMsg += fmt.Sprintf(" (cause: %s)", s.Cause)
+		// we need to stop over here the error is already logged
+		// the execution of state machine will be stopped
+		log.Printf(errMsg)
 	}
 
-	return nil, nil, fmt.Errorf("%s", errMsg)
+	return input, nil, nil
 }
 
 // GetNext always returns nil for Fail states
