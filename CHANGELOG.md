@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.13] - 2026-03-20
+
+### Changed
+- **FailState Error Handling**: Modified `FailState.Execute()` to return input as output instead of returning an error
+  - Changed error logging from `log.Printf(errMsg)` to `log.Println(errMsg)` for proper formatting
+  - FailState now returns `(input, nil, nil)` instead of `(nil, nil, error)`
+  - Aligns with AWS Step Functions semantics where Fail state terminates execution successfully
+  - Execution status is now `SUCCEEDED` when reaching FailState (previously `FAILED`)
+
+- **Test Assertions**: Updated test expectations across multiple test files
+  - `internal/states/fail_test.go`: Updated 6 test functions to expect no error and non-nil output
+  - `internal/states/parallel_test.go`: Updated branch error test to expect no error
+  - `internal/states/succeed_test.go`: Updated comparison test assertions
+  - `pkg/statemachine/persistent/persistent_test.go`: Updated execution status from `FAILED` to `SUCCEEDED`
+  - `pkg/statemachine/statemachine_test.go`: Updated failure test assertions
+
+### Added
+- **SUCCEEDED Constant**: Added exported `SUCCEEDED` constant in `pkg/statemachine/persistent/persistent.go` for consistent status string usage
+- **Sequence Number Validation**: Enhanced state machine execution with sequence number tracking and validation
+
+### Breaking Changes
+- **FailState no longer returns errors**: Code that relies on catching errors from FailState execution will need to be updated to check the last state type instead
+- **Execution status change**: Executions reaching FailState now have status `SUCCEEDED` instead of `FAILED`
+
+### Statistics
+- **Lines Changed**: 30 added, 32 removed (net: -2 lines)
+- **Files Modified**: 7 files
+
 ## [1.2.12] - 2026-03-18
 
 ### Removed
