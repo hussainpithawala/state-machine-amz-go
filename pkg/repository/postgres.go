@@ -1676,7 +1676,7 @@ func (ps *PostgresRepository) scanSingleExecution(rows *sql.Rows) (*ExecutionRec
 		return nil, err
 	}
 
-	if recoveryMetadataJSON != nil && len(recoveryMetadataJSON) > 0 {
+	if len(recoveryMetadataJSON) > 0 {
 		var recoveryMeta RecoveryMetadata
 		if err := json.Unmarshal(recoveryMetadataJSON, &recoveryMeta); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal recovery metadata: %w", err)
@@ -1893,12 +1893,10 @@ func (ps *PostgresRepository) FindOrphanedExecutions(ctx context.Context, stateM
 		  AND start_time < $2
 	`
 	args := []interface{}{StatusRunning, cutoffTime}
-	argPos := 3
 
 	if stateMachineID != "" {
-		query += fmt.Sprintf(" AND state_machine_id = $%d", argPos)
+		query += " AND state_machine_id = $3"
 		args = append(args, stateMachineID)
-		argPos++
 	}
 
 	query += " ORDER BY start_time ASC"
@@ -1907,7 +1905,11 @@ func (ps *PostgresRepository) FindOrphanedExecutions(ctx context.Context, stateM
 	if err != nil {
 		return nil, fmt.Errorf("failed to query orphaned executions: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("Warning: failed to close rows: %v\n", err)
+		}
+	}()
 
 	executions, err := ps.scanExecutionRows(rows)
 	if err != nil {

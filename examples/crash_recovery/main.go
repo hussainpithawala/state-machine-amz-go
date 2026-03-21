@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -195,7 +194,11 @@ States:
 	if err := pm.StartRecoveryScanner(recoveryConfig); err != nil {
 		return fmt.Errorf("failed to start recovery scanner: %w", err)
 	}
-	defer pm.StopRecoveryScanner()
+	defer func() {
+		if err := pm.StopRecoveryScanner(); err != nil {
+			fmt.Printf("Warning: failed to stop recovery scanner: %v\n", err)
+		}
+	}()
 
 	fmt.Printf("Recovery scanner started (interval: %v, threshold: %v)\n", scanInterval, orphanedThreshold)
 	fmt.Println()
@@ -280,9 +283,9 @@ func runInitialExecution(ctx context.Context, pm *persistent.StateMachine, exec 
 	// Simulate crash by cancelling context
 	fmt.Println("   Execution progress: Started processing...")
 	fmt.Println("   [CRASH SIMULATION] Cancelling context abruptly...")
-	cancelFunc, ok := ctx.Value(types.ExecutionContextKey).(interface{ Cancel() })
-	if ok && cancelFunc != nil {
+	if cancelFunc, ok := ctx.Value(types.ExecutionContextKey).(interface{ Cancel() }); ok && cancelFunc != nil {
 		// In real scenario, process would just die
+		_ = cancelFunc
 	}
 
 	// Give it a moment to persist state
@@ -466,12 +469,4 @@ func cleanupPreviousRun(ctx context.Context, manager *repository.Manager) error 
 	}
 
 	return nil
-}
-
-// Helper to display JSON
-func displayJSON(label string, data interface{}) error {
-	fmt.Printf("\n%s:\n", label)
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(data)
 }

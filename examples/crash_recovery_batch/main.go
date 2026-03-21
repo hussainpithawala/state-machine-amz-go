@@ -81,8 +81,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize: %v", err)
 	}
-	defer persistenceManager.Close()
-	defer redisClient.Close()
+	defer func() {
+		if err := persistenceManager.Close(); err != nil {
+			fmt.Printf("Warning: failed to close persistence manager: %v\n", err)
+		}
+	}()
+	defer func() {
+		if err := redisClient.Close(); err != nil {
+			fmt.Printf("Warning: failed to close Redis client: %v\n", err)
+		}
+	}()
 
 	// Clean up previous run
 	if err := cleanupPreviousRun(ctx, persistenceManager, redisClient); err != nil {
@@ -90,10 +98,13 @@ func main() {
 	}
 
 	// Setup state machines
-	_, orchestratorSM, err := setupStateMachines(ctx, persistenceManager, redisClient)
-	if err != nil {
-		log.Fatalf("Failed to setup state machines: %v", err)
+	var orchestratorSM *persistent.StateMachine
+	var setupErr error
+	_, orchestratorSM, setupErr = setupStateMachines(ctx, persistenceManager, redisClient)
+	if setupErr != nil {
+		log.Fatalf("Failed to setup state machines: %v", setupErr) //nolint:gocritic // Fatal error during initialization
 	}
+	// Note: Recovery scanner will be stopped when program exits
 
 	fmt.Println("=== Phase 1: Creating Source Executions ===")
 	fmt.Println()
@@ -188,7 +199,11 @@ func main() {
 	if err := orchestratorSM.StartRecoveryScanner(recoveryConfig); err != nil {
 		log.Fatalf("Failed to start recovery scanner: %v", err)
 	}
-	defer orchestratorSM.StopRecoveryScanner()
+	defer func() {
+		if err := orchestratorSM.StopRecoveryScanner(); err != nil {
+			fmt.Printf("Warning: failed to stop recovery scanner: %v\n", err)
+		}
+	}()
 
 	fmt.Printf("Recovery scanner started (interval: %v, threshold: %v)\n",
 		scanInterval, orphanedThreshold)
@@ -227,10 +242,15 @@ func main() {
 			}
 
 			// Check if orchestrator completed
-			if orchestratorStatus == "SUCCEEDED" {
+			switch orchestratorStatus {
+			case "SUCCEEDED":
 				fmt.Println()
 				fmt.Printf(">>> Recovery Complete! Orchestrator finished successfully <<<\n")
 				fmt.Println()
+				recoveryComplete = true
+			case "FAILED":
+				fmt.Println()
+				fmt.Printf(">>> Orchestrator failed <<<\n")
 				recoveryComplete = true
 			}
 
@@ -296,7 +316,6 @@ func initializeComponents(ctx context.Context) (*repository.Manager, *redis.Clie
 // setupStateMachines creates worker and orchestrator state machines
 func setupStateMachines(ctx context.Context, pm *repository.Manager, rdb *redis.Client) (
 	*persistent.StateMachine, *persistent.StateMachine, error) {
-
 	// Worker state machine (processes individual items)
 	workerYAML := `
 Comment: "Worker state machine for crash recovery example"
@@ -467,9 +486,10 @@ func displayFinalResults(ctx context.Context, pm *repository.Manager, rdb *redis
 	succeeded := 0
 	failed := 0
 	for _, exec := range workerExecs {
-		if exec.Status == "SUCCEEDED" {
+		switch exec.Status {
+		case "SUCCEEDED":
 			succeeded++
-		} else if exec.Status == "FAILED" {
+		case "FAILED":
 			failed++
 		}
 	}
@@ -493,11 +513,12 @@ func displayFinalResults(ctx context.Context, pm *repository.Manager, rdb *redis
 		mbID := fmt.Sprintf("%s-mb-%d", batchID, i)
 		barrierKey := fmt.Sprintf("%s%s", barrierKeyPrefix, mbID)
 		remaining, err := rdb.Get(ctx, barrierKey).Int64()
-		if err == redis.Nil {
+		switch {
+		case err == redis.Nil:
 			fmt.Printf("  Micro-batch %d: CLEARED (key deleted)\n", i)
-		} else if err != nil {
+		case err != nil:
 			fmt.Printf("  Micro-batch %d: Error reading: %v\n", i, err)
-		} else {
+		default:
 			fmt.Printf("  Micro-batch %d: %d remaining\n", i, remaining)
 		}
 	}
