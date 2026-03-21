@@ -171,6 +171,9 @@ type Repository interface {
 	// This allows finding executions that don't have specific types of linked executions
 	// For example: executions with no SUCCEEDED linked executions from a specific state
 	ListNonLinkedExecutions(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error)
+
+	// FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold
+	FindOrphanedExecutions(ctx context.Context, stateMachineID string, threshold time.Duration) ([]*ExecutionRecord, error)
 }
 
 // ExtendedRepository defines additional repository capabilities

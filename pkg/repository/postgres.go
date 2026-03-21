@@ -1861,4 +1861,62 @@ func (b *nonLinkedExecutionsQueryBuilder) addSubqueryCondition(conditions *[]str
 	}
 }
 
+// FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold
+func (ps *PostgresRepository) FindOrphanedExecutions(ctx context.Context, stateMachineID string, threshold time.Duration) ([]*ExecutionRecord, error) {
+	cutoffTime := time.Now().Add(-threshold)
+
+	query := `
+		SELECT 
+			execution_id,
+			state_machine_id,
+			name,
+			input,
+			output,
+			status,
+			start_time,
+			end_time,
+			current_state,
+			error,
+			metadata,
+			history_sequence_number,
+			recovery_metadata,
+			created_at,
+			updated_at
+		FROM executions
+		WHERE status = $1
+		  AND start_time < $2
+	`
+	args := []interface{}{StatusRunning, cutoffTime}
+	argPos := 3
+
+	if stateMachineID != "" {
+		query += fmt.Sprintf(" AND state_machine_id = $%d", argPos)
+		args = append(args, stateMachineID)
+		argPos++
+	}
+
+	query += " ORDER BY start_time ASC"
+
+	rows, err := ps.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query orphaned executions: %w", err)
+	}
+	defer rows.Close()
+
+	var executions []*ExecutionRecord
+	for rows.Next() {
+		record := &ExecutionRecord{}
+		if err := ps.scanExecutionRecord(rows, record); err != nil {
+			return nil, fmt.Errorf("failed to scan execution record: %w", err)
+		}
+		executions = append(executions, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating execution records: %w", err)
+	}
+
+	return executions, nil
+}
+
 // The rest of the builder methods as defined above...

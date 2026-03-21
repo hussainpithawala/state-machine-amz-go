@@ -275,6 +275,11 @@ func (pm *Manager) CountLinkedExecutions(ctx context.Context, filter *LinkedExec
 	return pm.repository.CountLinkedExecutions(ctx, filter)
 }
 
+// FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold
+func (pm *Manager) FindOrphanedExecutions(ctx context.Context, stateMachineID string, threshold time.Duration) ([]*ExecutionRecord, error) {
+	return pm.repository.FindOrphanedExecutions(ctx, stateMachineID, threshold)
+}
+
 // Helper function to generate unique history IDs
 func generateHistoryID(executionID, stateName string, timestamp time.Time) string {
 	return fmt.Sprintf("%s-%s-%d", executionID, stateName, timestamp.UnixNano())
