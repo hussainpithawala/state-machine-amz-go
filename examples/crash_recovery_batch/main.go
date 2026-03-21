@@ -97,17 +97,17 @@ func main() {
 		fmt.Printf("Warning: cleanup failed: %v\n", err)
 	}
 
-	// Setup state machines
+	// Save orchestrator definitions to repository FIRST (required before loading)
+	if err := saveOrchestratorDefinitions(ctx, persistenceManager); err != nil {
+		log.Fatalf("Failed to save orchestrator definitions: %v", err) //nolint:gocritic // Fatal error during initialization
+	}
+
+	// Setup state machines (now can load orchestrator from repository)
 	var orchestratorSM *persistent.StateMachine
 	var setupErr error
 	_, orchestratorSM, setupErr = setupStateMachines(ctx, persistenceManager, redisClient)
 	if setupErr != nil {
 		log.Fatalf("Failed to setup state machines: %v", setupErr) //nolint:gocritic // Fatal error during initialization
-	}
-
-	// Save orchestrator definitions to repository (required before loading)
-	if err := saveOrchestratorDefinitions(ctx, persistenceManager); err != nil {
-		log.Fatalf("Failed to save orchestrator definitions: %v", err)
 	}
 
 	// Note: Recovery scanner will be stopped when program exits
