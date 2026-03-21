@@ -18,6 +18,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/batch"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/recovery"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	statemachine2 "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
@@ -35,6 +36,7 @@ type StateMachine struct {
 	stateMachineID    string
 	queueClient       *queue.Client
 	executor          *executor.BaseExecutor // nil = default executor
+	recoveryManager   *recovery.RecoveryManager
 }
 
 // Option allows configuring the state machine
@@ -188,9 +190,10 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 			execCtx.EndTime = time.Now()
 			pm.persistExecution(ctx, execCtx)
 			return execCtx, err
-		} else {
-			pm.persistExecution(ctx, execCtx)
 		}
+
+		// Update recovery metadata after successful state execution
+		execCtx.UpdateRecoveryMetadata(currentStateName, output)
 
 		if state.IsEnd() {
 			execCtx.Status = "SUCCEEDED"
@@ -622,6 +625,38 @@ func (pm *StateMachine) SetQueueClient(client *queue.Client) {
 // GetQueueClient returns the queue client
 func (pm *StateMachine) GetQueueClient() *queue.Client {
 	return pm.queueClient
+}
+
+// SetRecoveryManager sets the recovery manager for crash-resilient execution
+func (pm *StateMachine) SetRecoveryManager(manager *recovery.RecoveryManager) {
+	pm.recoveryManager = manager
+}
+
+// GetRecoveryManager returns the recovery manager
+func (pm *StateMachine) GetRecoveryManager() *recovery.RecoveryManager {
+	return pm.recoveryManager
+}
+
+// StartRecoveryScanner starts the background recovery scanner
+func (pm *StateMachine) StartRecoveryScanner(config *recovery.RecoveryConfig) error {
+	if pm.recoveryManager == nil {
+		pm.recoveryManager = recovery.NewRecoveryManager(pm.repositoryManager, config)
+	}
+	
+	// Create recovery function that wraps RunExecution
+	recoveryFunc := func(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
+		return pm.RunExecution(ctx, execCtx.Input, execCtx)
+	}
+	
+	return pm.recoveryManager.StartBackgroundScanner(recoveryFunc)
+}
+
+// StopRecoveryScanner stops the background recovery scanner
+func (pm *StateMachine) StopRecoveryScanner() error {
+	if pm.recoveryManager == nil {
+		return nil
+	}
+	return pm.recoveryManager.StopBackgroundScanner()
 }
 
 func (pm *StateMachine) GetStartAt() string {

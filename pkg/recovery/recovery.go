@@ -96,37 +96,26 @@ func (rm *RecoveryManager) FindOrphanedExecutions(ctx context.Context) ([]*Orpha
 		return []*OrphanedExecution{}, nil
 	}
 
-	// Build filter for RUNNING executions
-	filter := &repository.ExecutionFilter{
-		Status:       "RUNNING",
-		StateMachineID: rm.config.StateMachineID,
-	}
-
-	executions, err := rm.repositoryManager.ListExecutions(ctx, filter)
+	// Use repository method to find orphaned executions
+	executions, err := rm.repositoryManager.FindOrphanedExecutions(ctx, rm.config.StateMachineID, rm.config.OrphanedThreshold)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list executions: %w", err)
+		return nil, fmt.Errorf("failed to find orphaned executions: %w", err)
 	}
 
 	now := time.Now()
 	var orphaned []*OrphanedExecution
 
 	for _, exec := range executions {
-		// Check if execution has been running longer than the threshold
-		if exec.StartTime != nil {
-			duration := now.Sub(*exec.StartTime)
-			if duration > rm.config.OrphanedThreshold {
-				orphaned = append(orphaned, &OrphanedExecution{
-					ExecutionID:    exec.ExecutionID,
-					StateMachineID: exec.StateMachineID,
-					CurrentState:   exec.CurrentState,
-					Status:         exec.Status,
-					StartTime:      *exec.StartTime,
-					LastUpdateTime: exec.UpdatedAt,
-					Duration:       duration,
-					RecoveryMetadata: exec.RecoveryMetadata,
-				})
-			}
-		}
+		orphaned = append(orphaned, &OrphanedExecution{
+			ExecutionID:    exec.ExecutionID,
+			StateMachineID: exec.StateMachineID,
+			CurrentState:   exec.CurrentState,
+			Status:         exec.Status,
+			StartTime:      *exec.StartTime,
+			LastUpdateTime: exec.UpdatedAt,
+			Duration:       now.Sub(*exec.StartTime),
+			RecoveryMetadata: exec.RecoveryMetadata,
+		})
 	}
 
 	return orphaned, nil
