@@ -24,6 +24,8 @@ type ExecutionRecord struct {
 	Metadata              map[string]interface{} `json:"metadata,omitempty"`
 	HistorySequenceNumber int                    `json:"history_sequence_number"`
 	RecoveryMetadata      *RecoveryMetadata      `json:"recovery_metadata,omitempty"`
+	CreatedAt             time.Time              `json:"created_at,omitempty"`
+	UpdatedAt             time.Time              `json:"updated_at,omitempty"`
 }
 
 // RecoveryMetadata represents recovery-related data for crash-resilient execution

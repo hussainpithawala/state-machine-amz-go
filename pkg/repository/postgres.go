@@ -1650,7 +1650,7 @@ func (ps *PostgresRepository) scanExecutionRows(rows *sql.Rows) ([]*ExecutionRec
 
 func (ps *PostgresRepository) scanSingleExecution(rows *sql.Rows) (*ExecutionRecord, error) {
 	var exec ExecutionRecord
-	var inputJSON, outputJSON, metadataJSON []byte
+	var inputJSON, outputJSON, metadataJSON, recoveryMetadataJSON []byte
 	var endTime sql.NullTime
 	var errorMsg sql.NullString
 
@@ -1666,6 +1666,7 @@ func (ps *PostgresRepository) scanSingleExecution(rows *sql.Rows) (*ExecutionRec
 		&exec.CurrentState,
 		&errorMsg,
 		&metadataJSON,
+		&recoveryMetadataJSON,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan execution: %w", err)
@@ -1673,6 +1674,14 @@ func (ps *PostgresRepository) scanSingleExecution(rows *sql.Rows) (*ExecutionRec
 
 	if err := ps.unmarshalExecutionJSON(&exec, inputJSON, outputJSON, metadataJSON); err != nil {
 		return nil, err
+	}
+
+	if recoveryMetadataJSON != nil && len(recoveryMetadataJSON) > 0 {
+		var recoveryMeta RecoveryMetadata
+		if err := json.Unmarshal(recoveryMetadataJSON, &recoveryMeta); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal recovery metadata: %w", err)
+		}
+		exec.RecoveryMetadata = &recoveryMeta
 	}
 
 	if endTime.Valid {
@@ -1878,10 +1887,7 @@ func (ps *PostgresRepository) FindOrphanedExecutions(ctx context.Context, stateM
 			current_state,
 			error,
 			metadata,
-			history_sequence_number,
-			recovery_metadata,
-			created_at,
-			updated_at
+			recovery_metadata
 		FROM executions
 		WHERE status = $1
 		  AND start_time < $2
@@ -1903,17 +1909,9 @@ func (ps *PostgresRepository) FindOrphanedExecutions(ctx context.Context, stateM
 	}
 	defer rows.Close()
 
-	var executions []*ExecutionRecord
-	for rows.Next() {
-		record := &ExecutionRecord{}
-		if err := ps.scanExecutionRecord(rows, record); err != nil {
-			return nil, fmt.Errorf("failed to scan execution record: %w", err)
-		}
-		executions = append(executions, record)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating execution records: %w", err)
+	executions, err := ps.scanExecutionRows(rows)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan execution rows: %w", err)
 	}
 
 	return executions, nil
