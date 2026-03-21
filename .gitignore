@@ -51,3 +51,6 @@ build
 /redis/
 
 pkg/.DS_Storecrash_recovery
+
+crash_recovery
+crash_recovery_batch
