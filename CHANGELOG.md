@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.14] - 2026-03-21
+
+### Added
+- **Crash-Resilient Execution Recovery**: Complete mechanism for automatic recovery from crashes and failures
+  - Added `RecoveryMetadata` struct to track recovery state in executions
+  - Added `RecoveryManager` with background scanner for orphaned executions
+  - Support for multiple recovery strategies: `RETRY`, `SKIP`, `FAIL`, `PAUSE`
+  - Configurable recovery thresholds and attempt limits
+  - Automatic detection of executions stuck in `RUNNING` status
+
+- **Repository Support for Recovery**
+  - Added `FindOrphanedExecutions()` method to repository interface
+  - Implemented in both `GormPostgresRepository` and `PostgresRepository`
+  - Extended `ExecutionRecord` and `ExecutionModel` with recovery metadata fields
+  - Added `CreatedAt` and `UpdatedAt` timestamp fields
+
+- **Persistent State Machine Integration**
+  - Added `SetRecoveryManager()` and `StartRecoveryScanner()` methods
+  - Automatic recovery metadata updates after each successful state execution
+  - Background scanner for detecting and recovering orphaned executions
+  - Graceful shutdown support with `StopRecoveryScanner()`
+
+- **Comprehensive Examples**
+  - **Single Execution Recovery** (`examples/crash_recovery/`): Demonstrates crash and recovery of individual executions
+  - **Batch/Micro-Batch Recovery** (`examples/crash_recovery_batch/`): Shows recovery with barrier synchronization and orchestrator resumption
+
+- **Documentation**
+  - Added `CRASH_RECOVERY_GUIDE.md` with comprehensive architecture, usage, and troubleshooting guide
+  - Example READMEs with detailed scenarios and best practices
+
+### Changed
+- **Execution Model**: Extended `Execution` struct with `RecoveryMetadata` field
+- **State Machine Execution**: `RunExecution()` now updates recovery metadata after each successful state
+- **Database Schema**: Added `recovery_metadata` JSONB column to executions table
+
+### Fixed
+- **Linter Issues**: Addressed all golangci-lint warnings (errcheck, staticcheck, prealloc, etc.)
+- **Batch Example**: Fixed orchestrator definition loading order
+- **Gitignore**: Corrected malformed entries for crash_recovery binaries
+
+### Technical Details
+- **New Package**: `pkg/recovery/recovery.go` (405 lines)
+- **Lines Added**: ~1,900+ (including examples and documentation)
+- **Files Modified**: 15+ files across core, repository, and examples
+
+### Breaking Changes
+- **Database Migration Required**: Execute the following SQL to add recovery metadata support:
+  ```sql
+  ALTER TABLE executions 
+  ADD COLUMN recovery_metadata JSONB DEFAULT '{}';
+  
+  ALTER TABLE executions 
+  ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+  
+  ALTER TABLE executions 
+  ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+  ```
+
 ## [1.2.13] - 2026-03-20
 
 ### Changed

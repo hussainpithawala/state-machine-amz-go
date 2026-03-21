@@ -28,6 +28,7 @@ A powerful, production-ready state machine implementation for Go that's fully co
 - 📊 **Execution History** - Complete audit trail with state-by-state tracking
 - 🧪 **Test-Friendly** - Easy mocking and comprehensive testing support
 - 🔌 **Pluggable Storage** - Support for multiple persistence backends (PostgreSQL, GORM, In-Memory)
+- ♻️ **Crash-Resilient Recovery** - Automatic detection and recovery from crashes with configurable strategies (NEW in v1.2.14)
 
 ## 📦 Installation
 
@@ -828,6 +829,165 @@ log.Printf("Progress: %d processed, %d failed (%.2f%% failure rate)",
 
 **[📖 Bulk Orchestration Example](examples/micro-bulk-orchestration/main.go)** (721 lines)
 
+### Crash-Resilient Recovery (NEW v1.2.14)
+
+Automatically recover from crashes, infrastructure failures, and resource exhaustion!
+
+**Key Features:**
+- ♻️ **Automatic Recovery** - Detect and resume orphaned executions without manual intervention
+- 📊 **Recovery Metadata** - Track last successful state and output for precise resumption
+- 🎯 **Configurable Strategies** - Choose from RETRY, SKIP, FAIL, or PAUSE recovery modes
+- ⏱️ **Background Scanner** - Periodic detection of stuck executions with configurable thresholds
+- 🔒 **Attempt Limiting** - Prevent infinite loops with max recovery attempt enforcement
+- 🎛️ **Batch Recovery** - Special handling for micro-batch orchestrations with barrier synchronization
+
+**1. Enable Recovery Scanner:**
+
+```go
+import (
+    "github.com/hussainpithawala/state-machine-amz-go/pkg/recovery"
+    "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine/persistent"
+)
+
+// Create persistent state machine
+sm, err := persistent.New(definition, true, "my-sm", repositoryManager)
+
+// Configure recovery
+recoveryConfig := &recovery.RecoveryConfig{
+    Enabled: true,
+    ScanInterval: 30 * time.Second,        // How often to scan
+    OrphanedThreshold: 5 * time.Minute,    // When to consider orphaned
+    DefaultRecoveryStrategy: recovery.StrategyRetry,
+    DefaultMaxRecoveryAttempts: 3,
+}
+
+// Start recovery scanner
+err = sm.StartRecoveryScanner(recoveryConfig)
+defer sm.StopRecoveryScanner()
+```
+
+**2. Recovery Strategies:**
+
+| Strategy | Behavior | Use Case |
+|----------|----------|----------|
+| `RETRY` | Re-execute from last successful state | Default, idempotent operations |
+| `SKIP` | Skip problematic state | Non-critical states |
+| `FAIL` | Mark as failed after max attempts | Critical data integrity |
+| `PAUSE` | Pause for manual intervention | Requires human review |
+
+**3. How It Works:**
+
+```
+Normal Execution:
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  State A ✓  │────▶│  State B 💥 │     │  State C    │
+└─────────────┘     └─────────────┘     └─────────────┘
+      │                   │                   │
+      ▼                   ▼                   ▼
+Recovery Metadata    CRASH!              Never reached
+Last: State A
+Output: {...}
+
+Recovery Flow:
+┌──────────────────────────────────────────────────────┐
+│              Recovery Scanner                        │
+│  1. Find RUNNING executions > threshold             │
+│  2. Load last successful state & output             │
+│  3. Resume execution from checkpoint                │
+│  4. Update recovery attempt count                   │
+└──────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  State A ✓  │────▶│  State B ✓  │────▶│  State C ✓  │
+└─────────────┘     └─────────────┘     └─────────────┘
+      │                   │                   │
+      ▼                   ▼                   ▼
+ From metadata      Re-executed        Continue to
+ (no re-exec)       (idempotent)       completion
+```
+
+**4. Batch/Micro-Batch Recovery:**
+
+```go
+// Batch orchestration with automatic recovery
+orchestrator, _ := batch.NewOrchestrator(ctx, redisClient, parentSM, ...)
+
+// Recovery scanner handles both orchestrator and workers
+err := orchestratorSM.StartRecoveryScanner(recoveryConfig)
+
+// Critical: Recovered workers properly signal barrier
+// Orchestrator resumes when barrier completes
+```
+
+**Architecture:**
+```
+┌────────────────────────────────────────────────────────────┐
+│                   PostgreSQL Database                      │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │ Orchestrator │  │   Worker 1   │  │   Worker 2   │     │
+│  │   (PAUSED)   │  │  (SUCCEEDED) │  │  (ORPHANED)  │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└────────────────────────┬───────────────────────────────────┘
+                         │
+                         ▼
+┌────────────────────────────────────────────────────────────┐
+│                      Redis                                 │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │ Barrier: batch:barrier:mb-0 = 2 (stuck)            │   │
+│  └────────────────────────────────────────────────────┘   │
+└────────────────────────┬───────────────────────────────────┘
+                         │
+                         ▼
+┌────────────────────────────────────────────────────────────┐
+│                  Recovery Scanner                          │
+│  1. Find orphaned executions (RUNNING > threshold)        │
+│  2. Resume workers from last successful state             │
+│  3. Workers complete → decrement barrier                  │
+│  4. Last worker signals orchestrator                      │
+│  5. Orchestrator resumes and dispatches next micro-batch  │
+└────────────────────────────────────────────────────────────┘
+```
+
+**5. Database Migration:**
+
+```sql
+-- Add recovery metadata columns (required)
+ALTER TABLE executions 
+ADD COLUMN recovery_metadata JSONB DEFAULT '{}';
+
+ALTER TABLE executions 
+ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+
+ALTER TABLE executions 
+ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+
+-- Add index for efficient orphan detection
+CREATE INDEX idx_executions_status_start_time 
+ON executions(status, start_time) 
+WHERE status = 'RUNNING';
+```
+
+**Use Cases:**
+- **Infrastructure Failures**: Application crashes, database interruptions, network partitions
+- **Resource Exhaustion**: Out of memory, disk space, CPU throttling
+- **Long-Running Workflows**: Multi-hour/day executions, human-in-the-loop pauses
+- **Batch Processing**: Worker crashes, orchestrator failures, queue interruptions
+
+**Components:**
+
+| Component | Purpose | Lines of Code |
+|-----------|---------|---------------|
+| `RecoveryManager` | Orchestration and scanning | 405 |
+| `RecoveryMetadata` | State tracking | 50 |
+| `RecoveryConfig` | Configuration | 40 |
+
+**[📖 Single Execution Example](examples/crash_recovery/main.go)** (474 lines - fully runnable)
+
+**[📖 Batch Recovery Example](examples/crash_recovery_batch/main.go)** (590 lines)
+
+**[📖 Comprehensive Guide](CRASH_RECOVERY_GUIDE.md)** (479 lines)
+
 ## 📊 Execution Tracking
 
 ### Query Execution History
@@ -1008,6 +1168,7 @@ Get Execution with History  | 3.2ms     | 2.8ms     | 0.03ms
 - [x] Micro-Batch Orchestration - Streaming batch processing with adaptive control
 - [x] Bulk Orchestration - Large-scale batch operations
 - [x] Orchestrator Registry - App-level orchestrator management
+- [x] Crash-Resilient Recovery - Automatic detection and recovery from crashes (v1.2.14)
 - [ ] Visual workflow builder
 - [ ] DynamoDB persistence backend
 - [ ] Web dashboard for monitoring
