@@ -103,7 +103,7 @@ func (rm *RecoveryManager) FindOrphanedExecutions(ctx context.Context) ([]*Orpha
 	}
 
 	now := time.Now()
-	var orphaned []*OrphanedExecution
+	orphaned := make([]*OrphanedExecution, 0, len(executions))
 
 	for _, exec := range executions {
 		orphaned = append(orphaned, &OrphanedExecution{
