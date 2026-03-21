@@ -50,4 +50,4 @@ build
 /docker-examples/redis/tls/redis.key
 /redis/
 
-pkg/.DS_Store
+pkg/.DS_Storecrash_recovery
