@@ -51,3 +51,7 @@ build
 /redis/
 
 pkg/.DS_Store
+
+# Compiled binaries (examples)
+crash_recovery
+crash_recovery_batch

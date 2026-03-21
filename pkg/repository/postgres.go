@@ -1650,7 +1650,7 @@ func (ps *PostgresRepository) scanExecutionRows(rows *sql.Rows) ([]*ExecutionRec
 
 func (ps *PostgresRepository) scanSingleExecution(rows *sql.Rows) (*ExecutionRecord, error) {
 	var exec ExecutionRecord
-	var inputJSON, outputJSON, metadataJSON []byte
+	var inputJSON, outputJSON, metadataJSON, recoveryMetadataJSON []byte
 	var endTime sql.NullTime
 	var errorMsg sql.NullString
 
@@ -1666,6 +1666,7 @@ func (ps *PostgresRepository) scanSingleExecution(rows *sql.Rows) (*ExecutionRec
 		&exec.CurrentState,
 		&errorMsg,
 		&metadataJSON,
+		&recoveryMetadataJSON,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan execution: %w", err)
@@ -1673,6 +1674,14 @@ func (ps *PostgresRepository) scanSingleExecution(rows *sql.Rows) (*ExecutionRec
 
 	if err := ps.unmarshalExecutionJSON(&exec, inputJSON, outputJSON, metadataJSON); err != nil {
 		return nil, err
+	}
+
+	if len(recoveryMetadataJSON) > 0 {
+		var recoveryMeta RecoveryMetadata
+		if err := json.Unmarshal(recoveryMetadataJSON, &recoveryMeta); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal recovery metadata: %w", err)
+		}
+		exec.RecoveryMetadata = &recoveryMeta
 	}
 
 	if endTime.Valid {
@@ -1859,6 +1868,55 @@ func (b *nonLinkedExecutionsQueryBuilder) addSubqueryCondition(conditions *[]str
 		b.args = append(b.args, value)
 		b.argPos++
 	}
+}
+
+// FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold
+func (ps *PostgresRepository) FindOrphanedExecutions(ctx context.Context, stateMachineID string, threshold time.Duration) ([]*ExecutionRecord, error) {
+	cutoffTime := time.Now().Add(-threshold)
+
+	query := `
+		SELECT 
+			execution_id,
+			state_machine_id,
+			name,
+			input,
+			output,
+			status,
+			start_time,
+			end_time,
+			current_state,
+			error,
+			metadata,
+			recovery_metadata
+		FROM executions
+		WHERE status = $1
+		  AND start_time < $2
+	`
+	args := []interface{}{StatusRunning, cutoffTime}
+
+	if stateMachineID != "" {
+		query += " AND state_machine_id = $3"
+		args = append(args, stateMachineID)
+	}
+
+	query += " ORDER BY start_time ASC"
+
+	rows, err := ps.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query orphaned executions: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("Warning: failed to close rows: %v\n", err)
+		}
+	}()
+
+	executions, err := ps.scanExecutionRows(rows)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan execution rows: %w", err)
+	}
+
+	return executions, nil
 }
 
 // The rest of the builder methods as defined above...

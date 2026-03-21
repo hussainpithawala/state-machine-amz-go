@@ -23,6 +23,20 @@ type ExecutionRecord struct {
 	Error                 string                 `json:"error,omitempty"`
 	Metadata              map[string]interface{} `json:"metadata,omitempty"`
 	HistorySequenceNumber int                    `json:"history_sequence_number"`
+	RecoveryMetadata      *RecoveryMetadata      `json:"recovery_metadata,omitempty"`
+	CreatedAt             time.Time              `json:"created_at,omitempty"`
+	UpdatedAt             time.Time              `json:"updated_at,omitempty"`
+}
+
+// RecoveryMetadata represents recovery-related data for crash-resilient execution
+type RecoveryMetadata struct {
+	LastSuccessfulState         string                 `json:"last_successful_state,omitempty"`
+	LastSuccessfulStateOutput   interface{}            `json:"last_successful_state_output,omitempty"`
+	RecoveryAttemptCount        int                    `json:"recovery_attempt_count"`
+	LastRecoveryAttemptAt       *time.Time             `json:"last_recovery_attempt_at,omitempty"`
+	MaxRecoveryAttempts         int                    `json:"max_recovery_attempts,omitempty"`
+	RecoveryStrategy            string                 `json:"recovery_strategy,omitempty"`
+	CrashDetectedAt             *time.Time             `json:"crash_detected_at,omitempty"`
 }
 
 // StateHistoryRecord represents a single state execution in history
@@ -148,6 +162,19 @@ func (pm *Manager) SaveExecution(ctx context.Context, exec *execution.Execution)
 		record.Error = exec.Error.Error()
 	}
 
+	// Convert execution.RecoveryMetadata to repository.RecoveryMetadata
+	if exec.RecoveryMetadata != nil {
+		record.RecoveryMetadata = &RecoveryMetadata{
+			LastSuccessfulState:       exec.RecoveryMetadata.LastSuccessfulState,
+			LastSuccessfulStateOutput: exec.RecoveryMetadata.LastSuccessfulStateOutput,
+			RecoveryAttemptCount:      exec.RecoveryMetadata.RecoveryAttemptCount,
+			LastRecoveryAttemptAt:     exec.RecoveryMetadata.LastRecoveryAttemptAt,
+			MaxRecoveryAttempts:       exec.RecoveryMetadata.MaxRecoveryAttempts,
+			RecoveryStrategy:          exec.RecoveryMetadata.RecoveryStrategy,
+			CrashDetectedAt:           exec.RecoveryMetadata.CrashDetectedAt,
+		}
+	}
+
 	return pm.repository.SaveExecution(ctx, record)
 }
 
@@ -248,6 +275,11 @@ func (pm *Manager) ListLinkedExecutions(ctx context.Context, filter *LinkedExecu
 // CountLinkedExecutions returns the count of linked executions matching the filter
 func (pm *Manager) CountLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) (int64, error) {
 	return pm.repository.CountLinkedExecutions(ctx, filter)
+}
+
+// FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold
+func (pm *Manager) FindOrphanedExecutions(ctx context.Context, stateMachineID string, threshold time.Duration) ([]*ExecutionRecord, error) {
+	return pm.repository.FindOrphanedExecutions(ctx, stateMachineID, threshold)
 }
 
 // Helper function to generate unique history IDs

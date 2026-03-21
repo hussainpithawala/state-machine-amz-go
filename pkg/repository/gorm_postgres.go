@@ -1243,3 +1243,31 @@ func (r *GormPostgresRepository) GetExecutionOutput(ctx context.Context, executi
 
 	return fromJSONB(stateHistory.Output), nil
 }
+
+// FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold
+func (r *GormPostgresRepository) FindOrphanedExecutions(ctx context.Context, stateMachineID string, threshold time.Duration) ([]*ExecutionRecord, error) {
+	cutoffTime := time.Now().Add(-threshold)
+
+	query := r.db.WithContext(ctx).
+		Model(&ExecutionModel{}).
+		Where("status = ?", StatusRunning).
+		Where("start_time < ?", cutoffTime)
+
+	if stateMachineID != "" {
+		query = query.Where("state_machine_id = ?", stateMachineID)
+	}
+
+	var models []ExecutionModel
+	result := query.Order("start_time ASC").Find(&models)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to find orphaned executions: %w", result.Error)
+	}
+
+	executions := make([]*ExecutionRecord, len(models))
+	for i := range models {
+		model := models[i]
+		executions[i] = fromExecutionModel(&model)
+	}
+
+	return executions, nil
+}

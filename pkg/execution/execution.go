@@ -25,6 +25,27 @@ type Execution struct {
 	History               []StateHistory
 	HistorySequenceNumber int
 	Metadata              map[string]interface{}
+	
+	// Recovery-related fields for crash-resilient execution
+	RecoveryMetadata      *RecoveryMetadata
+}
+
+// RecoveryMetadata holds information needed for crash recovery
+type RecoveryMetadata struct {
+	// LastSuccessfulState is the name of the last successfully completed state
+	LastSuccessfulState string `json:"last_successful_state,omitempty"`
+	// LastSuccessfulStateOutput is the output from the last successful state
+	LastSuccessfulStateOutput interface{} `json:"last_successful_state_output,omitempty"`
+	// RecoveryAttemptCount tracks how many times recovery has been attempted
+	RecoveryAttemptCount int `json:"recovery_attempt_count"`
+	// LastRecoveryAttemptAt tracks when the last recovery was attempted
+	LastRecoveryAttemptAt *time.Time `json:"last_recovery_attempt_at,omitempty"`
+	// MaxRecoveryAttempts is the maximum number of recovery attempts allowed
+	MaxRecoveryAttempts int `json:"max_recovery_attempts,omitempty"`
+	// RecoveryStrategy is the strategy to use for recovery (e.g., "RETRY", "SKIP", "FAIL")
+	RecoveryStrategy string `json:"recovery_strategy,omitempty"`
+	// CrashDetectedAt is when the crash was detected
+	CrashDetectedAt *time.Time `json:"crash_detected_at,omitempty"`
 }
 
 // MarkFailed marks the execution as failed with the given error.
@@ -146,6 +167,76 @@ func (e *Execution) GetDuration() time.Duration {
 func (e *Execution) IsComplete() bool {
 	return e.Status == "SUCCEEDED" || e.Status == "FAILED" ||
 		e.Status == "TIMED_OUT" || e.Status == "ABORTED"
+}
+
+// UpdateRecoveryMetadata updates the recovery metadata after a successful state execution
+func (e *Execution) UpdateRecoveryMetadata(stateName string, output interface{}) {
+	if e.RecoveryMetadata == nil {
+		e.RecoveryMetadata = &RecoveryMetadata{}
+	}
+	e.RecoveryMetadata.LastSuccessfulState = stateName
+	e.RecoveryMetadata.LastSuccessfulStateOutput = output
+}
+
+// MarkRecoveryAttempt increments the recovery attempt counter
+func (e *Execution) MarkRecoveryAttempt() {
+	if e.RecoveryMetadata == nil {
+		e.RecoveryMetadata = &RecoveryMetadata{
+			MaxRecoveryAttempts: 3, // Default to 3 attempts
+			RecoveryStrategy:    "RETRY",
+		}
+	}
+	e.RecoveryMetadata.RecoveryAttemptCount++
+	now := time.Now()
+	e.RecoveryMetadata.LastRecoveryAttemptAt = &now
+}
+
+// CanRecover checks if recovery is still possible based on attempt count
+func (e *Execution) CanRecover() bool {
+	if e.RecoveryMetadata == nil {
+		return true // No metadata means no limits set, allow recovery
+	}
+	
+	maxAttempts := e.RecoveryMetadata.MaxRecoveryAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3 // Default
+	}
+	
+	return e.RecoveryMetadata.RecoveryAttemptCount < maxAttempts
+}
+
+// GetRecoveryInput returns the appropriate input for recovery
+func (e *Execution) GetRecoveryInput() interface{} {
+	if e.RecoveryMetadata != nil && e.RecoveryMetadata.LastSuccessfulStateOutput != nil {
+		return e.RecoveryMetadata.LastSuccessfulStateOutput
+	}
+	return e.Input
+}
+
+// PrepareForRecovery initializes recovery metadata if not present
+func (e *Execution) PrepareForRecovery(maxAttempts int, strategy string) {
+	if e.RecoveryMetadata == nil {
+		e.RecoveryMetadata = &RecoveryMetadata{
+			MaxRecoveryAttempts: maxAttempts,
+			RecoveryStrategy:    strategy,
+		}
+	} else {
+		if maxAttempts > 0 {
+			e.RecoveryMetadata.MaxRecoveryAttempts = maxAttempts
+		}
+		if strategy != "" {
+			e.RecoveryMetadata.RecoveryStrategy = strategy
+		}
+	}
+}
+
+// MarkCrashDetected records when a crash was detected
+func (e *Execution) MarkCrashDetected() {
+	if e.RecoveryMetadata == nil {
+		e.RecoveryMetadata = &RecoveryMetadata{}
+	}
+	now := time.Now()
+	e.RecoveryMetadata.CrashDetectedAt = &now
 }
 
 // ToMap converts execution to map for serialization

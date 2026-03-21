@@ -74,6 +74,7 @@ type ExecutionModel struct {
 	Error                 string    `gorm:"type:text"`
 	Metadata              JSONB     `gorm:"type:jsonb;default:'{}'"`
 	HistorySequenceNumber int       `gorm:"not null;default:0;index:idx_history_sequence_number"`
+	RecoveryMetadata      JSONB     `gorm:"type:jsonb;default:'{}'"`
 	CreatedAt             time.Time `gorm:"autoCreateTime"`
 	UpdatedAt             time.Time `gorm:"autoUpdateTime"`
 }
