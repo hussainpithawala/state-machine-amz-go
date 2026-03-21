@@ -50,7 +50,8 @@ build
 /docker-examples/redis/tls/redis.key
 /redis/
 
-pkg/.DS_Storecrash_recovery
+pkg/.DS_Store
 
+# Compiled binaries (examples)
 crash_recovery
 crash_recovery_batch

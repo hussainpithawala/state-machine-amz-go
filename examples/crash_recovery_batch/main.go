@@ -104,6 +104,12 @@ func main() {
 	if setupErr != nil {
 		log.Fatalf("Failed to setup state machines: %v", setupErr) //nolint:gocritic // Fatal error during initialization
 	}
+
+	// Save orchestrator definitions to repository (required before loading)
+	if err := saveOrchestratorDefinitions(ctx, persistenceManager); err != nil {
+		log.Fatalf("Failed to save orchestrator definitions: %v", err)
+	}
+
 	// Note: Recovery scanner will be stopped when program exits
 
 	fmt.Println("=== Phase 1: Creating Source Executions ===")
@@ -554,4 +560,30 @@ func cleanupPreviousRun(ctx context.Context, pm *repository.Manager, rdb *redis.
 // Helper functions
 func ptrTime(t time.Time) *time.Time {
 	return &t
+}
+
+// saveOrchestratorDefinitions saves the orchestrator state machine definitions to the repository
+func saveOrchestratorDefinitions(ctx context.Context, pm *repository.Manager) error {
+	// Save micro-batch orchestrator definition
+	mbSM, err := persistent.New(batch.OrchestratorDefinitionJSON(), true, batch.OrchestratorStateMachineID, pm)
+	if err != nil {
+		return fmt.Errorf("failed to create micro-batch orchestrator: %w", err)
+	}
+	if err := mbSM.SaveDefinition(ctx); err != nil {
+		return fmt.Errorf("failed to save micro-batch orchestrator: %w", err)
+	}
+
+	// Save bulk orchestrator definition
+	bulkSM, err := persistent.New(batch.BulkOrchestratorDefinitionJSON(), true, batch.BulkOrchestratorStateMachineID, pm)
+	if err != nil {
+		return fmt.Errorf("failed to create bulk orchestrator: %w", err)
+	}
+	if err := bulkSM.SaveDefinition(ctx); err != nil {
+		return fmt.Errorf("failed to save bulk orchestrator: %w", err)
+	}
+
+	fmt.Println("Orchestrator definitions saved:")
+	fmt.Printf("  - Micro-batch: %s\n", batch.OrchestratorStateMachineID)
+	fmt.Printf("  - Bulk: %s\n", batch.BulkOrchestratorStateMachineID)
+	return nil
 }
