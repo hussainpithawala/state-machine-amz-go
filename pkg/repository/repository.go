@@ -23,6 +23,18 @@ type ExecutionRecord struct {
 	Error                 string                 `json:"error,omitempty"`
 	Metadata              map[string]interface{} `json:"metadata,omitempty"`
 	HistorySequenceNumber int                    `json:"history_sequence_number"`
+	RecoveryMetadata      *RecoveryMetadata      `json:"recovery_metadata,omitempty"`
+}
+
+// RecoveryMetadata represents recovery-related data for crash-resilient execution
+type RecoveryMetadata struct {
+	LastSuccessfulState         string                 `json:"last_successful_state,omitempty"`
+	LastSuccessfulStateOutput   interface{}            `json:"last_successful_state_output,omitempty"`
+	RecoveryAttemptCount        int                    `json:"recovery_attempt_count"`
+	LastRecoveryAttemptAt       *time.Time             `json:"last_recovery_attempt_at,omitempty"`
+	MaxRecoveryAttempts         int                    `json:"max_recovery_attempts,omitempty"`
+	RecoveryStrategy            string                 `json:"recovery_strategy,omitempty"`
+	CrashDetectedAt             *time.Time             `json:"crash_detected_at,omitempty"`
 }
 
 // StateHistoryRecord represents a single state execution in history
@@ -146,6 +158,19 @@ func (pm *Manager) SaveExecution(ctx context.Context, exec *execution.Execution)
 
 	if exec.Error != nil {
 		record.Error = exec.Error.Error()
+	}
+
+	// Convert execution.RecoveryMetadata to repository.RecoveryMetadata
+	if exec.RecoveryMetadata != nil {
+		record.RecoveryMetadata = &RecoveryMetadata{
+			LastSuccessfulState:       exec.RecoveryMetadata.LastSuccessfulState,
+			LastSuccessfulStateOutput: exec.RecoveryMetadata.LastSuccessfulStateOutput,
+			RecoveryAttemptCount:      exec.RecoveryMetadata.RecoveryAttemptCount,
+			LastRecoveryAttemptAt:     exec.RecoveryMetadata.LastRecoveryAttemptAt,
+			MaxRecoveryAttempts:       exec.RecoveryMetadata.MaxRecoveryAttempts,
+			RecoveryStrategy:          exec.RecoveryMetadata.RecoveryStrategy,
+			CrashDetectedAt:           exec.RecoveryMetadata.CrashDetectedAt,
+		}
 	}
 
 	return pm.repository.SaveExecution(ctx, record)
