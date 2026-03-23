@@ -30,13 +30,13 @@ type ExecutionRecord struct {
 
 // RecoveryMetadata represents recovery-related data for crash-resilient execution
 type RecoveryMetadata struct {
-	LastSuccessfulState         string                 `json:"last_successful_state,omitempty"`
-	LastSuccessfulStateOutput   interface{}            `json:"last_successful_state_output,omitempty"`
-	RecoveryAttemptCount        int                    `json:"recovery_attempt_count"`
-	LastRecoveryAttemptAt       *time.Time             `json:"last_recovery_attempt_at,omitempty"`
-	MaxRecoveryAttempts         int                    `json:"max_recovery_attempts,omitempty"`
-	RecoveryStrategy            string                 `json:"recovery_strategy,omitempty"`
-	CrashDetectedAt             *time.Time             `json:"crash_detected_at,omitempty"`
+	LastSuccessfulState       string      `json:"last_successful_state,omitempty"`
+	LastSuccessfulStateOutput interface{} `json:"last_successful_state_output,omitempty"`
+	RecoveryAttemptCount      int         `json:"recovery_attempt_count"`
+	LastRecoveryAttemptAt     *time.Time  `json:"last_recovery_attempt_at,omitempty"`
+	MaxRecoveryAttempts       int         `json:"max_recovery_attempts,omitempty"`
+	RecoveryStrategy          string      `json:"recovery_strategy,omitempty"`
+	CrashDetectedAt           *time.Time  `json:"crash_detected_at,omitempty"`
 }
 
 // StateHistoryRecord represents a single state execution in history
@@ -229,6 +229,11 @@ func (pm *Manager) SaveStateHistory(ctx context.Context, executionInstance *exec
 // GetExecution retrieves an execution
 func (pm *Manager) GetExecution(ctx context.Context, executionID string) (*ExecutionRecord, error) {
 	return pm.repository.GetExecution(ctx, executionID)
+}
+
+// GetExecutionByName retrieves an execution by name
+func (pm *Manager) GetExecutionByName(ctx context.Context, stateMachineID, name string) (*ExecutionRecord, error) {
+	return pm.repository.GetExecutionByName(ctx, stateMachineID, name)
 }
 
 // GetStateHistory retrieves state history

@@ -122,7 +122,7 @@ test-examples: docker-up ## Run example programs
 	DATABASE_URL_GORM=$(DATABASE_URL_GORM) \
 	REDIS_PASSWORD=$(REDIS_PASSWORD) \
 	REDIS_ADDRESS=$(REDIS_ADDRESS)
-	 find examples -maxdepth 2 -type f ! -path '*/distributed_queue/*' ! -path '*/message_timeout_complete/*' ! -path '*/test_tls_conn/*' ! -path '*/test_secure_redis/*' -name "*.go" -print0 | xargs -0 -n1 go run
+	 ./test_examples.sh
 	@$(MAKE) docker-down
 
 install-lint: ## Install golangci-lint if not present

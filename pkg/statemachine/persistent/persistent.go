@@ -123,6 +123,16 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 	}
 
 	execCtx.HistorySequenceNumber = 0
+
+	// Check if execution with the same name already exists (before persisting)
+	// Only check when a custom name is explicitly provided (not auto-generated)
+	// Auto-generated names include timestamps and are naturally unique
+	if pm.repositoryManager != nil && execCtx.Name != "" && config.Name != "" {
+		if _, err := pm.repositoryManager.GetExecutionByName(ctx, pm.stateMachineID, execCtx.Name); err == nil {
+			return nil, fmt.Errorf("execution with name '%s' already exists for state machine '%s'", execCtx.Name, pm.stateMachineID)
+		}
+	}
+
 	// Save initial execution state if repositoryManager is enabled
 	pm.persistExecution(ctx, execCtx)
 
@@ -395,7 +405,7 @@ func saveHistory(ctx context.Context, execCtx *execution.Execution, sm *StateMac
 // persistExecution is a helper to persist execution state
 func (pm *StateMachine) persistExecution(ctx context.Context, execCtx *execution.Execution) {
 	if err := pm.repositoryManager.SaveExecution(ctx, execCtx); err != nil {
-		fmt.Printf("Warning: failed to persist final execution state: %v\n", err)
+		fmt.Printf("Warning: failed to persist execution state: %v\n", err)
 	}
 }
 
@@ -642,12 +652,12 @@ func (pm *StateMachine) StartRecoveryScanner(config *recovery.RecoveryConfig) er
 	if pm.recoveryManager == nil {
 		pm.recoveryManager = recovery.NewRecoveryManager(pm.repositoryManager, config)
 	}
-	
+
 	// Create recovery function that wraps RunExecution
 	recoveryFunc := func(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
 		return pm.RunExecution(ctx, execCtx.Input, execCtx)
 	}
-	
+
 	return pm.recoveryManager.StartBackgroundScanner(recoveryFunc)
 }
 

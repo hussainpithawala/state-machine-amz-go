@@ -46,7 +46,7 @@ func NewExecutionTask(payload *ExecutionTaskPayload) (*asynq.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	return asynq.NewTask(TypeExecutionTask, data), nil
+	return asynq.NewTask(TypeExecutionTask, data, asynq.TaskID(payload.ExecutionName)), nil
 }
 
 // NewTimeoutTask creates a new asynq task for timeout boundary event

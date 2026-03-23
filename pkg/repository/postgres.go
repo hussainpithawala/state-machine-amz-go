@@ -204,7 +204,8 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_executions_state_machine ON executions(state_machine_id, start_time DESC);
 	CREATE INDEX IF NOT EXISTS idx_executions_end_time ON executions(end_time DESC) WHERE end_time IS NOT NULL;
 	CREATE INDEX IF NOT EXISTS idx_executions_name ON executions(name) WHERE name IS NOT NULL;
-	
+	CREATE INDEX IF NOT EXISTS idx_executions_state_machine_name ON executions(state_machine_id, name);
+
 	-- JSONB indexes for metadata queries
 	CREATE INDEX IF NOT EXISTS idx_executions_metadata_gin ON executions USING GIN (metadata);
 	`
@@ -604,7 +605,7 @@ func (ps *PostgresRepository) GetExecution(ctx context.Context, executionID stri
 	}
 
 	query := `
-		SELECT 
+		SELECT
 			execution_id, state_machine_id, name, input, output, status,
 			start_time, end_time, current_state, error, metadata
 		FROM executions
@@ -639,6 +640,62 @@ func (ps *PostgresRepository) GetExecution(ctx context.Context, executionID stri
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get execution: %w", err)
+	}
+
+	// Unmarshal JSON fields
+	executionRecord, err2 := processJson(inputJSON, record, outputJSON, metadataJSON, endTime, errorStr)
+	if err2 != nil {
+		return executionRecord, err2
+	}
+
+	return record, nil
+}
+
+// GetExecutionByName retrieves an execution by name with proper error handling
+func (ps *PostgresRepository) GetExecutionByName(ctx context.Context, stateMachineID, name string) (*ExecutionRecord, error) {
+	if stateMachineID == "" {
+		return nil, errors.New("state_machine_id is required")
+	}
+	if name == "" {
+		return nil, errors.New("name is required")
+	}
+
+	query := `
+		SELECT
+			execution_id, state_machine_id, name, input, output, status,
+			start_time, end_time, current_state, error, metadata
+		FROM executions
+		WHERE state_machine_id = $1 AND name = $2
+		ORDER BY start_time DESC
+		LIMIT 1
+	`
+
+	row := ps.db.QueryRowContext(ctx, query, stateMachineID, name)
+
+	record := &ExecutionRecord{}
+	var inputJSON, outputJSON, metadataJSON []byte
+	var endTime sql.NullTime
+	var errorStr sql.NullString
+
+	err := row.Scan(
+		&record.ExecutionID,
+		&record.StateMachineID,
+		&record.Name,
+		&inputJSON,
+		&outputJSON,
+		&record.Status,
+		&record.StartTime,
+		&endTime,
+		&record.CurrentState,
+		&errorStr,
+		&metadataJSON,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("execution not found: name=%s, state_machine_id=%s", name, stateMachineID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get execution by name: %w", err)
 	}
 
 	// Unmarshal JSON fields
