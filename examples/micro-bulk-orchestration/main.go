@@ -327,13 +327,13 @@ func run(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(8 * time.Second):
+			case <-time.After(2 * time.Second):
 			}
 			slog.Info("step 7: operator sending resume signal",
 				"batch_id", activeBatchID,
 				"operator", "ops-engineer@company.com",
 			)
-			signalCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			signalCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			if err := orchestrator.Signal(
 				signalCtx,
@@ -458,7 +458,7 @@ func startOrchestratorContinuationWorker(
 		defer wg.Done()
 		slog.Info("orchestrator continuation worker starting")
 
-		ticker := time.NewTicker(1 * time.Second)
+		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 
 		for {
@@ -529,7 +529,7 @@ func waitForOrchestratorCompletion(
 		return nil
 	}
 
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -640,7 +640,7 @@ func loadConfig() config {
 		postgresURL:       envStr("POSTGRES_TEST_URL_GORM", "postgres://postgres:postgres@localhost:5432/statemachine_test_gorm?sslmode=disable"),
 		bulkInputCount:    envInt("BULK_INPUT_COUNT", 1000),
 		microBatchSize:    envInt("MICRO_BATCH_SIZE", 50),
-		workerConcurrency: envInt("WORKER_CONCURRENCY", 4),
+		workerConcurrency: envInt("WORKER_CONCURRENCY", 10),
 		pauseAtBatch:      envInt("PAUSE_AT_BATCH", 1),
 	}
 }

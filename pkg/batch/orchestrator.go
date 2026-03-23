@@ -221,6 +221,19 @@ func (o *Orchestrator) RunBulk(
 	opts *statemachine2.BulkExecutionOptions,
 	execOpts []statemachine2.ExecutionOption,
 ) (<-chan error, error) {
+	// ── Prevent duplicate batch orchestrations ─────────────────────────────────
+	// Use Redis SETNX to ensure only one orchestrator execution can run for a
+	// given batchID. This prevents duplicate processing when RunBulk is called
+	// multiple times (e.g., due to retries, restarts, or caller bugs).
+	batchLockKey := fmt.Sprintf("batch:lock:%s", batchID)
+	locked, err := o.rdb.SetNX(ctx, batchLockKey, "locked", 24*time.Hour).Result()
+	if err != nil {
+		return nil, fmt.Errorf("batch:run-bulk: acquire lock: %w", err)
+	}
+	if !locked {
+		return nil, fmt.Errorf("batch:run-bulk: batch %s is already running", batchID)
+	}
+
 	if err := o.storeBulkInputs(ctx, batchID, inputs); err != nil {
 		return nil, err
 	}
@@ -494,7 +507,7 @@ func (o *Orchestrator) handleDispatchBulk(ctx context.Context, rawInput interfac
 			"batchID":              input.BatchID,
 			"orchestratorID":       input.OrchestratorSMID,
 			"totalCount":           input.TotalCount,
-			"microBatchSize":       input.MicroBatchSize,
+			"microBatchSize":       mbSize,
 			"targetStateMachineID": input.TargetStateMachineID,
 			"executionNamePrefix":  input.ExecutionNamePrefix,
 			"inputTransformerName": input.InputTransformerName,
@@ -524,20 +537,25 @@ func (o *Orchestrator) handleDispatchBulk(ctx context.Context, rawInput interfac
 		return nil, fmt.Errorf("batch:dispatch-bulk: init barrier: %w", err)
 	}
 
-	if err := o.enqueueBulkInputs(ctx, input, inputs, mbID, mbIndex); err != nil {
-		return nil, fmt.Errorf("batch:dispatch-bulk: enqueue: %w", err)
-	}
-
+	// ── Advance cursor BEFORE enqueue ─────────────────────────────────────────
+	// Cursor is committed first so that any retry of this handler does not
+	// re-enqueue the same micro-batch a second time. If the process crashes
+	// after the cursor write but before enqueue completes, this micro-batch
+	// will be skipped (at-most-once) — preferable to duplicate processing.
 	newCursor := cursorVal + actualSize
 	if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
 		return nil, fmt.Errorf("batch:dispatch-bulk: advance cursor: %w", err)
+	}
+
+	if err := o.enqueueBulkInputs(ctx, input, inputs, mbID, mbIndex); err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: enqueue: %w", err)
 	}
 
 	return map[string]interface{}{
 		"batchID":              input.BatchID,
 		"orchestratorID":       input.OrchestratorSMID,
 		"totalCount":           input.TotalCount,
-		"microBatchSize":       input.MicroBatchSize,
+		"microBatchSize":       mbSize,
 		"targetStateMachineID": input.TargetStateMachineID,
 		"executionNamePrefix":  input.ExecutionNamePrefix,
 		"inputTransformerName": input.InputTransformerName,

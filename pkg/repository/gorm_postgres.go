@@ -327,6 +327,26 @@ func (r *GormPostgresRepository) GetExecution(ctx context.Context, executionID s
 	return fromExecutionModel(&model), nil
 }
 
+// GetExecutionByName retrieves an execution by name
+func (r *GormPostgresRepository) GetExecutionByName(ctx context.Context, stateMachineID, name string) (*ExecutionRecord, error) {
+	var model ExecutionModel
+
+	result := r.db.WithContext(ctx).
+		Where("state_machine_id = ? AND name = ?", stateMachineID, name).
+		Limit(1).
+		Find(&model)
+
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get execution by name: %w", result.Error)
+	}
+
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("execution not found: name=%s, state_machine_id=%s", name, stateMachineID)
+	}
+
+	return fromExecutionModel(&model), nil
+}
+
 // SaveStateHistory saves a state history entry
 func (r *GormPostgresRepository) SaveStateHistory(ctx context.Context, history *StateHistoryRecord) error {
 	model := toStateHistoryModel(history)

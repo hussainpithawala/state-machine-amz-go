@@ -45,6 +45,9 @@ func (c *Client) EnqueueExecution(payload *ExecutionTaskPayload, opts ...asynq.O
 			asynq.Timeout(c.retryPolicy.Timeout),
 			asynq.Queue(payload.StateMachineID),
 		}
+		if payload.ApplyUnique {
+			opts = append(opts, asynq.Unique(24*time.Hour))
+		}
 	}
 
 	info, err := c.client.Enqueue(task, opts...)

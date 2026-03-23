@@ -125,6 +125,9 @@ type Repository interface {
 	// GetExecution retrieves an execution by ID
 	GetExecution(ctx context.Context, executionID string) (*ExecutionRecord, error)
 
+	// GetExecutionByName retrieves an execution by name
+	GetExecutionByName(ctx context.Context, stateMachineID, name string) (*ExecutionRecord, error)
+
 	// SaveStateHistory saves a state history entry
 	SaveStateHistory(ctx context.Context, history *StateHistoryRecord) error
 
