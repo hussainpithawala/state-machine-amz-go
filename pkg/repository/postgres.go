@@ -522,11 +522,10 @@ func (ps *PostgresRepository) SaveExecution(ctx context.Context, record *Executi
 			metadata = EXCLUDED.metadata,
 		    history_sequence_number = EXCLUDED.history_sequence_number,
 			updated_at = CURRENT_TIMESTAMP
-		RETURNING execution_id, created_at, updated_at
+		RETURNING execution_id
 	`
 
 	var returnedID string
-	var createdAt, updatedAt time.Time
 
 	err = ps.db.QueryRowContext(ctx, query,
 		record.ExecutionID,
@@ -541,7 +540,7 @@ func (ps *PostgresRepository) SaveExecution(ctx context.Context, record *Executi
 		record.Error,
 		metadataJSON,
 		record.HistorySequenceNumber,
-	).Scan(&returnedID, &createdAt, &updatedAt)
+	).Scan(&returnedID)
 
 	if err != nil {
 		return fmt.Errorf("failed to save execution: %w", err)
@@ -1710,6 +1709,8 @@ func (ps *PostgresRepository) scanSingleExecution(rows *sql.Rows) (*ExecutionRec
 	var inputJSON, outputJSON, metadataJSON, recoveryMetadataJSON []byte
 	var endTime sql.NullTime
 	var errorMsg sql.NullString
+	var historySequenceNumber int
+	var createdAt, updatedAt sql.NullTime
 
 	err := rows.Scan(
 		&exec.ExecutionID,
@@ -1724,6 +1725,9 @@ func (ps *PostgresRepository) scanSingleExecution(rows *sql.Rows) (*ExecutionRec
 		&errorMsg,
 		&metadataJSON,
 		&recoveryMetadataJSON,
+		&historySequenceNumber,
+		&createdAt,
+		&updatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan execution: %w", err)
@@ -1747,6 +1751,14 @@ func (ps *PostgresRepository) scanSingleExecution(rows *sql.Rows) (*ExecutionRec
 	if errorMsg.Valid {
 		exec.Error = errorMsg.String
 	}
+	if createdAt.Valid {
+		exec.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		exec.UpdatedAt = updatedAt.Time
+	}
+
+	exec.HistorySequenceNumber = historySequenceNumber
 
 	return &exec, nil
 }
@@ -1772,12 +1784,12 @@ func (ps *PostgresRepository) unmarshalExecutionJSON(exec *ExecutionRecord, inpu
 
 func (b *nonLinkedExecutionsQueryBuilder) addPagination(baseQuery string) string {
 	if b.execFilter == nil {
-		baseQuery += " ORDER BY e.start_time DESC"
+		baseQuery += " ORDER BY e.execution_id, e.start_time DESC"
 		return baseQuery
 	}
 
-	// Add ordering first
-	baseQuery += " ORDER BY e.start_time DESC"
+	// Add ordering first - must include execution_id for DISTINCT ON
+	baseQuery += " ORDER BY e.execution_id, e.start_time DESC"
 
 	// Add limit
 	if b.execFilter.Limit > 0 {
@@ -1827,7 +1839,7 @@ func (b *nonLinkedExecutionsQueryBuilder) addExecutionFilterConditions(baseQuery
 
 func (b *nonLinkedExecutionsQueryBuilder) buildBaseQuery(subQuery string) string {
 	return fmt.Sprintf(`
-        SELECT DISTINCT
+        SELECT DISTINCT ON (e.execution_id)
             e.execution_id,
             e.state_machine_id,
             e.name,
@@ -1838,7 +1850,11 @@ func (b *nonLinkedExecutionsQueryBuilder) buildBaseQuery(subQuery string) string
             e.end_time,
             e.current_state,
             e.error,
-            e.metadata
+            e.metadata,
+            e.recovery_metadata,
+            e.history_sequence_number,
+            e.created_at,
+            e.updated_at
         FROM executions e
         LEFT JOIN (%s) AS filtered_links ON e.execution_id = filtered_links.source_execution_id
         WHERE filtered_links.source_execution_id IS NULL
@@ -1887,6 +1903,7 @@ func (b *nonLinkedExecutionsQueryBuilder) build() (string, []interface{}) {
 
 	subQuery := b.buildSubquery()
 	baseQuery := b.buildBaseQuery(subQuery)
+	baseQuery = b.addStateHistoryFilter(baseQuery)
 	baseQuery = b.addExecutionFilters(baseQuery)
 	baseQuery = b.addPagination(baseQuery)
 
@@ -1925,6 +1942,22 @@ func (b *nonLinkedExecutionsQueryBuilder) addSubqueryCondition(conditions *[]str
 		b.args = append(b.args, value)
 		b.argPos++
 	}
+}
+
+func (b *nonLinkedExecutionsQueryBuilder) addStateHistoryFilter(baseQuery string) string {
+	// Add INNER JOIN with state_history to filter only executions that have corresponding states
+	if b.linkedFilter != nil && b.linkedFilter.SourceStateName != "" {
+		// Filter by specific state name
+		baseQuery = strings.Replace(baseQuery, "FROM executions e",
+			fmt.Sprintf("FROM executions e INNER JOIN state_history sh ON e.execution_id = sh.execution_id AND sh.state_name = $%d", b.argPos), 1)
+		b.args = append(b.args, b.linkedFilter.SourceStateName)
+		b.argPos++
+	} else {
+		// Filter executions that have any state history
+		baseQuery = strings.Replace(baseQuery, "FROM executions e",
+			"FROM executions e INNER JOIN state_history sh ON e.execution_id = sh.execution_id", 1)
+	}
+	return baseQuery
 }
 
 // FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold
