@@ -156,7 +156,8 @@ func (h *ExecutionHandler) processBatchBarrier(ctx context.Context, payload *que
 		// }
 
 		if err != nil {
-			return fmt.Errorf("signal: couldn't create orchestrator state machine %s: %w", meta.OrchestratorSMID, err)
+			log.Printf("error: micro-batch task failed for %s: %v", meta.MicroBatchID, err)
+			log.Print("Yet, barrier will be removed since batch progression cannot be affected")
 		}
 		errSignal := orchestrator.SignalMicroBatchComplete(ctx, meta, outcome)
 		if errSignal != nil {
