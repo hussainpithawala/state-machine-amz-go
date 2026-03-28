@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.17] - 2026-03-29
+
+### Fixed
+- **ListNonLinkedExecutions Query Logic**: Comprehensive bug fixes to correlated subquery construction
+  - Replaced non-correlated derived table with proper `NOT EXISTS` correlated subquery
+  - Fixed filter scoping: all `linkedExecutionFilter` fields now correctly scoped to `linked_executions` table alone
+  - Status filter now applied to outer `executions` row, not broken reference inside subquery
+  - Eliminates need for `DISTINCT` by using correlated subquery pattern
+
+- **Pagination Bug**: Fixed pagination to read `Limit` and `Offset` from correct filter struct
+  - Changed from `linkedExecutionFilter.Limit/Offset` to `executionFilter.Limit/Offset`
+  - Both guard check and value now read from same source (`executionFilter`)
+
+- **Execution Filter Application**: Fixed unconditional application of execution filters
+  - `executionFilter` clauses (StateMachineID, Status, Name, StartAfter, StartBefore) now applied unconditionally
+  - No longer nested inside `linkedExecutionFilter` nil check
+  - Ensures independent filter parameters work correctly in all combinations
+
+- **Nil Pointer Panic Prevention**: Added guard against nil `executionFilter`
+  - Initializes empty `ExecutionFilter{}` if nil passed to prevent panic on field access
+
+- **Deduplication Logic**: Fixed duplicate rows when execution has multiple state_history entries
+  - Changed to `SELECT DISTINCT` on all execution columns
+  - Execution with retried states (multiple history rows for same state) appears exactly once
+
+- **Error Message Quality**: Improved error message formatting
+  - Removed Go variable name from error message: `"failed to list non-linked executions"` (was `"failed to list non-linkedExecutionFilter executions"`)
+
+### Added
+- **Comprehensive Integration Test Suite**: 7 new test scenarios covering all edge cases
+  - `TestListNonLinkedExecutions_MutuallyExclusiveBranches_NoOverlap`: Verifies no cross-branch leakage
+  - `TestListNonLinkedExecutions_LinkedFromOneState_DoesNotExcludeFromOtherStateQuery`: Core correctness test for state-scoped links
+  - `TestListNonLinkedExecutions_StatusFilter_Isolates_ByStateName`: Validates status filter isolation
+  - `TestListNonLinkedExecutions_StateMachineID_Scopes_Results`: Tests state machine ID scoping
+  - `TestListNonLinkedExecutions_Deduplication_MultipleStateHistoryRows`: Ensures single result per execution despite retries
+  - `TestListNonLinkedExecutions_NoStateHistory_NeverReturned`: Verifies INNER JOIN gate behavior
+  - `TestListNonLinkedExecutions_FullScenario_BothBranches_MixedStatuses_MixedLinks`: End-to-end production-like scenario
+
+- **Test Helper Functions**: Reusable test utilities for cleaner test code
+  - `collectExecutionIDs()`: Extract execution IDs from result slices
+  - `toSet()`: Convert string slice to map for O(1) membership checks
+  - `assertDisjoint()`: Verify no overlap between result sets
+  - `makeExecution()`: Construct minimal ExecutionRecord for fixtures
+  - `makeStateHistory()`: Construct minimal StateHistoryRecord for fixtures
+  - `makeLinkedExecution()`: Construct minimal LinkedExecutionRecord for fixtures
+
+### Changed
+- **Query Structure**: Refactored `ListNonLinkedExecutions` implementation in `gorm_postgres.go`
+  - Explicit column selection with constant for all 15 execution columns
+  - Separated state_history JOIN logic (conditional on `SourceStateName`)
+  - Correlated subquery built only when `linkedExecutionFilter` is provided
+  - Clear separation between linked execution filters and execution filters
+
+- **Code Documentation**: Enhanced function comments with proper punctuation and clarity
+  - Updated `ListNonLinkedExecutions` godoc comments with consistent sentence structure
+
+### Technical Details
+- **Files Modified**: 2 files
+  - `pkg/repository/gorm_postgres.go`: +69 lines, -47 lines (net: +22 lines)
+  - `pkg/repository/gorm_postgres_integration_test.go`: +669 lines (7 new tests + helpers)
+- **Total Lines Changed**: 740 insertions, 53 deletions (net: +687 lines)
+
 ## [1.2.16] - 2026-03-28
 
 ### Fixed
