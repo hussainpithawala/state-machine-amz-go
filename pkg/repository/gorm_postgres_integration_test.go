@@ -164,7 +164,7 @@ func (suite *GormPostgresIntegrationTestSuite) TestUpdateExecution() {
 
 	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, record))
 
-	record.Status = "SUCCEEDED"
+	record.Status = StatusSucceeded
 	record.CurrentState = "State2"
 	endTime := time.Now().Add(time.Minute)
 	record.EndTime = &endTime
@@ -1533,4 +1533,673 @@ func (suite *GormPostgresIntegrationTestSuite) TestListNonLinkedExecutions_WithS
 	}
 	assert.True(suite.T(), foundExec2, "exec-combo-2 should be in non-linked executions list")
 	assert.True(suite.T(), foundExec3, "exec-combo-3 should be in non-linked executions list")
+}
+
+// ─── Test 1 ──────────────────────────────────────────────────────────────────
+//
+// TestListNonLinkedExecutions_MutuallyExclusiveBranches_NoOverlap
+//
+// Verifies that when a state machine routes executions into two mutually
+// exclusive branch states (PaymentCheck vs FraudCheck), a query scoped to one
+// branch state never returns executions that only passed through the other
+// branch state — with no linked-execution records in play at all.
+//
+// Fixture layout
+//
+//	exec-meb-pa-1  ──► PaymentCheck  (SUCCEEDED)  no link
+//	exec-meb-pa-2  ──► PaymentCheck  (SUCCEEDED)  no link
+//	exec-meb-fr-1  ──► FraudCheck    (SUCCEEDED)  no link
+//	exec-meb-fr-2  ──► FraudCheck    (SUCCEEDED)  no link
+//
+// Expected
+//
+//	PaymentCheck query → {exec-meb-pa-1, exec-meb-pa-2}  (exactly, no FraudCheck leakage)
+//	FraudCheck   query → {exec-meb-fr-1, exec-meb-fr-2}  (exactly, no PaymentCheck leakage)
+//	Intersection of both result sets → empty
+func (suite *GormPostgresIntegrationTestSuite) TestListNonLinkedExecutions_MutuallyExclusiveBranches_NoOverlap() {
+	base := time.Now().Add(-3 * time.Hour)
+	const sm = "sm-meb-1"
+
+	// ── save executions ──────────────────────────────────────────────────────
+	for _, id := range []string{"exec-meb-pa-1", "exec-meb-pa-2", "exec-meb-fr-1", "exec-meb-fr-2"} {
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx,
+			makeExecution(id, sm, "SUCCEEDED", &base)))
+	}
+
+	// ── state history: PaymentCheck branch ──────────────────────────────────
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-meb-pa-1", "exec-meb-pa-1", "PaymentCheck", &base, 1)))
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-meb-pa-2", "exec-meb-pa-2", "PaymentCheck", &base, 1)))
+
+	// ── state history: FraudCheck branch ────────────────────────────────────
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-meb-fr-1", "exec-meb-fr-1", "FraudCheck", &base, 1)))
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-meb-fr-2", "exec-meb-fr-2", "FraudCheck", &base, 1)))
+
+	// ── PaymentCheck query ───────────────────────────────────────────────────
+	paResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: "PaymentCheck"})
+	require.NoError(suite.T(), err)
+	paIDs := collectExecutionIDs(paResult)
+
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-meb-pa-1", "exec-meb-pa-2"}, paIDs,
+		"PaymentCheck query must return exactly the two PaymentCheck executions")
+
+	// ── FraudCheck query ─────────────────────────────────────────────────────
+	frResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: "FraudCheck"})
+	require.NoError(suite.T(), err)
+	frIDs := collectExecutionIDs(frResult)
+
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-meb-fr-1", "exec-meb-fr-2"}, frIDs,
+		"FraudCheck query must return exactly the two FraudCheck executions")
+
+	// ── no overlap ───────────────────────────────────────────────────────────
+	paSet := toSet(paIDs)
+	for _, id := range frIDs {
+		assert.NotContains(suite.T(), paSet, id,
+			"FraudCheck result %q must not appear in PaymentCheck results: branches are mutually exclusive", id)
+	}
+}
+
+// ─── Test 2 ──────────────────────────────────────────────────────────────────
+//
+// TestListNonLinkedExecutions_LinkedFromOneState_DoesNotExcludeFromOtherStateQuery
+//
+// Core correctness test: creating a linked-execution record that originates
+// from StateA must not exclude the same execution from a non-linked query
+// scoped to StateB, even when that execution has state-history entries for
+// both states.
+//
+// This models a chained workflow where the same execution passes through two
+// sequential steps, and each step independently triggers a downstream machine.
+//
+// Fixture layout
+//
+//	exec-cross-1  StateA + StateB  linked FROM StateA only
+//	exec-cross-2  StateA + StateB  no links
+//	exec-cross-3  StateA only      no links
+//	exec-cross-4  StateB only      no links
+//
+// Expected
+//
+//	StateA query → {exec-cross-2, exec-cross-3}
+//	  exec-cross-1 excluded  (has a link from StateA)
+//	  exec-cross-4 excluded  (no StateA history)
+//
+//	StateB query → {exec-cross-1, exec-cross-2, exec-cross-4}
+//	  exec-cross-1 INCLUDED  (link is from StateA, not StateB — must not bleed across)
+//	  exec-cross-3 excluded  (no StateB history)
+func (suite *GormPostgresIntegrationTestSuite) TestListNonLinkedExecutions_LinkedFromOneState_DoesNotExcludeFromOtherStateQuery() {
+	base := time.Now().Add(-3 * time.Hour)
+	const sm = "sm-cross-1"
+
+	// ── save executions ──────────────────────────────────────────────────────
+	for _, id := range []string{"exec-cross-1", "exec-cross-2", "exec-cross-3", "exec-cross-4"} {
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx,
+			makeExecution(id, sm, "SUCCEEDED", &base)))
+	}
+
+	// ── state history ────────────────────────────────────────────────────────
+	// exec-cross-1: both states (sequential, seq 1 and 2)
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-cross-1a", "exec-cross-1", "StateA", &base, 1)))
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-cross-1b", "exec-cross-1", "StateB", &base, 2)))
+
+	// exec-cross-2: both states
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-cross-2a", "exec-cross-2", "StateA", &base, 1)))
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-cross-2b", "exec-cross-2", "StateB", &base, 2)))
+
+	// exec-cross-3: StateA only
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-cross-3a", "exec-cross-3", "StateA", &base, 1)))
+
+	// exec-cross-4: StateB only
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-cross-4b", "exec-cross-4", "StateB", &base, 1)))
+
+	// ── linked execution: exec-cross-1 linked FROM StateA only ───────────────
+	require.NoError(suite.T(), suite.repository.SaveLinkedExecution(suite.ctx,
+		makeLinkedExecution("link-cross-1", "exec-cross-1", "StateA", sm, "sm-downstream", "exec-ds-cross-1")))
+
+	// ── StateA non-linked query ──────────────────────────────────────────────
+	stateAResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: "StateA"})
+	require.NoError(suite.T(), err)
+
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-cross-2", "exec-cross-3"},
+		collectExecutionIDs(stateAResult),
+		"StateA: exec-cross-1 must be absent (has link from StateA); exec-cross-4 absent (no StateA history)")
+
+	// ── StateB non-linked query ──────────────────────────────────────────────
+	stateBResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: "StateB"})
+	require.NoError(suite.T(), err)
+
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-cross-1", "exec-cross-2", "exec-cross-4"},
+		collectExecutionIDs(stateBResult),
+		"StateB: exec-cross-1 must be present (its only link is from StateA, not StateB); exec-cross-3 absent (no StateB history)")
+}
+
+// ─── Test 3 ──────────────────────────────────────────────────────────────────
+//
+// TestListNonLinkedExecutions_StatusFilter_Isolates_ByStateName
+//
+// Verifies that SourceExecutionStatus correctly narrows results within a
+// given SourceStateName, and that queries for different statuses yield
+// completely disjoint result sets.
+//
+// Fixture layout (all executions passed through "ProcessState")
+//
+//	exec-ef-1  SUCCEEDED  ProcessState  no link  → in SUCCEEDED query
+//	exec-ef-2  SUCCEEDED  ProcessState  no link  → in SUCCEEDED query
+//	exec-ef-3  RUNNING    ProcessState  no link  → in RUNNING   query only
+//	exec-ef-4  FAILED     ProcessState  no link  → in FAILED    query only
+//	exec-ef-5  SUCCEEDED  ProcessState  linked   → absent from all queries
+func (suite *GormPostgresIntegrationTestSuite) TestListNonLinkedExecutions_StatusFilter_Isolates_ByStateName() {
+	base := time.Now().Add(-3 * time.Hour)
+	const sm = "sm-ef-1"
+	const state = "ProcessState"
+
+	type fixture struct {
+		id     string
+		status string
+		linked bool
+	}
+	fixtures := []fixture{
+		{"exec-ef-1", "SUCCEEDED", false},
+		{"exec-ef-2", "SUCCEEDED", false},
+		{"exec-ef-3", "RUNNING", false},
+		{"exec-ef-4", "FAILED", false},
+		{"exec-ef-5", "SUCCEEDED", true},
+	}
+
+	for i, f := range fixtures {
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx,
+			makeExecution(f.id, sm, f.status, &base)))
+		require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+			makeStateHistory(fmt.Sprintf("sh-ef-%d", i+1), f.id, state, &base, 1)))
+		if f.linked {
+			require.NoError(suite.T(), suite.repository.SaveLinkedExecution(suite.ctx,
+				makeLinkedExecution(fmt.Sprintf("link-ef-%d", i+1), f.id, state, sm,
+					"sm-downstream", fmt.Sprintf("exec-ds-ef-%d", i+1))))
+		}
+	}
+
+	// ── SUCCEEDED ────────────────────────────────────────────────────────────
+	succeededResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: state, SourceExecutionStatus: "SUCCEEDED"})
+	require.NoError(suite.T(), err)
+	succeededIDs := collectExecutionIDs(succeededResult)
+	assert.ElementsMatch(suite.T(), []string{"exec-ef-1", "exec-ef-2"}, succeededIDs,
+		"SUCCEEDED: exec-ef-5 must be absent (linked); exec-ef-3/4 absent (wrong status)")
+
+	// ── RUNNING ──────────────────────────────────────────────────────────────
+	runningResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: state, SourceExecutionStatus: "RUNNING"})
+	require.NoError(suite.T(), err)
+	runningIDs := collectExecutionIDs(runningResult)
+	assert.ElementsMatch(suite.T(), []string{"exec-ef-3"}, runningIDs)
+
+	// ── FAILED ───────────────────────────────────────────────────────────────
+	failedResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: state, SourceExecutionStatus: "FAILED"})
+	require.NoError(suite.T(), err)
+	failedIDs := collectExecutionIDs(failedResult)
+	assert.ElementsMatch(suite.T(), []string{"exec-ef-4"}, failedIDs)
+
+	// ── no status filter → all 4 unlinked ────────────────────────────────────
+	allResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: state})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-ef-1", "exec-ef-2", "exec-ef-3", "exec-ef-4"},
+		collectExecutionIDs(allResult),
+		"no status filter: all 4 unlinked executions (exec-ef-5 is linked and must be absent)")
+
+	// ── verify no cross-status bleed ─────────────────────────────────────────
+	assertDisjoint(suite, "SUCCEEDED", succeededIDs, "RUNNING", runningIDs)
+	assertDisjoint(suite, "SUCCEEDED", succeededIDs, "FAILED", failedIDs)
+	assertDisjoint(suite, "RUNNING", runningIDs, "FAILED", failedIDs)
+}
+
+// ─── Test 4 ──────────────────────────────────────────────────────────────────
+//
+// TestListNonLinkedExecutions_StateMachineID_Scopes_Results
+//
+// Verifies that SourceStateMachineID correctly isolates results to a single
+// state machine even when two different machines share the same state name.
+//
+// Fixture layout
+//
+//	sm-scope-x  exec-scope-x-1  ProcessState  no link
+//	sm-scope-x  exec-scope-x-2  ProcessState  no link
+//	sm-scope-y  exec-scope-y-1  ProcessState  no link
+//	sm-scope-y  exec-scope-y-2  ProcessState  linked
+//
+// Expected
+//
+//	SM=sm-scope-x, State=ProcessState → {exec-scope-x-1, exec-scope-x-2}
+//	SM=sm-scope-y, State=ProcessState → {exec-scope-y-1}  (exec-scope-y-2 is linked)
+//	no SM filter,  State=ProcessState → {exec-scope-x-1, exec-scope-x-2, exec-scope-y-1}
+func (suite *GormPostgresIntegrationTestSuite) TestListNonLinkedExecutions_StateMachineID_Scopes_Results() {
+	base := time.Now().Add(-3 * time.Hour)
+	const state = "ProcessState"
+
+	type fixture struct {
+		execID string
+		smID   string
+		linked bool
+	}
+	fixtures := []fixture{
+		{"exec-scope-x-1", "sm-scope-x", false},
+		{"exec-scope-x-2", "sm-scope-x", false},
+		{"exec-scope-y-1", "sm-scope-y", false},
+		{"exec-scope-y-2", "sm-scope-y", true},
+	}
+
+	for i, f := range fixtures {
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx,
+			makeExecution(f.execID, f.smID, "SUCCEEDED", &base)))
+		require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+			makeStateHistory(fmt.Sprintf("sh-scope-%d", i+1), f.execID, state, &base, 1)))
+		if f.linked {
+			require.NoError(suite.T(), suite.repository.SaveLinkedExecution(suite.ctx,
+				makeLinkedExecution(fmt.Sprintf("link-scope-%d", i+1), f.execID, state, f.smID,
+					"sm-downstream", fmt.Sprintf("exec-ds-scope-%d", i+1))))
+		}
+	}
+
+	// ── scoped to sm-scope-x ─────────────────────────────────────────────────
+	xResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: state, SourceStateMachineID: "sm-scope-x"})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-scope-x-1", "exec-scope-x-2"}, collectExecutionIDs(xResult))
+	for _, e := range xResult {
+		assert.Equal(suite.T(), "sm-scope-x", e.StateMachineID,
+			"all returned executions must belong to sm-scope-x")
+	}
+
+	// ── scoped to sm-scope-y ─────────────────────────────────────────────────
+	yResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: state, SourceStateMachineID: "sm-scope-y"})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-scope-y-1"}, collectExecutionIDs(yResult),
+		"exec-scope-y-2 must be absent: it has a linked execution")
+
+	// ── no SM filter: all 3 unlinked across both machines ────────────────────
+	allResult, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: state})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-scope-x-1", "exec-scope-x-2", "exec-scope-y-1"},
+		collectExecutionIDs(allResult),
+		"without SM filter all 3 unlinked executions across both machines must be returned")
+}
+
+// ─── Test 5 ──────────────────────────────────────────────────────────────────
+//
+// TestListNonLinkedExecutions_Deduplication_MultipleStateHistoryRows
+//
+// Verifies that an execution whose state was retried (producing multiple
+// state_history rows for the same state name) appears exactly once in the
+// result set — not once per history row.
+//
+// Fixture layout
+//
+//	exec-dedup-1  TaskState  3 history rows (FAILED×2, SUCCEEDED)  no link  → present ×1
+//	exec-dedup-2  TaskState  2 history rows (FAILED,   SUCCEEDED)  linked   → absent
+func (suite *GormPostgresIntegrationTestSuite) TestListNonLinkedExecutions_Deduplication_MultipleStateHistoryRows() {
+	base := time.Now().Add(-3 * time.Hour)
+	const sm = "sm-dedup-1"
+	const state = "TaskState"
+
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx,
+		makeExecution("exec-dedup-1", sm, "SUCCEEDED", &base)))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx,
+		makeExecution("exec-dedup-2", sm, "SUCCEEDED", &base)))
+
+	// exec-dedup-1: three attempts for the same state
+	retryAttempts := []struct {
+		id     string
+		status string
+		seq    int
+	}{
+		{"sh-dedup-1-r1", "FAILED", 1},
+		{"sh-dedup-1-r2", "FAILED", 2},
+		{"sh-dedup-1-r3", "SUCCEEDED", 3},
+	}
+	for _, a := range retryAttempts {
+		sh := makeStateHistory(a.id, "exec-dedup-1", state, &base, a.seq)
+		sh.Status = a.status
+		sh.RetryCount = a.seq - 1
+		require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx, sh))
+	}
+
+	// exec-dedup-2: two attempts, then linked after success
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		func() *StateHistoryRecord {
+			s := makeStateHistory("sh-dedup-2-r1", "exec-dedup-2", state, &base, 1)
+			s.Status = "FAILED"
+			s.RetryCount = 0
+			return s
+		}()))
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		func() *StateHistoryRecord {
+			s := makeStateHistory("sh-dedup-2-r2", "exec-dedup-2", state, &base, 2)
+			s.Status = "SUCCEEDED"
+			s.RetryCount = 1
+			return s
+		}()))
+	require.NoError(suite.T(), suite.repository.SaveLinkedExecution(suite.ctx,
+		makeLinkedExecution("link-dedup-2", "exec-dedup-2", state, sm, "sm-downstream", "exec-ds-dedup-2")))
+
+	// ── query ────────────────────────────────────────────────────────────────
+	result, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: state})
+	require.NoError(suite.T(), err)
+
+	ids := collectExecutionIDs(result)
+	assert.ElementsMatch(suite.T(), []string{"exec-dedup-1"}, ids,
+		"exec-dedup-2 must be absent (linked)")
+
+	// count occurrences of exec-dedup-1 directly to catch any DISTINCT violation
+	occurrences := 0
+	for _, id := range ids {
+		if id == "exec-dedup-1" {
+			occurrences++
+		}
+	}
+	assert.Equal(suite.T(), 1, occurrences,
+		"exec-dedup-1 has %d state-history rows but must appear exactly once in results",
+		len(retryAttempts))
+}
+
+// ─── Test 6 ──────────────────────────────────────────────────────────────────
+//
+// TestListNonLinkedExecutions_NoStateHistory_NeverReturned
+//
+// Verifies that executions with no state-history rows whatsoever are never
+// returned regardless of which SourceStateName or status filter is applied.
+// The INNER JOIN on state_history is the gate; this test makes it explicit.
+//
+// Fixture layout
+//
+//	exec-nohist-1  has TaskState history  no link  → returned
+//	exec-nohist-2  no state history       no link  → never returned
+//	exec-nohist-3  no state history       no link  → never returned (different status)
+func (suite *GormPostgresIntegrationTestSuite) TestListNonLinkedExecutions_NoStateHistory_NeverReturned() {
+	base := time.Now().Add(-1 * time.Hour)
+	const sm = "sm-nohist-1"
+	const state = "TaskState"
+
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx,
+		makeExecution("exec-nohist-1", sm, "SUCCEEDED", &base)))
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+		makeStateHistory("sh-nohist-1", "exec-nohist-1", state, &base, 1)))
+
+	// These two have no state history at all.
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx,
+		makeExecution("exec-nohist-2", sm, "SUCCEEDED", &base)))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx,
+		makeExecution("exec-nohist-3", sm, "RUNNING", &base)))
+
+	// ── with SourceStateName ─────────────────────────────────────────────────
+	withState, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: state})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(), []string{"exec-nohist-1"}, collectExecutionIDs(withState),
+		"exec-nohist-2 and exec-nohist-3 have no state history and must never be returned")
+
+	// ── without SourceStateName (any history required) ────────────────────────
+	withoutState, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(), []string{"exec-nohist-1"}, collectExecutionIDs(withoutState),
+		"without SourceStateName filter: executions with no history are still excluded")
+}
+
+// ─── Test 7 ──────────────────────────────────────────────────────────────────
+//
+// TestListNonLinkedExecutions_FullScenario_BothBranches_MixedStatuses_MixedLinks
+//
+// End-to-end scenario combining all dimensions:
+//   - two mutually exclusive branch states (PaymentCheck, FraudCheck)
+//   - mixed execution statuses (SUCCEEDED, RUNNING, FAILED)
+//   - a mix of linked and unlinked executions on each branch
+//   - one execution with no state history at all
+//
+// This is the most realistic approximation of production usage.
+//
+// Fixture layout
+//
+//	exec-full-pa-1  PaymentCheck  SUCCEEDED  linked       → absent from PaymentCheck query
+//	exec-full-pa-2  PaymentCheck  SUCCEEDED  no link      → in PaymentCheck + SUCCEEDED query
+//	exec-full-pa-3  PaymentCheck  RUNNING    no link      → in PaymentCheck + RUNNING   query
+//	exec-full-fr-1  FraudCheck    SUCCEEDED  linked       → absent from FraudCheck query
+//	exec-full-fr-2  FraudCheck    SUCCEEDED  no link      → in FraudCheck  + SUCCEEDED query
+//	exec-full-fr-3  FraudCheck    FAILED     no link      → in FraudCheck  + FAILED    query
+//	exec-full-none  (no history)  SUCCEEDED  no link      → absent from all queries
+func (suite *GormPostgresIntegrationTestSuite) TestListNonLinkedExecutions_FullScenario_BothBranches_MixedStatuses_MixedLinks() {
+	base := time.Now().Add(-3 * time.Hour)
+	const sm = "sm-full-1"
+
+	type fixture struct {
+		execID    string
+		status    string
+		stateName string // empty → no state history
+		linked    bool
+	}
+	fixtures := []fixture{
+		{"exec-full-pa-1", "SUCCEEDED", "PaymentCheck", true},
+		{"exec-full-pa-2", "SUCCEEDED", "PaymentCheck", false},
+		{"exec-full-pa-3", "RUNNING", "PaymentCheck", false},
+		{"exec-full-fr-1", "SUCCEEDED", "FraudCheck", true},
+		{"exec-full-fr-2", "SUCCEEDED", "FraudCheck", false},
+		{"exec-full-fr-3", "FAILED", "FraudCheck", false},
+		{"exec-full-none", "SUCCEEDED", "", false},
+	}
+
+	for i, f := range fixtures {
+		require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx,
+			makeExecution(f.execID, sm, f.status, &base)))
+
+		if f.stateName != "" {
+			require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx,
+				makeStateHistory(fmt.Sprintf("sh-full-%d", i+1), f.execID, f.stateName, &base, 1)))
+		}
+
+		if f.linked {
+			require.NoError(suite.T(), suite.repository.SaveLinkedExecution(suite.ctx,
+				makeLinkedExecution(
+					fmt.Sprintf("link-full-%d", i+1),
+					f.execID, f.stateName, sm,
+					"sm-downstream",
+					fmt.Sprintf("exec-ds-full-%d", i+1),
+				)))
+		}
+	}
+
+	// ── PaymentCheck: all statuses ───────────────────────────────────────────
+	paAll, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: "PaymentCheck"})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-full-pa-2", "exec-full-pa-3"},
+		collectExecutionIDs(paAll),
+		"PaymentCheck all: pa-1 absent (linked), no-history and FraudCheck execs absent")
+
+	// ── PaymentCheck: SUCCEEDED only ─────────────────────────────────────────
+	paSucceeded, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: "PaymentCheck", SourceExecutionStatus: "SUCCEEDED"})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-full-pa-2"},
+		collectExecutionIDs(paSucceeded))
+
+	// ── PaymentCheck: RUNNING only ────────────────────────────────────────────
+	paRunning, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: "PaymentCheck", SourceExecutionStatus: "RUNNING"})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-full-pa-3"},
+		collectExecutionIDs(paRunning))
+
+	// ── FraudCheck: all statuses ─────────────────────────────────────────────
+	frAll, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: "FraudCheck"})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-full-fr-2", "exec-full-fr-3"},
+		collectExecutionIDs(frAll),
+		"FraudCheck all: fr-1 absent (linked), no-history and PaymentCheck execs absent")
+
+	// ── FraudCheck: SUCCEEDED only ───────────────────────────────────────────
+	frSucceeded, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: "FraudCheck", SourceExecutionStatus: "SUCCEEDED"})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-full-fr-2"},
+		collectExecutionIDs(frSucceeded))
+
+	// ── FraudCheck: FAILED only ───────────────────────────────────────────────
+	frFailed, err := suite.repository.ListNonLinkedExecutions(suite.ctx,
+		&ExecutionFilter{},
+		&LinkedExecutionFilter{SourceStateName: "FraudCheck", SourceExecutionStatus: "FAILED"})
+	require.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(),
+		[]string{"exec-full-fr-3"},
+		collectExecutionIDs(frFailed))
+
+	// ── cross-branch isolation ────────────────────────────────────────────────
+	// Neither branch's result set should contain any execution from the other
+	// branch, because the two branches are mutually exclusive.
+	paSet := toSet(collectExecutionIDs(paAll))
+	frSet := toSet(collectExecutionIDs(frAll))
+	for id := range frSet {
+		assert.NotContains(suite.T(), paSet, id,
+			"FraudCheck result %q leaked into PaymentCheck results", id)
+	}
+	for id := range paSet {
+		assert.NotContains(suite.T(), frSet, id,
+			"PaymentCheck result %q leaked into FraudCheck results", id)
+	}
+
+	// ── per-status cross-branch isolation ─────────────────────────────────────
+	// SUCCEEDED results for PaymentCheck and FraudCheck must not overlap.
+	assertDisjoint(suite,
+		"PaymentCheck/SUCCEEDED", collectExecutionIDs(paSucceeded),
+		"FraudCheck/SUCCEEDED", collectExecutionIDs(frSucceeded))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Test helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// collectExecutionIDs extracts the ExecutionID field from every record in the
+// slice. Useful for ElementsMatch assertions that don't care about order.
+func collectExecutionIDs(executions []*ExecutionRecord) []string {
+	ids := make([]string, len(executions))
+	for i, e := range executions {
+		ids[i] = e.ExecutionID
+	}
+	return ids
+}
+
+// toSet converts a string slice to a map[string]struct{} for O(1) membership
+// checks in cross-branch isolation assertions.
+func toSet(ids []string) map[string]struct{} {
+	s := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		s[id] = struct{}{}
+	}
+	return s
+}
+
+// assertDisjoint fails the test if the two ID slices share any element.
+// labelA and labelB are included in the failure message for clarity.
+func assertDisjoint(suite *GormPostgresIntegrationTestSuite, labelA string, a []string, labelB string, b []string) {
+	setA := toSet(a)
+	for _, id := range b {
+		assert.NotContains(suite.T(), setA, id,
+			"%q result %q must not appear in %q results", labelB, id, labelA)
+	}
+}
+
+// makeExecution constructs a minimal valid ExecutionRecord for test fixtures.
+func makeExecution(id, smID, status string, startTime *time.Time) *ExecutionRecord {
+	return &ExecutionRecord{
+		ExecutionID:    id,
+		StateMachineID: smID,
+		Name:           id, // reuse ID as name; unique within each test
+		Input:          map[string]interface{}{},
+		Status:         status,
+		StartTime:      startTime,
+		CurrentState:   "SomeState",
+		Metadata:       map[string]interface{}{},
+	}
+}
+
+// makeStateHistory constructs a minimal valid StateHistoryRecord.
+// The caller may mutate Status or RetryCount afterwards for retry scenarios.
+func makeStateHistory(id, executionID, stateName string, execStartTime *time.Time, seqNum int) *StateHistoryRecord {
+	now := time.Now()
+	return &StateHistoryRecord{
+		ID:                 id,
+		ExecutionID:        executionID,
+		StateName:          stateName,
+		StateType:          "Task",
+		Input:              map[string]interface{}{},
+		Output:             map[string]interface{}{},
+		Status:             "SUCCEEDED",
+		ExecutionStartTime: execStartTime,
+		StartTime:          timePtr(now.Add(-2 * time.Hour)),
+		EndTime:            timePtr(now.Add(-1 * time.Hour)),
+		RetryCount:         0,
+		SequenceNumber:     seqNum,
+		Metadata:           map[string]interface{}{},
+	}
+}
+
+// makeLinkedExecution constructs a LinkedExecutionRecord for test fixtures.
+func makeLinkedExecution(id, sourceExecID, sourceStateName, sourceSMID, targetSMName, targetExecID string) *LinkedExecutionRecord {
+	return &LinkedExecutionRecord{
+		ID:                     id,
+		SourceStateMachineID:   sourceSMID,
+		SourceExecutionID:      sourceExecID,
+		SourceStateName:        sourceStateName,
+		TargetStateMachineName: targetSMName,
+		TargetExecutionID:      targetExecID,
+		CreatedAt:              time.Now(),
+	}
 }
