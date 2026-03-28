@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.16] - 2026-03-28
+
+### Fixed
+- **ListNonLinkedExecutions State History Filtering**: Corrected filtering to require state history entries
+  - Added `INNER JOIN state_history` in `gorm_postgres.go` and `postgres.go` implementations
+  - Executions without `state_history` records are now excluded from results
+  - When `SourceStateName` filter is provided, queries match `state_history.state_name = ?`
+  - Ensures only executions eligible for chained execution workflows are returned
+
+- **Query Correctness**: Fixed duplicate rows and missing columns in results
+  - Changed to `SELECT DISTINCT ON (e.execution_id)` for proper deduplication
+  - Extended column selection to include all 15 execution columns
+  - Fixed `ORDER BY` to include `execution_id` (required for `DISTINCT ON`)
+
+- **NULL Handling**: Fixed timestamp scanning errors
+  - Updated `scanSingleExecution()` to use `sql.NullTime` for `created_at`/`updated_at`
+  - Added scanning for `history_sequence_number` and `recovery_metadata` fields
+
+- **SaveExecution Optimization**: Removed unnecessary RETURNING clause
+  - Simplified to only retrieve `execution_id` (timestamps are auto-generated)
+
+- **Schema Migration**: Improved handling of existing tables
+  - `migrateTable()` now continues with warnings instead of failing on existing tables
+  - Fixed `ExecutionStatisticsModel` table name: `statistics` → `execution_statistics`
+
+### Added
+- **State Name Filtering**: Support for filtering executions by specific state history states
+  - Filter by `SourceStateName` to find executions at specific workflow stages
+  - Enables precise control over chained execution workflows
+
+- **New Integration Tests**: Comprehensive test coverage for state history filtering
+  - `TestListNonLinkedExecutions_WithStateHistoryFilter`: Validates state name filtering
+  - `TestListNonLinkedExecutions_WithStateHistoryAndLinkedExecution`: Tests combined filtering
+  - Tests consolidated into `gorm_postgres_integration_test.go` suite
+
+### Changed
+- **Test Infrastructure**: Consolidated test files
+  - Removed `pkg/repository/non_linked_executions_test.go`
+  - Leverages existing GORM integration test suite setup/teardown
+  - Reduces code duplication
+
+- **golangci-lint Upgrade**: Updated to v2.5.0
+  - Changed installation path to `github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0`
+  - Added version check in `Makefile` to ensure v2 is installed
+
+### Other Changes
+- **Batch Barrier Error Handling**: Improved logging in `execution_handler.go`
+  - Micro-batch task failures now logged without returning early
+  - Barrier removal proceeds even when tasks fail (batch progression unaffected)
+
+### Migration Notes
+- **Behavior Change**: `ListNonLinkedExecutions` now requires `state_history` entries
+  - Executions without state history will no longer be returned
+  - Use `ListExecutions` directly if you need to query executions without state history
+- **No Database Migrations**: All changes are backward-compatible at the schema level
+
 ## [1.2.15] - 2026-03-23
 
 ### Added
