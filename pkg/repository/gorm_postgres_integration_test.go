@@ -1284,3 +1284,253 @@ func (suite *GormPostgresIntegrationTestSuite) TestListLinkedExecutionsOrdering(
 func timePtr(t time.Time) *time.Time {
 	return &t
 }
+
+// TestListNonLinkedExecutions_WithStateHistoryFilter tests filtering by state_history.state_name
+func (suite *GormPostgresIntegrationTestSuite) TestListNonLinkedExecutions_WithStateHistoryFilter() {
+	baseTime := time.Now().Add(-3 * time.Hour)
+
+	// Create test executions with fixed start time (required for state_history FK)
+	exec1 := &ExecutionRecord{
+		ExecutionID:    "exec-sh-1",
+		StateMachineID: "sm-sh-1",
+		Name:           "test-exec-1",
+		Input:          map[string]interface{}{"test": "data1"},
+		Status:         "SUCCEEDED",
+		StartTime:      &baseTime,
+		CurrentState:   "TestState",
+		Metadata:       map[string]interface{}{},
+	}
+	exec2 := &ExecutionRecord{
+		ExecutionID:    "exec-sh-2",
+		StateMachineID: "sm-sh-1",
+		Name:           "test-exec-2",
+		Input:          map[string]interface{}{"test": "data2"},
+		Status:         "SUCCEEDED",
+		StartTime:      &baseTime,
+		CurrentState:   "TestState",
+		Metadata:       map[string]interface{}{},
+	}
+	exec3 := &ExecutionRecord{
+		ExecutionID:    "exec-sh-3",
+		StateMachineID: "sm-sh-1",
+		Name:           "test-exec-3",
+		Input:          map[string]interface{}{"test": "data3"},
+		Status:         "SUCCEEDED",
+		StartTime:      &baseTime,
+		CurrentState:   "TestState",
+		Metadata:       map[string]interface{}{},
+	}
+	exec4 := &ExecutionRecord{
+		ExecutionID:    "exec-sh-4",
+		StateMachineID: "sm-sh-1",
+		Name:           "test-exec-4",
+		Input:          map[string]interface{}{"test": "data4"},
+		Status:         "RUNNING",
+		StartTime:      &baseTime,
+		CurrentState:   "TestState",
+		Metadata:       map[string]interface{}{},
+	}
+
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, exec1))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, exec2))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, exec3))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, exec4))
+
+	// Create state history for exec1 with state "StateA"
+	stateHistory1 := &StateHistoryRecord{
+		ID:                 "sh-1",
+		ExecutionID:        "exec-sh-1",
+		StateName:          "StateA",
+		StateType:          "Task",
+		Input:              map[string]interface{}{"key": "value1"},
+		Output:             map[string]interface{}{"result": "output1"},
+		Status:             "SUCCEEDED",
+		ExecutionStartTime: timePtr(baseTime),
+		StartTime:          timePtr(time.Now().Add(-2 * time.Hour)),
+		EndTime:            timePtr(time.Now().Add(-1 * time.Hour)),
+		Error:              "",
+		RetryCount:         0,
+		SequenceNumber:     1,
+		Metadata:           map[string]interface{}{},
+	}
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx, stateHistory1))
+
+	// Create state history for exec2 with state "StateB"
+	stateHistory2 := &StateHistoryRecord{
+		ID:                 "sh-2",
+		ExecutionID:        "exec-sh-2",
+		StateName:          "StateB",
+		StateType:          "Task",
+		Input:              map[string]interface{}{"key": "value2"},
+		Output:             map[string]interface{}{"result": "output2"},
+		Status:             "SUCCEEDED",
+		ExecutionStartTime: timePtr(baseTime),
+		StartTime:          timePtr(time.Now().Add(-2 * time.Hour)),
+		EndTime:            timePtr(time.Now().Add(-1 * time.Hour)),
+		Error:              "",
+		RetryCount:         0,
+		SequenceNumber:     1,
+		Metadata:           map[string]interface{}{},
+	}
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx, stateHistory2))
+
+	// Create state history for exec3 with state "StateA" (same as exec1)
+	stateHistory3 := &StateHistoryRecord{
+		ID:                 "sh-3",
+		ExecutionID:        "exec-sh-3",
+		StateName:          "StateA",
+		StateType:          "Task",
+		Input:              map[string]interface{}{"key": "value3"},
+		Output:             map[string]interface{}{"result": "output3"},
+		Status:             "SUCCEEDED",
+		ExecutionStartTime: timePtr(baseTime),
+		StartTime:          timePtr(time.Now().Add(-2 * time.Hour)),
+		EndTime:            timePtr(time.Now().Add(-1 * time.Hour)),
+		Error:              "",
+		RetryCount:         0,
+		SequenceNumber:     1,
+		Metadata:           map[string]interface{}{},
+	}
+	require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx, stateHistory3))
+	// exec4 has no state history
+
+	// Test 1: Filter by SourceStateName = "StateA"
+	// Should return exec-sh-1 and exec-sh-3 (both have StateA in state_history)
+	filterStateA := &LinkedExecutionFilter{SourceStateName: "StateA"}
+	nonLinkedStateA, err := suite.repository.ListNonLinkedExecutions(suite.ctx, &ExecutionFilter{}, filterStateA)
+	require.NoError(suite.T(), err)
+	require.Len(suite.T(), nonLinkedStateA, 2, "Expected 2 non-linked executions with StateA filter")
+
+	// Verify only exec-sh-1 and exec-sh-3 are returned
+	foundExec1, foundExec3 := false, false
+	for _, exec := range nonLinkedStateA {
+		if exec.ExecutionID == "exec-sh-1" {
+			foundExec1 = true
+		}
+		if exec.ExecutionID == "exec-sh-3" {
+			foundExec3 = true
+		}
+	}
+	assert.True(suite.T(), foundExec1, "exec-sh-1 should be in non-linked executions list with StateA filter")
+	assert.True(suite.T(), foundExec3, "exec-sh-3 should be in non-linked executions list with StateA filter")
+
+	// Test 2: Filter by SourceStateName = "StateB" - should return only exec-sh-2
+	filterStateB := &LinkedExecutionFilter{SourceStateName: "StateB"}
+	nonLinkedStateB, err := suite.repository.ListNonLinkedExecutions(suite.ctx, &ExecutionFilter{}, filterStateB)
+	require.NoError(suite.T(), err)
+	require.Len(suite.T(), nonLinkedStateB, 1, "Expected 1 non-linked execution with StateB filter")
+	assert.Equal(suite.T(), "exec-sh-2", nonLinkedStateB[0].ExecutionID)
+
+	// Test 3: Filter by SourceStateName = "StateC" (no executions have this state) - should return empty
+	filterStateC := &LinkedExecutionFilter{SourceStateName: "StateC"}
+	nonLinkedStateC, err := suite.repository.ListNonLinkedExecutions(suite.ctx, &ExecutionFilter{}, filterStateC)
+	require.NoError(suite.T(), err)
+	require.Empty(suite.T(), nonLinkedStateC, "Expected 0 non-linked executions with StateC filter")
+
+	// Test 4: No SourceStateName filter - should return all executions with any state history
+	filterNoState := &LinkedExecutionFilter{}
+	nonLinkedNoState, err := suite.repository.ListNonLinkedExecutions(suite.ctx, &ExecutionFilter{}, filterNoState)
+	require.NoError(suite.T(), err)
+	require.Len(suite.T(), nonLinkedNoState, 3, "Expected 3 non-linked executions without state filter (exec4 has no state history)")
+}
+
+// TestListNonLinkedExecutions_WithStateHistoryAndLinkedExecution tests combined filtering
+func (suite *GormPostgresIntegrationTestSuite) TestListNonLinkedExecutions_WithStateHistoryAndLinkedExecution() {
+	baseTime := time.Now().Add(-3 * time.Hour)
+
+	// Create test executions
+	exec1 := &ExecutionRecord{
+		ExecutionID:    "exec-combo-1",
+		StateMachineID: "sm-combo-1",
+		Name:           "test-exec-1",
+		Input:          map[string]interface{}{"test": "data1"},
+		Status:         "SUCCEEDED",
+		StartTime:      &baseTime,
+		CurrentState:   "TestState",
+		Metadata:       map[string]interface{}{},
+	}
+	exec2 := &ExecutionRecord{
+		ExecutionID:    "exec-combo-2",
+		StateMachineID: "sm-combo-1",
+		Name:           "test-exec-2",
+		Input:          map[string]interface{}{"test": "data2"},
+		Status:         "SUCCEEDED",
+		StartTime:      &baseTime,
+		CurrentState:   "TestState",
+		Metadata:       map[string]interface{}{},
+	}
+	exec3 := &ExecutionRecord{
+		ExecutionID:    "exec-combo-3",
+		StateMachineID: "sm-combo-1",
+		Name:           "test-exec-3",
+		Input:          map[string]interface{}{"test": "data3"},
+		Status:         "SUCCEEDED",
+		StartTime:      &baseTime,
+		CurrentState:   "TestState",
+		Metadata:       map[string]interface{}{},
+	}
+
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, exec1))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, exec2))
+	require.NoError(suite.T(), suite.repository.SaveExecution(suite.ctx, exec3))
+
+	// Create state history for all executions with same state "ChainState"
+	for i, execID := range []string{"exec-combo-1", "exec-combo-2", "exec-combo-3"} {
+		sh := &StateHistoryRecord{
+			ID:                 fmt.Sprintf("sh-combo-%d", i+1),
+			ExecutionID:        execID,
+			StateName:          "ChainState",
+			StateType:          "Task",
+			Input:              map[string]interface{}{"key": execID},
+			Output:             map[string]interface{}{"result": execID},
+			Status:             "SUCCEEDED",
+			ExecutionStartTime: timePtr(baseTime),
+			StartTime:          timePtr(time.Now().Add(-2 * time.Hour)),
+			EndTime:            timePtr(time.Now().Add(-1 * time.Hour)),
+			Error:              "",
+			RetryCount:         0,
+			SequenceNumber:     1,
+			Metadata:           map[string]interface{}{},
+		}
+		require.NoError(suite.T(), suite.repository.SaveStateHistory(suite.ctx, sh))
+	}
+
+	// Create a linked execution (exec-combo-1 -> exec-combo-2) from ChainState
+	linkedExec := &LinkedExecutionRecord{
+		ID:                     "link-combo-1",
+		SourceStateMachineID:   "sm-combo-1",
+		SourceExecutionID:      "exec-combo-1",
+		SourceStateName:        "ChainState",
+		InputTransformerName:   "Transform1",
+		TargetStateMachineName: "sm-combo-2",
+		TargetExecutionID:      "exec-combo-2",
+		CreatedAt:              time.Now(),
+	}
+	require.NoError(suite.T(), suite.repository.SaveLinkedExecution(suite.ctx, linkedExec))
+
+	// Test: Filter by SourceStateName = "ChainState"
+	// exec-combo-1 has a linked execution from ChainState, so it should be excluded
+	// Should return exec-combo-2 and exec-combo-3
+	filter := &LinkedExecutionFilter{SourceStateName: "ChainState"}
+	nonLinked, err := suite.repository.ListNonLinkedExecutions(suite.ctx, &ExecutionFilter{}, filter)
+	require.NoError(suite.T(), err)
+	require.Len(suite.T(), nonLinked, 2, "Expected 2 non-linked executions")
+
+	// Verify exec-combo-1 is NOT in the list (it has a linked execution from ChainState)
+	for _, exec := range nonLinked {
+		assert.NotEqual(suite.T(), "exec-combo-1", exec.ExecutionID, "exec-combo-1 should not be in non-linked executions list")
+	}
+
+	// Verify exec-combo-2 and exec-combo-3 are in the list
+	foundExec2, foundExec3 := false, false
+	for _, exec := range nonLinked {
+		if exec.ExecutionID == "exec-combo-2" {
+			foundExec2 = true
+		}
+		if exec.ExecutionID == "exec-combo-3" {
+			foundExec3 = true
+		}
+	}
+	assert.True(suite.T(), foundExec2, "exec-combo-2 should be in non-linked executions list")
+	assert.True(suite.T(), foundExec3, "exec-combo-3 should be in non-linked executions list")
+}

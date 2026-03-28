@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -126,7 +127,7 @@ func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 		{&StateMachineModel{}, "state_machines"},
 		{&ExecutionModel{}, "executions"},
 		{&StateHistoryModel{}, "state_history"},
-		{&ExecutionStatisticsModel{}, "statistics"},
+		{&ExecutionStatisticsModel{}, "execution_statistics"},
 		{&MessageCorrelationModel{}, "message_correlations"},
 		{&LinkedExecutionModel{}, "linked_executions"},
 	}
@@ -155,14 +156,17 @@ func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 
 // migrateTable handles table creation or schema updates
 func (r *GormPostgresRepository) migrateTable(ctx context.Context, migrator gorm.Migrator, model interface{}, tableName string) error {
-	if !migrator.HasTable(model) {
-		if err := migrator.CreateTable(model); err != nil {
-			return fmt.Errorf("failed to create %s table: %w", tableName, err)
+	err := migrator.CreateTable(model)
+	if err != nil {
+		// Ignore "already exists" errors
+		if strings.Contains(err.Error(), "already exists") {
+			// Table exists, try to auto-migrate
+			if autoErr := r.db.WithContext(ctx).AutoMigrate(model); autoErr != nil {
+				fmt.Printf("Warning: could not auto-migrate %s table: %v\n", tableName, autoErr)
+			}
+			return nil
 		}
-	} else {
-		if err := r.db.WithContext(ctx).AutoMigrate(model); err != nil {
-			return fmt.Errorf("failed to update %s table schema: %w", tableName, err)
-		}
+		return fmt.Errorf("failed to create %s table: %w", tableName, err)
 	}
 	return nil
 }
@@ -1114,6 +1118,9 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 	subQuery := r.db.Table("linked_executions le")
 
 	if linkedExecutionFilter != nil {
+		if linkedExecutionFilter.SourceExecutionStatus != "" {
+			subQuery = subQuery.Where("le.source_execution_id = executions.execution_id AND executions.status = ?", linkedExecutionFilter.SourceExecutionStatus)
+		}
 		if linkedExecutionFilter.SourceStateName != "" {
 			subQuery = subQuery.Where("le.source_state_name = ?", linkedExecutionFilter.SourceStateName)
 		}
@@ -1131,9 +1138,24 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 		}
 	}
 
-	// Main query with LEFT JOIN to executions (to get status linkedExecutionFilter)
-	query := r.db.WithContext(ctx).Model(&ExecutionModel{}).
-		Select("DISTINCT executions.*").
+	// Build the main query with state_history filter
+	// Explicitly select only execution columns to avoid scanning state_history columns
+	var baseQuery *gorm.DB
+	if linkedExecutionFilter != nil && linkedExecutionFilter.SourceStateName != "" {
+		// Filter executions that have state_history with matching state_name
+		baseQuery = r.db.WithContext(ctx).Table("executions").
+			Select("executions.execution_id, executions.state_machine_id, executions.name, executions.input, executions.output, executions.status, executions.start_time, executions.end_time, executions.current_state, executions.error, executions.metadata, executions.history_sequence_number, executions.recovery_metadata, executions.created_at, executions.updated_at").
+			Joins("INNER JOIN state_history ON executions.execution_id = state_history.execution_id AND state_history.state_name = ?", linkedExecutionFilter.SourceStateName)
+	} else {
+		// Filter executions that have any state_history
+		baseQuery = r.db.WithContext(ctx).Table("executions").
+			Select("executions.execution_id, executions.state_machine_id, executions.name, executions.input, executions.output, executions.status, executions.start_time, executions.end_time, executions.current_state, executions.error, executions.metadata, executions.history_sequence_number, executions.recovery_metadata, executions.created_at, executions.updated_at").
+			Joins("INNER JOIN state_history ON executions.execution_id = state_history.execution_id")
+	}
+
+	// Main query with LEFT JOIN to filtered_links
+	query := baseQuery.
+		Distinct().
 		Joins("LEFT JOIN (?) AS filtered_links ON executions.execution_id = filtered_links.source_execution_id",
 			subQuery.Select("le.source_execution_id").
 				Joins("INNER JOIN executions AS source_exec ON le.source_execution_id = source_exec.execution_id")).
