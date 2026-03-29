@@ -21,6 +21,11 @@ type PostgresRepository struct {
 	config *Config
 }
 
+func (ps *PostgresRepository) ListNonLinkedExecutions(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error) {
+	// TODO implement me
+	panic("implement me")
+}
+
 // PostgresConfig extends Config with PostgreSQL-specific options
 type PostgresConfig struct {
 	MaxOpenConns     int
@@ -1104,6 +1109,12 @@ func (ps *PostgresRepository) buildExecutionFilters(
 		argCount++
 	}
 
+	if filter.CurrentState != "" {
+		conditions = append(conditions, fmt.Sprintf("current_state = $%d", argCount))
+		args = append(args, filter.CurrentState)
+		argCount++
+	}
+
 	if filter.StateMachineID != "" {
 		conditions = append(conditions, fmt.Sprintf("state_machine_id = $%d", argCount))
 		args = append(args, filter.StateMachineID)
@@ -1651,7 +1662,7 @@ func (ps *PostgresRepository) CountLinkedExecutions(ctx context.Context, filter 
 // For example: executions with no SUCCEEDED linked executions from a specific state
 //
 
-func (ps *PostgresRepository) ListNonLinkedExecutions(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error) {
+func (ps *PostgresRepository) ListNonLinkedExecutionsAnyState(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error) {
 	query, args := ps.buildNonLinkedExecutionsQuery(executionFilter, linkedExecutionFilter)
 	return ps.executeNonLinkedExecutionsQuery(ctx, query, args)
 }

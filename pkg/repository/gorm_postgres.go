@@ -462,6 +462,10 @@ func addFiltersToQuery(filter *ExecutionFilter, query *gorm.DB) *gorm.DB {
 		query = query.Where("status = ?", filter.Status)
 	}
 
+	if filter.CurrentState != "" {
+		query = query.Where("current_state ILIKE ?", "%"+filter.CurrentState+"%")
+	}
+
 	if filter.StateMachineID != "" {
 		query = query.Where("state_machine_id = ?", filter.StateMachineID)
 	}
@@ -1110,14 +1114,8 @@ func (r *GormPostgresRepository) CountLinkedExecutions(ctx context.Context, filt
 	return count, nil
 }
 
-// ListNonLinkedExecutions lists executions that have no linked executions matching the filter criteria
-// This allows finding executions that don't have specific types of linked executions
-// For example: executions with no SUCCEEDED linked executions from a specific state
 // ListNonLinkedExecutions lists executions that have no linked executions matching the filter criteria.
-// This allows finding executions that don't have specific types of linked executions.
-// For example: executions with no SUCCEEDED linked executions from a specific state.
 func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error) {
-	// Bug fix #4: guard against nil executionFilter to prevent panic on field access below.
 	if executionFilter == nil {
 		executionFilter = &ExecutionFilter{}
 	}
@@ -1125,36 +1123,21 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 	const execColumns = "executions.execution_id, executions.state_machine_id, executions.name, " +
 		"executions.input, executions.output, executions.status, executions.start_time, " +
 		"executions.end_time, executions.current_state, executions.error, executions.metadata, " +
-		"executions.history_sequence_number, executions.recovery_metadata, " +
 		"executions.created_at, executions.updated_at"
 
 	query := r.db.WithContext(ctx).
 		Table("executions").
-		Select("DISTINCT " + execColumns)
+		Select(execColumns)
 
-	// Join state_history to restrict results to executions that have actually entered the
-	// relevant state. When SourceStateName is set it doubles as both the state_history
-	// filter (did this execution pass through the state?) and the linked_executions filter
-	// (was a link already fired from that state?), which is the intended semantic.
-	if linkedExecutionFilter != nil && linkedExecutionFilter.SourceStateName != "" {
-		query = query.Joins(
-			"INNER JOIN state_history ON state_history.execution_id = executions.execution_id"+
-				" AND state_history.state_name = ?",
-			linkedExecutionFilter.SourceStateName,
-		)
-	} else {
-		query = query.Joins("INNER JOIN state_history ON state_history.execution_id = executions.execution_id")
-	}
-
-	// Bug fix #1 & #7: build a proper correlated NOT EXISTS subquery instead of a
-	// non-correlated derived table.  The correlated form avoids the need for DISTINCT and
-	// correctly scopes every filter to the linked_executions table alone.
+	// Correlated NOT EXISTS subquery for better performance and correctness
 	if linkedExecutionFilter != nil {
 		subQuery := r.db.Table("linked_executions le").
 			Select("1").
 			Where("le.source_execution_id = executions.execution_id")
 
-		// Filter which linked executions to look for (all fields are le.* — no outer join needed).
+		if linkedExecutionFilter.SourceStateMachineID != "" {
+			subQuery = subQuery.Where("le.source_state_machine_id = ?", linkedExecutionFilter.SourceStateMachineID)
+		}
 		if linkedExecutionFilter.SourceStateName != "" {
 			subQuery = subQuery.Where("le.source_state_name = ?", linkedExecutionFilter.SourceStateName)
 		}
@@ -1164,6 +1147,9 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 		if linkedExecutionFilter.TargetStateMachineName != "" {
 			subQuery = subQuery.Where("le.target_state_machine_name = ?", linkedExecutionFilter.TargetStateMachineName)
 		}
+		if linkedExecutionFilter.TargetExecutionID != "" {
+			subQuery = subQuery.Where("le.target_execution_id = ?", linkedExecutionFilter.TargetExecutionID)
+		}
 		if !linkedExecutionFilter.CreatedAfter.IsZero() {
 			subQuery = subQuery.Where("le.created_at >= ?", linkedExecutionFilter.CreatedAfter)
 		}
@@ -1172,28 +1158,17 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 		}
 
 		query = query.Where("NOT EXISTS (?)", subQuery)
-
-		// Filters that narrow down which source executions we care about.
-		if linkedExecutionFilter.SourceStateMachineID != "" {
-			query = query.Where("executions.state_machine_id = ?", linkedExecutionFilter.SourceStateMachineID)
-		}
-		if linkedExecutionFilter.SourceExecutionID != "" {
-			query = query.Where("executions.execution_id = ?", linkedExecutionFilter.SourceExecutionID)
-		}
-		// Bug fix #1 (cont.): apply the status directly on the outer executions row,
-		// not as a broken reference inside the subquery.
-		if linkedExecutionFilter.SourceExecutionStatus != "" {
-			query = query.Where("executions.status = ?", linkedExecutionFilter.SourceExecutionStatus)
-		}
 	}
 
-	// Bug fix #3 & #5: apply executionFilter clauses unconditionally — they are independent
-	// of linkedExecutionFilter and must not be nested inside its nil check.
+	// Apply general execution filters
 	if executionFilter.StateMachineID != "" {
 		query = query.Where("executions.state_machine_id = ?", executionFilter.StateMachineID)
 	}
 	if executionFilter.Status != "" {
 		query = query.Where("executions.status = ?", executionFilter.Status)
+	}
+	if executionFilter.CurrentState != "" {
+		query = query.Where("executions.current_state = ?", executionFilter.CurrentState)
 	}
 	if executionFilter.Name != "" {
 		query = query.Where("executions.name ILIKE ?", "%"+executionFilter.Name+"%")
@@ -1205,7 +1180,7 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 		query = query.Where("executions.start_time <= ?", executionFilter.StartBefore)
 	}
 
-	// Bug fix #2: pagination must read both guard and value from the same filter — executionFilter.
+	// Apply pagination
 	if executionFilter.Limit > 0 {
 		query = query.Limit(executionFilter.Limit)
 	}
@@ -1216,7 +1191,6 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 	query = query.Order("executions.start_time DESC")
 
 	var models []ExecutionModel
-	// Bug fix #6: error message no longer contains a Go variable name.
 	if err := query.Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("failed to list non-linked executions: %w", err)
 	}
@@ -1228,6 +1202,11 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 	}
 
 	return executions, nil
+}
+
+// ListNonLinkedExecutionsAnyState is a legacy alias for ListNonLinkedExecutions.
+func (r *GormPostgresRepository) ListNonLinkedExecutionsAnyState(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error) {
+	return r.ListNonLinkedExecutions(ctx, executionFilter, linkedExecutionFilter)
 }
 
 func toMessageCorrelationModel(record *MessageCorrelationRecord) *MessageCorrelationModel {

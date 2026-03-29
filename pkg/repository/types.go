@@ -63,6 +63,7 @@ type ExecutionFilter struct {
 	Status         string    // Filter by status
 	StateMachineID string    // Filter by state machine ID
 	Name           string    // Filter by name (supports partial match)
+	CurrentState   string    // Filter by current state (supports partial match)
 	StartAfter     time.Time // Filter executions started after this time
 	StartBefore    time.Time // Filter executions started before this time
 	Limit          int       // Maximum number of results
@@ -173,6 +174,8 @@ type Repository interface {
 	// ListNonLinkedExecutions lists executions that have no linked executions matching the filter criteria
 	// This allows finding executions that don't have specific types of linked executions
 	// For example: executions with no SUCCEEDED linked executions from a specific state
+	ListNonLinkedExecutionsAnyState(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error)
+
 	ListNonLinkedExecutions(ctx context.Context, executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) ([]*ExecutionRecord, error)
 
 	// FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold
