@@ -131,24 +131,39 @@ type BatchTaskPayload struct {
 
 ### 3. Batch Execution Handler (`pkg/handler/execution_handler.go`)
 
-The `HandleBatchExecution` method processes all tasks in the batch:
+The `HandleBatchExecution` method processes all tasks in the batch **concurrently**:
 
 ```go
 func (h *ExecutionHandler) HandleBatchExecution(ctx context.Context, payload *queue.BatchTaskPayload) error {
-    // Process each individual task in the batch
+    // Concurrency control: cap at 50 or task count (whichever is smaller)
+    maxConcurrency := min(payload.TaskCount, 50)
+    semaphore := make(chan struct{}, maxConcurrency)
+    
+    // Launch goroutines for each task
     for i, taskData := range payload.Tasks {
-        var execPayload queue.ExecutionTaskPayload
-        json.Unmarshal(taskData, &execPayload)
-        
-        // Execute this individual task
-        h.processBatchTask(ctx, &execPayload)
-        
-        // Signal barrier completion for micro-batch tracking
-        h.processBatchBarrier(ctx, &execPayload, err, h.orchestrator)
+        go func(index int, taskPayload queue.ExecutionTaskPayload) {
+            defer wg.Done()
+            semaphore <- struct{}{}        // Acquire
+            defer func() { <-semaphore }() // Release
+            
+            // Execute task
+            h.processBatchTask(ctx, &taskPayload)
+            
+            // Signal barrier completion for micro-batch tracking
+            h.processBatchBarrier(ctx, &taskPayload, err, h.orchestrator)
+        }(i, execPayload)
     }
+    
+    wg.Wait() // Wait for all tasks to complete
     return nil
 }
 ```
+
+**Key Features:**
+- **Concurrent execution**: Tasks run in parallel (up to 50 concurrently)
+- **Semaphore pattern**: Prevents resource exhaustion with bounded concurrency
+- **Partial completion**: Continues on individual failures
+- **Thread-safe error tracking**: Collects all failures for reporting
 
 ## Benefits
 
@@ -269,9 +284,10 @@ If issues arise, simply set `UseGroupEnqueue: false` or remove the field (defaul
 - For 100 tasks × 1KB each = ~100KB batch payload (negligible)
 
 ### Execution Time
-- Batch execution time ≈ sum of individual execution times
-- No parallelism within a batch (sequential processing)
-- Configure `Timeout` appropriately (e.g., `100 tasks × 30s = 50m`)
+- **Concurrent execution**: Tasks run in parallel (up to 50 at once)
+- Batch execution time ≈ (total tasks / concurrency) × avg_time_per_task
+- Example: 100 tasks with 30s each, concurrency=50 → ~60s total (not 50m!)
+- Configure `Timeout` appropriately based on expected concurrent execution time
 
 ### Concurrency
 - Groups are processed one-at-a-time per worker

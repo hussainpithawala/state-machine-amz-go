@@ -51,10 +51,13 @@ Successfully implemented Asynq's Task Aggregation feature for the state-machine-
 ### 6. `pkg/handler/execution_handler.go`
 **Added:**
 - `HandleBatchExecution()` method that:
-  - Iterates through all tasks in the batch payload
+  - **Concurrent execution**: Launches goroutines for all tasks in parallel
+  - **Bounded concurrency**: Semaphore pattern limits to max 50 concurrent executions
+  - **Thread-safe error collection**: Mutex-protected failure tracking
   - Processes each task individually via `processBatchTask()`
   - Signals barrier completion for each task (preserving micro-batch tracking)
   - Continues on individual failures (partial completion support)
+  - Reports summary with success/failure counts
 - `processBatchTask()` helper method for single task execution within batch context
 - Fixed error checking for `processBatchBarrier` calls (errcheck lint compliance)
 
@@ -181,23 +184,26 @@ input := batch.OrchestratorInput{
 - Aggregated task holds all payloads in memory: N tasks × avg_size
 - Example: 100 tasks × 1KB = ~100KB (negligible)
 
-### Execution Time
-- Batch timeout should account for sequential processing: N tasks × avg_time
-- Example: 100 tasks × 30s = 50m timeout (adjust accordingly)
+### Execution Time (Concurrent)
+- **Batch executes tasks concurrently** (up to 50 at once via semaphore)
+- Execution time ≈ (N / concurrency) × avg_time
+- Example: 100 tasks × 30s each, concurrency=50 → ~60s (not 50 minutes!)
+- Dramatic improvement over sequential processing
 
 ## When to Use
 
 ### ✅ Use Group Aggregation When:
 - Micro-batch size is large (50+ tasks)
-- Tasks have similar execution times
+- Tasks can execute independently (no ordering dependencies)
 - Want to reduce Redis load from frequent polling
-- State machine executions are lightweight
+- State machine executions are lightweight to moderate
+- **Benefit from concurrent execution** (faster batch completion)
 
 ### ❌ Use Individual Enqueue When:
 - Micro-batch size is small (< 10 tasks)
 - Tasks need immediate individual execution
 - Need fine-grained task-level monitoring
-- Executions are long-running
+- Executions are extremely long-running (resource exhaustion risk)
 
 ## Migration Path
 

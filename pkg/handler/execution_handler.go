@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/batch"
@@ -254,12 +255,24 @@ func (h *ExecutionHandler) HandleTimeout(ctx context.Context, payload *queue.Tim
 }
 
 // HandleBatchExecution processes an aggregated batch task from the queue.
-// This method processes all individual tasks in the batch sequentially,
-// executing each one and signaling barrier completion for micro-batch tracking.
+// This method processes all individual tasks in the batch concurrently using
+// goroutines, with controlled parallelism and barrier completion signaling.
 func (h *ExecutionHandler) HandleBatchExecution(ctx context.Context, payload *queue.BatchTaskPayload) error {
 	log.Printf("Processing batch execution: GroupID=%s, TaskCount=%d", payload.GroupID, payload.TaskCount)
 
-	// Process each individual task in the batch
+	// Determine concurrency limit (default to number of tasks or reasonable max)
+	maxConcurrency := payload.TaskCount
+	if maxConcurrency > 50 {
+		maxConcurrency = 50 // Cap at 50 concurrent executions
+	}
+
+	// Semaphore to limit concurrent goroutines
+	semaphore := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var failures []string
+
+	// Process each individual task in the batch concurrently
 	for i, taskData := range payload.Tasks {
 		// Parse the individual task payload
 		var execPayload queue.ExecutionTaskPayload
@@ -267,20 +280,49 @@ func (h *ExecutionHandler) HandleBatchExecution(ctx context.Context, payload *qu
 			return fmt.Errorf("failed to unmarshal task %d in batch %s: %w", i, payload.GroupID, err)
 		}
 
-		log.Printf("Processing batch task %d/%d: ExecutionName=%s, SourceExecutionID=%s",
-			i+1, payload.TaskCount, execPayload.ExecutionName, execPayload.SourceExecutionID)
+		wg.Add(1)
+		go func(index int, taskPayload queue.ExecutionTaskPayload) {
+			defer wg.Done()
 
-		// Process this individual task using the same logic as regular execution
-		if err := h.processBatchTask(ctx, &execPayload); err != nil {
-			log.Printf("Batch task %d/%d failed: ExecutionName=%s, Error=%v",
-				i+1, payload.TaskCount, execPayload.ExecutionName, err)
-			// Continue processing remaining tasks - don't fail the entire batch
-			// This ensures partial completion is tracked
-		}
+			// Acquire semaphore
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			log.Printf("Processing batch task %d/%d: ExecutionName=%s, SourceExecutionID=%s",
+				index+1, payload.TaskCount, taskPayload.ExecutionName, taskPayload.SourceExecutionID)
+
+			// Process this individual task using the same logic as regular execution
+			if err := h.processBatchTask(ctx, &taskPayload); err != nil {
+				log.Printf("Batch task %d/%d failed: ExecutionName=%s, Error=%v",
+					index+1, payload.TaskCount, taskPayload.ExecutionName, err)
+
+				// Track failure (thread-safe)
+				mu.Lock()
+				failures = append(failures, fmt.Sprintf("task %d/%d (%s): %v",
+					index+1, payload.TaskCount, taskPayload.ExecutionName, err))
+				mu.Unlock()
+				// Continue processing remaining tasks - don't fail the entire batch
+				// This ensures partial completion is tracked
+			}
+		}(i, execPayload)
 	}
 
-	log.Printf("Batch execution completed: GroupID=%s, Processed=%d/%d tasks",
-		payload.GroupID, len(payload.Tasks), payload.TaskCount)
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	// Report results
+	if len(failures) > 0 {
+		log.Printf("Batch execution completed with failures: GroupID=%s, Succeeded=%d/%d, Failed=%d",
+			payload.GroupID, payload.TaskCount-len(failures), payload.TaskCount, len(failures))
+		for _, failure := range failures {
+			log.Printf("  - %s", failure)
+		}
+		return fmt.Errorf("batch execution completed with %d/%d failures in group %s",
+			len(failures), payload.TaskCount, payload.GroupID)
+	}
+
+	log.Printf("Batch execution completed successfully: GroupID=%s, Processed=%d/%d tasks",
+		payload.GroupID, payload.TaskCount, payload.TaskCount)
 	return nil
 }
 
