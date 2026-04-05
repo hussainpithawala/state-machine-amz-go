@@ -128,6 +128,7 @@ func (o *Orchestrator) Signal(ctx context.Context, batchID, operator, notes stri
 func (o *Orchestrator) Run(
 	ctx context.Context,
 	batchID string,
+	sourceMachineId string,
 	sourceExecutionIDs []string,
 	targetMachineId string,
 	sourceStateName string,
@@ -159,6 +160,7 @@ func (o *Orchestrator) Run(
 		TotalCount:           len(sourceExecutionIDs),
 		MicroBatchSize:       mbSize,
 		SourceStateName:      sourceStateName,
+		SourceStateMachineID: sourceMachineId,
 		OrchestratorSMID:     OrchestratorStateMachineID,
 		TargetStateMachineID: targetMachineId,
 		FailurePolicy:        policy,

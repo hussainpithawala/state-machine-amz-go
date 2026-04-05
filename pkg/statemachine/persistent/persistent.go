@@ -739,6 +739,8 @@ func (pm *StateMachine) ExecuteBatch(
 			linkedExecutionFilter.InputTransformerName = config.InputTransformerName
 		}
 
+		sourceStateMachineId := filter.StateMachineID
+
 		sourceExecutionIDs, err := pm.repositoryManager.ListNonLinkedExecutions(ctx, filter, linkedExecutionFilter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list non-linked-source executions: %w", err)
@@ -753,9 +755,10 @@ func (pm *StateMachine) ExecuteBatch(
 			stringExecutionIDs[i] = v.ExecutionID
 		}
 
-		return pm.executeBatchConcurrent(ctx, stringExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
+		return pm.executeBatchConcurrent(ctx, sourceStateMachineId, stringExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
 	}
 	// Retrieve source execution IDs based on filter
+	sourceStateMachineId := filter.StateMachineID
 	sourceExecutionIDs, err := pm.repositoryManager.ListExecutionIDs(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list source-executions: %w", err)
@@ -765,7 +768,7 @@ func (pm *StateMachine) ExecuteBatch(
 		return []*BatchExecutionResult{}, nil
 	}
 
-	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
+	return pm.executeBatchConcurrent(ctx, sourceStateMachineId, sourceExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
 }
 
 // executeBatchConcurrent executes chained executions concurrently with controlled parallelism
@@ -773,6 +776,7 @@ func (pm *StateMachine) ExecuteBatch(
 // Otherwise, tasks are executed locally with goroutines
 func (pm *StateMachine) executeBatchConcurrent(
 	ctx context.Context,
+	sourceStateMachineId string,
 	sourceExecutionIDs []string,
 	targetMachineID string,
 	sourceStateName string,
@@ -781,7 +785,7 @@ func (pm *StateMachine) executeBatchConcurrent(
 ) ([]*BatchExecutionResult, error) {
 	// If queue client is configured, use distributed execution
 	if opts.DoMicroBatch && opts.MicroBatchSize > 0 {
-		return pm.executeMicroBatch(ctx, sourceExecutionIDs, targetMachineID, sourceStateName, opts, execOpts...)
+		return pm.executeMicroBatch(ctx, sourceStateMachineId, sourceExecutionIDs, targetMachineID, sourceStateName, opts, execOpts...)
 	}
 
 	// micro batching not requested follow general course of action
