@@ -365,6 +365,119 @@ func (o *Orchestrator) waitForTermination(ctx context.Context, sm StateMachine, 
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Common dispatch helpers
+// ──────────────────────────────────────────────────────────────────────────────
+
+// dispatchSlice represents a slice of micro-batch work returned by
+// computeDispatchSlice for both ID-based and input-based dispatching.
+type dispatchSlice struct {
+	mbIndex    int
+	mbID       string
+	actualSize int
+	cursorVal  int
+}
+
+// computeDispatchSlice calculates which micro-batch should be dispatched next.
+// Returns nil if all work has been dispatched.
+func (o *Orchestrator) computeDispatchSlice(
+	ctx context.Context,
+	batchID string,
+	totalCount int,
+	microBatchSize int,
+) (*dispatchSlice, error) {
+	mbSize := microBatchSize
+	if mbSize <= 0 {
+		mbSize = DefaultMicroBatchSize
+	}
+
+	cursorVal, err := o.rdb.Get(ctx, keyCursor(batchID)).Int()
+	if err == redis.Nil {
+		cursorVal = 0
+	} else if err != nil {
+		return nil, fmt.Errorf("read cursor for batch %s: %w", batchID, err)
+	}
+
+	if cursorVal >= totalCount {
+		return nil, nil // All work dispatched
+	}
+
+	mbIndex := cursorVal / mbSize
+	mbID := microBatchID(batchID, mbIndex)
+
+	return &dispatchSlice{
+		mbIndex:   mbIndex,
+		mbID:      mbID,
+		cursorVal: cursorVal,
+	}, nil
+}
+
+// checkIdempotency checks whether a micro-batch has already been dispatched.
+// Returns true if the batch was already dispatched (caller should skip).
+func (o *Orchestrator) checkIdempotency(
+	ctx context.Context,
+	batchID string,
+	mbIndex int,
+	prefix string,
+) (dispatchedKey string, alreadyDispatched bool, error error) {
+	dispatchedKey = fmt.Sprintf("batch:dispatched:%s:mb%d", batchID, mbIndex)
+	dispatched, err := o.rdb.Get(ctx, dispatchedKey).Result()
+	if err == nil && dispatched == "1" {
+		return dispatchedKey, true, nil
+	} else if err != nil && err != redis.Nil {
+		return dispatchedKey, false, fmt.Errorf("check dispatched key: %w", err)
+	}
+	return dispatchedKey, false, nil
+}
+
+// markDispatched atomically marks a micro-batch as dispatched and advances the cursor.
+func (o *Orchestrator) markDispatched(
+	ctx context.Context,
+	batchID string,
+	dispatchedKey string,
+	newCursor int,
+) error {
+	pipe := o.rdb.Pipeline()
+	pipe.Set(ctx, dispatchedKey, "1", IDsListTTL)
+	pipe.Set(ctx, keyCursor(batchID), newCursor, MetricsTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("mark dispatched and advance cursor: %w", err)
+	}
+	return nil
+}
+
+// buildDispatchResult constructs the standard dispatch result map.
+func buildDispatchResult(
+	batchID, orchestratorID string,
+	totalCount, mbSize int,
+	mbID string,
+	mbIndex, actualSize int,
+	alreadyDispatched bool,
+	extraFields map[string]interface{},
+) map[string]interface{} {
+	result := map[string]interface{}{
+		"batchID":        batchID,
+		"orchestratorID": orchestratorID,
+		"totalCount":     totalCount,
+		"microBatchSize": mbSize,
+		"dispatchResult": map[string]interface{}{
+			"isBatchComplete":   false,
+			"microBatchId":      mbID,
+			"microBatchIndex":   mbIndex,
+			"size":              actualSize,
+			"dispatchedAt":      time.Now().UTC(),
+			"alreadyDispatched": alreadyDispatched,
+		},
+	}
+
+	// Merge any extra fields specific to the dispatch type
+	for k, v := range extraFields {
+		result[k] = v
+	}
+
+	return result
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Task Handlers (local Go functions registered on the executor)
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -383,15 +496,13 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 		mbSize = DefaultMicroBatchSize
 	}
 
-	// ── Read cursor ───────────────────────────────────────────────────────────
-	cursorVal, err := o.rdb.Get(ctx, keyCursor(input.BatchID)).Int()
-	if err == redis.Nil {
-		cursorVal = 0
-	} else if err != nil {
-		return nil, fmt.Errorf("batch:dispatch: cursor %s: %w", input.BatchID, err)
+	// ── Compute dispatch slice ────────────────────────────────────────────────
+	slice, err := o.computeDispatchSlice(ctx, input.BatchID, input.TotalCount, mbSize)
+	if err != nil {
+		return nil, fmt.Errorf("batch:dispatch: compute slice: %w", err)
 	}
 
-	if cursorVal >= input.TotalCount {
+	if slice == nil {
 		return map[string]interface{}{
 			"batchID":              input.BatchID,
 			"orchestratorID":       input.OrchestratorSMID,
@@ -405,51 +516,60 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 		}, nil
 	}
 
-	// ── Slice next micro-batch IDs from Redis list ────────────────────────────
-	end := int64(cursorVal + mbSize - 1)
+	// ── Read IDs from Redis ───────────────────────────────────────────────────
+	end := int64(slice.cursorVal + mbSize - 1)
 	if int(end) >= input.TotalCount {
 		end = int64(input.TotalCount - 1)
 	}
-	ids, err := o.rdb.LRange(ctx, keyIDsList(input.BatchID), int64(cursorVal), end).Result()
+	ids, err := o.rdb.LRange(ctx, keyIDsList(input.BatchID), int64(slice.cursorVal), end).Result()
 	if err != nil {
 		return nil, fmt.Errorf("batch:dispatch: lrange: %w", err)
 	}
+	slice.actualSize = len(ids)
 
-	mbIndex := cursorVal / mbSize
-	mbID := microBatchID(input.BatchID, mbIndex)
-	actualSize := len(ids)
+	// ── Idempotency guard ─────────────────────────────────────────────────────
+	dispatchedKey, alreadyDispatched, err := o.checkIdempotency(ctx, input.BatchID, slice.mbIndex, "dispatch")
+	if err != nil {
+		return nil, fmt.Errorf("batch:dispatch: %w", err)
+	}
+	if alreadyDispatched {
+		newCursor := slice.cursorVal + slice.actualSize
+		if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
+			return nil, fmt.Errorf("batch:dispatch: advance cursor (skip dispatched): %w", err)
+		}
+		return buildDispatchResult(
+			input.BatchID, input.OrchestratorSMID, input.TotalCount, mbSize,
+			slice.mbID, slice.mbIndex, slice.actualSize, true,
+			map[string]interface{}{
+				"sourceStateMachineID": input.SourceStateMachineID,
+				"sourceStateName":      input.SourceStateName,
+			},
+		), nil
+	}
 
-	// ── Initialise Redis barrier ──────────────────────────────────────────────
-	if err := o.barrier.Init(ctx, mbID, actualSize); err != nil {
+	// ── Initialise barrier and enqueue ────────────────────────────────────────
+	if err := o.barrier.Init(ctx, slice.mbID, slice.actualSize); err != nil {
 		return nil, fmt.Errorf("batch:dispatch: init barrier: %w", err)
 	}
 
-	// ── Enqueue each ID to the queue ──────────────────────────────────────────
-	if err := o.enqueueIDs(ctx, input, ids, mbID, mbIndex); err != nil {
+	if err := o.enqueueIDs(ctx, input, ids, slice.mbID, slice.mbIndex); err != nil {
 		return nil, fmt.Errorf("batch:dispatch: enqueue: %w", err)
 	}
 
-	// ── Advance cursor ────────────────────────────────────────────────────────
-	newCursor := cursorVal + actualSize
-	if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
-		return nil, fmt.Errorf("batch:dispatch: advance cursor: %w", err)
+	// ── Mark dispatched ───────────────────────────────────────────────────────
+	newCursor := slice.cursorVal + slice.actualSize
+	if err := o.markDispatched(ctx, input.BatchID, dispatchedKey, newCursor); err != nil {
+		return nil, fmt.Errorf("batch:dispatch: %w", err)
 	}
 
-	return map[string]interface{}{
-		"batchID":              input.BatchID,
-		"orchestratorID":       input.OrchestratorSMID,
-		"totalCount":           input.TotalCount,
-		"microBatchSize":       input.MicroBatchSize,
-		"sourceStateMachineID": input.SourceStateMachineID,
-		"sourceStateName":      input.SourceStateName,
-		"dispatchResult": map[string]interface{}{
-			"isBatchComplete": false,
-			"microBatchId":    mbID,
-			"microBatchIndex": mbIndex,
-			"size":            actualSize,
-			"dispatchedAt":    time.Now().UTC(),
+	return buildDispatchResult(
+		input.BatchID, input.OrchestratorSMID, input.TotalCount, mbSize,
+		slice.mbID, slice.mbIndex, slice.actualSize, false,
+		map[string]interface{}{
+			"sourceStateMachineID": input.SourceStateMachineID,
+			"sourceStateName":      input.SourceStateName,
 		},
-	}, nil
+	), nil
 }
 
 // handleEvaluate is the local handler for the EvaluateMicroBatch Task state.
@@ -495,14 +615,13 @@ func (o *Orchestrator) handleDispatchBulk(ctx context.Context, rawInput interfac
 		mbSize = DefaultMicroBatchSize
 	}
 
-	cursorVal, err := o.rdb.Get(ctx, keyCursor(input.BatchID)).Int()
-	if err == redis.Nil {
-		cursorVal = 0
-	} else if err != nil {
-		return nil, fmt.Errorf("batch:dispatch-bulk: cursor %s: %w", input.BatchID, err)
+	// ── Compute dispatch slice ────────────────────────────────────────────────
+	slice, err := o.computeDispatchSlice(ctx, input.BatchID, input.TotalCount, mbSize)
+	if err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: compute slice: %w", err)
 	}
 
-	if cursorVal >= input.TotalCount {
+	if slice == nil {
 		return map[string]interface{}{
 			"batchID":              input.BatchID,
 			"orchestratorID":       input.OrchestratorSMID,
@@ -519,56 +638,68 @@ func (o *Orchestrator) handleDispatchBulk(ctx context.Context, rawInput interfac
 		}, nil
 	}
 
-	end := int64(cursorVal + mbSize - 1)
+	// ── Read inputs from Redis ────────────────────────────────────────────────
+	end := int64(slice.cursorVal + mbSize - 1)
 	if int(end) >= input.TotalCount {
 		end = int64(input.TotalCount - 1)
 	}
-
-	inputs, err := o.rdb.LRange(ctx, keyBulkInputsList(input.BatchID), int64(cursorVal), end).Result()
+	inputs, err := o.rdb.LRange(ctx, keyBulkInputsList(input.BatchID), int64(slice.cursorVal), end).Result()
 	if err != nil {
 		return nil, fmt.Errorf("batch:dispatch-bulk: lrange: %w", err)
 	}
+	slice.actualSize = len(inputs)
 
-	mbIndex := cursorVal / mbSize
-	mbID := microBatchID(input.BatchID, mbIndex)
-	actualSize := len(inputs)
+	// ── Idempotency guard ─────────────────────────────────────────────────────
+	dispatchedKey, alreadyDispatched, err := o.checkIdempotency(ctx, input.BatchID, slice.mbIndex, "dispatch-bulk")
+	if err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: %w", err)
+	}
+	if alreadyDispatched {
+		newCursor := slice.cursorVal + slice.actualSize
+		if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
+			return nil, fmt.Errorf("batch:dispatch-bulk: advance cursor (skip dispatched): %w", err)
+		}
+		return buildDispatchResult(
+			input.BatchID, input.OrchestratorSMID, input.TotalCount, mbSize,
+			slice.mbID, slice.mbIndex, slice.actualSize, true,
+			map[string]interface{}{
+				"targetStateMachineID": input.TargetStateMachineID,
+				"executionNamePrefix":  input.ExecutionNamePrefix,
+				"inputTransformerName": input.InputTransformerName,
+				"applyUnique":          input.ApplyUnique,
+				"failurePolicy":        input.FailurePolicy,
+			},
+		), nil
+	}
 
-	if err := o.barrier.Init(ctx, mbID, actualSize); err != nil {
+	// ── Initialise barrier ────────────────────────────────────────────────────
+	if err := o.barrier.Init(ctx, slice.mbID, slice.actualSize); err != nil {
 		return nil, fmt.Errorf("batch:dispatch-bulk: init barrier: %w", err)
 	}
 
-	// ── Advance cursor BEFORE enqueue ─────────────────────────────────────────
-	// Cursor is committed first so that any retry of this handler does not
-	// re-enqueue the same micro-batch a second time. If the process crashes
-	// after the cursor write but before enqueue completes, this micro-batch
-	// will be skipped (at-most-once) — preferable to duplicate processing.
-	newCursor := cursorVal + actualSize
-	if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
-		return nil, fmt.Errorf("batch:dispatch-bulk: advance cursor: %w", err)
+	// ── Mark dispatched and enqueue ───────────────────────────────────────────
+	// Mark dispatched BEFORE enqueue for at-most-once semantics. If we crash
+	// after this point, the micro-batch is skipped (preferable to duplicates).
+	newCursor := slice.cursorVal + slice.actualSize
+	if err := o.markDispatched(ctx, input.BatchID, dispatchedKey, newCursor); err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: %w", err)
 	}
 
-	if err := o.enqueueBulkInputs(ctx, input, inputs, mbID, mbIndex); err != nil {
+	if err := o.enqueueBulkInputs(ctx, input, inputs, slice.mbID, slice.mbIndex); err != nil {
 		return nil, fmt.Errorf("batch:dispatch-bulk: enqueue: %w", err)
 	}
 
-	return map[string]interface{}{
-		"batchID":              input.BatchID,
-		"orchestratorID":       input.OrchestratorSMID,
-		"totalCount":           input.TotalCount,
-		"microBatchSize":       mbSize,
-		"targetStateMachineID": input.TargetStateMachineID,
-		"executionNamePrefix":  input.ExecutionNamePrefix,
-		"inputTransformerName": input.InputTransformerName,
-		"applyUnique":          input.ApplyUnique,
-		"failurePolicy":        input.FailurePolicy,
-		"dispatchResult": map[string]interface{}{
-			"isBatchComplete": false,
-			"microBatchId":    mbID,
-			"microBatchIndex": mbIndex,
-			"size":            actualSize,
-			"dispatchedAt":    time.Now().UTC(),
+	return buildDispatchResult(
+		input.BatchID, input.OrchestratorSMID, input.TotalCount, mbSize,
+		slice.mbID, slice.mbIndex, slice.actualSize, false,
+		map[string]interface{}{
+			"targetStateMachineID": input.TargetStateMachineID,
+			"executionNamePrefix":  input.ExecutionNamePrefix,
+			"inputTransformerName": input.InputTransformerName,
+			"applyUnique":          input.ApplyUnique,
+			"failurePolicy":        input.FailurePolicy,
 		},
-	}, nil
+	), nil
 }
 
 // handleEvaluateBulk is the local handler for the EvaluateBulkMicroBatch Task state.
@@ -893,6 +1024,7 @@ func (o *Orchestrator) enqueueIDs(
 			ExecutionName:     fmt.Sprintf("%s-mb%d-%d", input.BatchID, mbIndex, idx),
 			ExecutionIndex:    idx,
 			Input:             taskInput,
+			ApplyUnique:       true, // Ensure each execution is enqueued only once within 24h
 		}
 
 		if _, err := qc.EnqueueExecution(payload); err != nil {
