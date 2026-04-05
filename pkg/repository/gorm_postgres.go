@@ -1150,13 +1150,6 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 		if linkedExecutionFilter.TargetExecutionID != "" {
 			subQuery = subQuery.Where("le.target_execution_id = ?", linkedExecutionFilter.TargetExecutionID)
 		}
-		if !linkedExecutionFilter.CreatedAfter.IsZero() {
-			subQuery = subQuery.Where("le.created_at >= ?", linkedExecutionFilter.CreatedAfter)
-		}
-		if !linkedExecutionFilter.CreatedBefore.IsZero() {
-			subQuery = subQuery.Where("le.created_at <= ?", linkedExecutionFilter.CreatedBefore)
-		}
-
 		query = query.Where("NOT EXISTS (?)", subQuery)
 	}
 
