@@ -253,6 +253,113 @@ func (h *ExecutionHandler) HandleTimeout(ctx context.Context, payload *queue.Tim
 	return sm.ProcessTimeoutTrigger(ctx, payload.CorrelationID)
 }
 
+// HandleBatchExecution processes an aggregated batch task from the queue.
+// This method processes all individual tasks in the batch sequentially,
+// executing each one and signaling barrier completion for micro-batch tracking.
+func (h *ExecutionHandler) HandleBatchExecution(ctx context.Context, payload *queue.BatchTaskPayload) error {
+	log.Printf("Processing batch execution: GroupID=%s, TaskCount=%d", payload.GroupID, payload.TaskCount)
+
+	// Process each individual task in the batch
+	for i, taskData := range payload.Tasks {
+		// Parse the individual task payload
+		var execPayload queue.ExecutionTaskPayload
+		if err := json.Unmarshal(taskData, &execPayload); err != nil {
+			return fmt.Errorf("failed to unmarshal task %d in batch %s: %w", i, payload.GroupID, err)
+		}
+
+		log.Printf("Processing batch task %d/%d: ExecutionName=%s, SourceExecutionID=%s",
+			i+1, payload.TaskCount, execPayload.ExecutionName, execPayload.SourceExecutionID)
+
+		// Process this individual task using the same logic as regular execution
+		if err := h.processBatchTask(ctx, &execPayload); err != nil {
+			log.Printf("Batch task %d/%d failed: ExecutionName=%s, Error=%v",
+				i+1, payload.TaskCount, execPayload.ExecutionName, err)
+			// Continue processing remaining tasks - don't fail the entire batch
+			// This ensures partial completion is tracked
+		}
+	}
+
+	log.Printf("Batch execution completed: GroupID=%s, Processed=%d/%d tasks",
+		payload.GroupID, len(payload.Tasks), payload.TaskCount)
+	return nil
+}
+
+// processBatchTask processes a single task within a batch execution context
+func (h *ExecutionHandler) processBatchTask(ctx context.Context, payload *queue.ExecutionTaskPayload) error {
+	// Load the state machine definition
+	sm, err := persistent.NewFromDefnId(ctx, payload.StateMachineID, h.repositoryManager)
+	if err != nil {
+		return fmt.Errorf("failed to load state machine: %w", err)
+	}
+
+	// Set queue client for timeout scheduling support
+	sm.SetQueueClient(h.queueClient)
+
+	// Add execution context if available
+	if h.executionContext != nil {
+		ctx = context.WithValue(ctx, types.ExecutionContextKey, h.executionContext)
+	}
+
+	// Build execution options
+	execOpts := []statemachine2.ExecutionOption{
+		statemachine2.WithExecutionName(payload.ExecutionName),
+	}
+
+	// Add source execution option if this is a chained execution
+	if payload.SourceExecutionID != "" {
+		execOpts = append(execOpts,
+			statemachine2.WithSourceExecution(payload.SourceExecutionID, payload.SourceStateName),
+		)
+		execOpts = append(execOpts,
+			statemachine2.WithUniqueness(payload.ApplyUnique))
+		execOpts = append(execOpts, statemachine2.WithInputTransformerName(payload.InputTransformerName))
+	}
+
+	// Prepare input
+	var input interface{}
+	if payload.SourceExecutionID != "" {
+		// Chained execution - derive input from source execution
+		output, err := h.repositoryManager.GetExecutionOutput(ctx, payload.SourceExecutionID, payload.SourceStateName)
+		if err != nil {
+			// Still signal barrier even on failure
+			if barrierErr := h.processBatchBarrier(ctx, payload, err, h.orchestrator); barrierErr != nil {
+				fmt.Printf("warn: processBatchBarrier failed: %v\n", barrierErr)
+			}
+			return fmt.Errorf("failed to get source execution output: %w", err)
+		}
+		input = output
+	} else if payload.Input != nil {
+		// Direct input provided
+		if inputBytes, ok := payload.Input.([]byte); ok {
+			if err := json.Unmarshal(inputBytes, &input); err != nil {
+				return fmt.Errorf("failed to unmarshal input: %w", err)
+			}
+		} else {
+			input = payload.Input
+		}
+	}
+
+	// Execute the state machine
+	exec, err := sm.Execute(ctx, input, execOpts...)
+
+	// Process barrier for micro-batch tracking
+	if barrierErr := h.processBatchBarrier(ctx, payload, err, h.orchestrator); barrierErr != nil {
+		fmt.Printf("warn: processBatchBarrier failed: %v\n", barrierErr)
+	}
+
+	if err != nil {
+		return fmt.Errorf("execution failed: %w", err)
+	}
+
+	// Check execution status
+	if exec.Status == persistent.FAILED {
+		return fmt.Errorf("execution completed with FAILED status: %v", exec.Error)
+	}
+
+	fmt.Printf("Batch task execution completed: ID=%s, Status=%s\n", exec.ID, exec.Status)
+	return nil
+}
+
 // SetExecutionContext sets the execution context for the handler
 func (h *ExecutionHandler) SetExecutionContext(execCtx types.ExecutionContext) {
 	h.executionContext = execCtx

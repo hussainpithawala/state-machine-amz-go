@@ -28,6 +28,8 @@ type ExecutionTaskPayload struct {
 	// Timeout-specific fields
 	IsTimeout     bool   `json:"is_timeout,omitempty"`
 	CorrelationID string `json:"correlation_id,omitempty"`
+	// GroupID enables task aggregation via asynq.Group option
+	GroupID string `json:"group_id,omitempty"`
 }
 
 // TimeoutTaskPayload represents the payload for a timeout boundary event task
@@ -40,13 +42,30 @@ type TimeoutTaskPayload struct {
 	ScheduledAt    int64  `json:"scheduled_at"` // Unix timestamp
 }
 
+// BatchTaskPayload represents an aggregated batch of execution tasks
+type BatchTaskPayload struct {
+	GroupID              string            `json:"group_id"`
+	StateMachineID       string            `json:"state_machine_id,omitempty"`
+	SourceStateName      string            `json:"source_state_name,omitempty"`
+	InputTransformerName string            `json:"input_transformer_name,omitempty"`
+	TaskCount            int               `json:"task_count"`
+	OriginalType         string            `json:"original_type"`
+	Tasks                []json.RawMessage `json:"tasks"`
+}
+
 // NewExecutionTask creates a new asynq task for state machine execution
 func NewExecutionTask(payload *ExecutionTaskPayload) (*asynq.Task, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	return asynq.NewTask(TypeExecutionTask, data, asynq.TaskID(payload.ExecutionName)), nil
+
+	opts := []asynq.Option{asynq.TaskID(payload.ExecutionName)}
+	if payload.GroupID != "" {
+		opts = append(opts, asynq.Group(payload.GroupID))
+	}
+
+	return asynq.NewTask(TypeExecutionTask, data, opts...), nil
 }
 
 // NewTimeoutTask creates a new asynq task for timeout boundary event
@@ -70,6 +89,15 @@ func ParseExecutionTaskPayload(task *asynq.Task) (*ExecutionTaskPayload, error) 
 // ParseTimeoutTaskPayload parses the task payload into TimeoutTaskPayload
 func ParseTimeoutTaskPayload(task *asynq.Task) (*TimeoutTaskPayload, error) {
 	var payload TimeoutTaskPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
+}
+
+// ParseBatchTaskPayload parses the task payload into BatchTaskPayload
+func ParseBatchTaskPayload(task *asynq.Task) (*BatchTaskPayload, error) {
+	var payload BatchTaskPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return nil, err
 	}

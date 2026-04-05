@@ -991,6 +991,9 @@ func (o *Orchestrator) storeIDs(ctx context.Context, batchID string, ids []strin
 
 // enqueueIDs pushes one task per sourceExecutionID to the queue.  Each payload
 // carries MicroBatchMeta so the queue worker can drive the barrier.
+//
+// When input.UseGroupEnqueue is true, tasks are enqueued as a group for Asynq
+// task aggregation, reducing queue overhead by processing all tasks together.
 func (o *Orchestrator) enqueueIDs(
 	ctx context.Context,
 	input OrchestratorInput,
@@ -1010,6 +1013,8 @@ func (o *Orchestrator) enqueueIDs(
 	}
 	metaJSON, _ := json.Marshal(meta)
 
+	// Build payloads for all IDs
+	payloads := make([]*queue.ExecutionTaskPayload, 0, len(ids))
 	for idx, sourceExecID := range ids {
 		// Embed the MicroBatchMeta inside the task Input map so the worker
 		// can extract it without any change to ExecutionTaskPayload's struct.
@@ -1026,11 +1031,24 @@ func (o *Orchestrator) enqueueIDs(
 			Input:             taskInput,
 			ApplyUnique:       true, // Ensure each execution is enqueued only once within 24h
 		}
+		payloads = append(payloads, payload)
+	}
 
-		if _, err := qc.EnqueueExecution(payload); err != nil {
-			return fmt.Errorf("enqueue id %s: %w", sourceExecID, err)
+	// Use group-based enqueuing if enabled
+	if input.UseGroupEnqueue {
+		groupID := mbID // Use micro-batch ID as the group identifier
+		if _, err := qc.EnqueueExecutionGroup(payloads, groupID); err != nil {
+			return fmt.Errorf("enqueue group %s: %w", groupID, err)
+		}
+	} else {
+		// Enqueue individually (legacy behavior)
+		for idx, payload := range payloads {
+			if _, err := qc.EnqueueExecution(payload); err != nil {
+				return fmt.Errorf("enqueue id %s: %w", ids[idx], err)
+			}
 		}
 	}
+
 	return nil
 }
 

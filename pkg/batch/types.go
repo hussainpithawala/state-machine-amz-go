@@ -87,6 +87,11 @@ type OrchestratorInput struct {
 	// FailurePolicy controls both statistical-control thresholds.
 	FailurePolicy FailurePolicy `json:"failure_policy"`
 
+	// UseGroupEnqueue enables Asynq task aggregation for micro-batch processing.
+	// When true, tasks are enqueued with a group ID and processed as a single batch
+	// task instead of individually. Reduces queue overhead for large micro-batches.
+	UseGroupEnqueue bool `json:"use_group_enqueue,omitempty"`
+
 	// ─── Fields populated by individual states (ResultPath) ─────────────────
 	DispatchResult *DispatchResult    `json:"dispatchResult,omitempty"`
 	Evaluation     *EvaluationResult  `json:"evaluation,omitempty"`
