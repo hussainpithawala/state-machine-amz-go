@@ -155,6 +155,8 @@ func (o *Orchestrator) Run(
 		SoftFailureThreshold:   DefaultSoftFailureThreshold,
 	}
 
+	useGroupEnqueue := opts.UseGroupEnqueue
+
 	input := OrchestratorInput{
 		BatchID:              batchID,
 		TotalCount:           len(sourceExecutionIDs),
@@ -164,6 +166,7 @@ func (o *Orchestrator) Run(
 		OrchestratorSMID:     OrchestratorStateMachineID,
 		TargetStateMachineID: targetMachineId,
 		FailurePolicy:        policy,
+		UseGroupEnqueue:      useGroupEnqueue,
 	}
 
 	// ── 2. Build the orchestrator state machine ───────────────────────────────
@@ -851,7 +854,8 @@ func (o *Orchestrator) ResumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 		return fmt.Errorf("signal: find waiting executions: %w", err)
 	}
 	if len(executions) == 0 {
-		return fmt.Errorf("signal: no waiting orchestrator for micro_batch_id=%s", mbMeta.MicroBatchID)
+		fmt.Printf("info: no waiting orchestrator for micro_batch_id=%s\t", mbMeta.MicroBatchID)
+		return nil
 	}
 
 	for _, rec := range executions {

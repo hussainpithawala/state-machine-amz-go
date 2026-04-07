@@ -418,9 +418,11 @@ func WithUniqueness(applyUnique bool) ExecutionOption {
 
 // BatchExecutionOptions configures batch execution behavior
 type BatchExecutionOptions struct {
+	BatchId             string
 	NamePrefix          string // Prefix for generated execution names
 	ConcurrentBatches   int    // Number of concurrent executions (0 = sequential, >0 = concurrent)
 	StopOnError         bool   // Stop processing if an execution fails
+	UseGroupEnqueue     bool
 	OnExecutionStart    func(sourceExecutionID string, index int)
 	OnExecutionComplete func(sourceExecutionID string, index int, err error)
 	// ── Micro-batch streaming fields ─────────────────────────────────────
