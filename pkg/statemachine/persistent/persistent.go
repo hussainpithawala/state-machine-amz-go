@@ -10,6 +10,7 @@ import (
 
 	// Third-party imports
 	"github.com/davecgh/go-spew/spew"
+	"github.com/google/uuid"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/redis/go-redis/v9"
 
@@ -96,9 +97,9 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 	// If input is already an Execution context, use it
 	if existingExec, ok := input.(*execution.Execution); ok {
 		execCtx = existingExec
-		// If ID is not set, generate a unique execution ID
+		// If ID is not set, generate a unique execution ID using UUID4
 		if execCtx.ID == "" {
-			execCtx.ID = fmt.Sprintf("%s-exec-%d", pm.stateMachineID, time.Now().UnixNano())
+			execCtx.ID = fmt.Sprintf("%s-exec-%s", pm.stateMachineID, uuid.New().String())
 		}
 		// Set StateMachineID if not set
 		if execCtx.StateMachineID == "" {
@@ -117,8 +118,8 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 		}
 
 		execCtx = execution.NewContext(execName, pm.statemachine.StartAt, input)
-		// Generate unique execution ID
-		execCtx.ID = fmt.Sprintf("%s-exec-%d", pm.stateMachineID, time.Now().UnixNano())
+		// Generate unique execution ID using UUID4
+		execCtx.ID = fmt.Sprintf("%s-exec-%s", pm.stateMachineID, uuid.New().String())
 		execCtx.StateMachineID = pm.stateMachineID
 	}
 
