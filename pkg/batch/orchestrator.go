@@ -135,6 +135,19 @@ func (o *Orchestrator) Run(
 	opts *statemachine2.BatchExecutionOptions,
 	execOpts []statemachine2.ExecutionOption,
 ) (<-chan error, error) {
+	// ── Prevent duplicate batch orchestrations ─────────────────────────────────
+	// Use Redis SETNX to ensure only one orchestrator execution can run for a
+	// given batchID. This prevents duplicate processing when Run is called
+	// multiple times (e.g., due to retries, restarts, or caller bugs).
+	batchLockKey := fmt.Sprintf("batch:lock:%s", batchID)
+	locked, err := o.rdb.SetNX(ctx, batchLockKey, "locked", 24*time.Hour).Result()
+	if err != nil {
+		return nil, fmt.Errorf("batch:run: acquire lock: %w", err)
+	}
+	if !locked {
+		return nil, fmt.Errorf("batch:run: batch %s is already running", batchID)
+	}
+
 	// ── 1. Store IDs in Redis ─────────────────────────────────────────────────
 	if err := o.storeIDs(ctx, batchID, sourceExecutionIDs); err != nil {
 		return nil, err
