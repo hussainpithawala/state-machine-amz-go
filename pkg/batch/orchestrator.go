@@ -374,16 +374,8 @@ func (o *Orchestrator) waitForTermination(ctx context.Context, sm StateMachine, 
 			}
 			switch rec.Status {
 			case "SUCCEEDED":
-				// Clean up batch resources after successful completion
-				if cleanErr := o.cleanupBatchResources(ctx, rec.Input); cleanErr != nil {
-					fmt.Printf("warn: batch cleanup after success: %v\n", cleanErr)
-				}
 				return nil
 			case "FAILED":
-				// Clean up batch resources even on failure
-				if cleanErr := o.cleanupBatchResources(ctx, rec.Input); cleanErr != nil {
-					fmt.Printf("warn: batch cleanup after failure: %v\n", cleanErr)
-				}
 				return fmt.Errorf("orchestrator execution %s FAILED", execID)
 			}
 		}
@@ -634,6 +626,11 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 	}
 
 	if slice == nil {
+		// All work has been dispatched - log completion metrics and clean up resources
+		o.logBatchCompletionMetrics(ctx, input.BatchID)
+		if err := o.cleanupBatchResources(ctx, rawInput); err != nil {
+			fmt.Printf("warn: batch cleanup after dispatch complete: %v\n", err)
+		}
 		return map[string]interface{}{
 			"batchID":              input.BatchID,
 			"orchestratorID":       input.OrchestratorSMID,
@@ -753,6 +750,11 @@ func (o *Orchestrator) handleDispatchBulk(ctx context.Context, rawInput interfac
 	}
 
 	if slice == nil {
+		// All work has been dispatched - log completion metrics and clean up resources
+		o.logBatchCompletionMetrics(ctx, input.BatchID)
+		if err := o.cleanupBatchResources(ctx, rawInput); err != nil {
+			fmt.Printf("warn: batch cleanup after dispatch complete: %v\n", err)
+		}
 		return map[string]interface{}{
 			"batchID":              input.BatchID,
 			"orchestratorID":       input.OrchestratorSMID,
