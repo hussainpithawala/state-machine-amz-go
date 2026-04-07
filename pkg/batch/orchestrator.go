@@ -374,12 +374,76 @@ func (o *Orchestrator) waitForTermination(ctx context.Context, sm StateMachine, 
 			}
 			switch rec.Status {
 			case "SUCCEEDED":
+				// Clean up batch resources after successful completion
+				if cleanErr := o.cleanupBatchResources(ctx, rec.Input); cleanErr != nil {
+					fmt.Printf("warn: batch cleanup after success: %v\n", cleanErr)
+				}
 				return nil
 			case "FAILED":
+				// Clean up batch resources even on failure
+				if cleanErr := o.cleanupBatchResources(ctx, rec.Input); cleanErr != nil {
+					fmt.Printf("warn: batch cleanup after failure: %v\n", cleanErr)
+				}
 				return fmt.Errorf("orchestrator execution %s FAILED", execID)
 			}
 		}
 	}
+}
+
+// cleanupBatchResources deletes all Redis keys associated with a batch after
+// completion (success or failure). This prevents resource leakage.
+func (o *Orchestrator) cleanupBatchResources(ctx context.Context, execInput interface{}) error {
+	batchID, err := extractBatchIDFromInput(execInput)
+	if err != nil {
+		return fmt.Errorf("extract batchID for cleanup: %w", err)
+	}
+
+	// Build list of keys to delete
+	keys := []string{
+		keyIDsList(batchID),
+		keyCursor(batchID),
+		keyMetricsWindow(batchID),
+		keyTotalProcessed(batchID),
+		keyTotalFailed(batchID),
+		keyResume(batchID),
+	}
+
+	// Delete keys in a pipeline for efficiency
+	pipe := o.rdb.Pipeline()
+	for _, key := range keys {
+		pipe.Del(ctx, key)
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("delete batch keys: %w", err)
+	}
+
+	fmt.Printf("info: cleaned up batch resources for batchID=%s\n", batchID)
+	return nil
+}
+
+// extractBatchIDFromInput extracts the batchID from the orchestrator execution input.
+func extractBatchIDFromInput(input interface{}) (string, error) {
+	inputMap, ok := input.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid input type: expected map[string]interface{}")
+	}
+
+	// The input is stored with a "$" key by the execution context
+	if dollarData, exists := inputMap["$"]; exists {
+		if nestedMap, ok := dollarData.(map[string]interface{}); ok {
+			if batchID, ok := nestedMap["batch_id"].(string); ok {
+				return batchID, nil
+			}
+		}
+	}
+
+	// Try direct access (in case it's stored differently)
+	if batchID, ok := inputMap["batch_id"].(string); ok {
+		return batchID, nil
+	}
+
+	return "", fmt.Errorf("batch_id not found in input")
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
