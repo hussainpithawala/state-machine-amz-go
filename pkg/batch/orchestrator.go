@@ -413,8 +413,102 @@ func (o *Orchestrator) cleanupBatchResources(ctx context.Context, execInput inte
 		return fmt.Errorf("delete batch keys: %w", err)
 	}
 
+	// ── Clean up Asynq unique keys if group enqueue was used ──────────────────
+	if err := o.cleanupAsynqUniqueKeys(ctx, execInput); err != nil {
+		fmt.Printf("warn: cleanup Asynq unique keys for batchID=%s: %v\n", batchID, err)
+	}
+
 	fmt.Printf("info: cleaned up batch resources for batchID=%s\n", batchID)
 	return nil
+}
+
+// cleanupAsynqUniqueKeys deletes Asynq unique keys created during group enqueue.
+// Pattern: asynq:{stateMachineName}:unique:statemachine:execution:*
+func (o *Orchestrator) cleanupAsynqUniqueKeys(ctx context.Context, execInput interface{}) error {
+	// Extract target state machine ID and UseGroupEnqueue flag
+	targetSMID, useGroupEnqueue, err := extractGroupEnqueueInfo(execInput)
+	if err != nil {
+		return fmt.Errorf("extract group enqueue info: %w", err)
+	}
+
+	// Skip cleanup if group enqueue wasn't used
+	if !useGroupEnqueue {
+		return nil
+	}
+
+	// Build the pattern to match Asynq unique keys
+	// Pattern: asynq:{stateMachineName}:unique:statemachine:execution:*
+	pattern := fmt.Sprintf("asynq:{%s}:unique:statemachine:execution:*", targetSMID)
+	// Use SCAN to find all matching keys
+	var deletedCount int
+	cursor := uint64(0)
+	const scanCount = 100
+
+	for {
+		matchedKeys, nextCursor, err := o.rdb.Scan(ctx, cursor, pattern, scanCount).Result()
+		if err != nil {
+			return fmt.Errorf("scan for asynq unique keys: %w", err)
+		}
+
+		if len(matchedKeys) > 0 {
+			pipe := o.rdb.Pipeline()
+			for _, key := range matchedKeys {
+				pipe.Del(ctx, key)
+			}
+			if _, err := pipe.Exec(ctx); err != nil {
+				fmt.Printf("warn: delete asynq unique keys batch: %v\n", err)
+			}
+			deletedCount += len(matchedKeys)
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if deletedCount > 0 {
+		fmt.Printf("info: cleaned up %d Asynq unique keys for stateMachine=%s\n", deletedCount, targetSMID)
+	}
+	return nil
+}
+
+// extractGroupEnqueueInfo extracts the target state machine ID and UseGroupEnqueue flag from input.
+func extractGroupEnqueueInfo(input interface{}) (targetSMID string, useGroupEnqueue bool, err error) {
+	inputMap, ok := input.(map[string]interface{})
+	if !ok {
+		return "", false, fmt.Errorf("invalid input type: expected map[string]interface{}")
+	}
+
+	// The input is stored with a "$" key by the execution context
+	var targetMap map[string]interface{}
+	if dollarData, exists := inputMap["$"]; exists {
+		if nestedMap, ok := dollarData.(map[string]interface{}); ok {
+			targetMap = nestedMap
+		}
+	} else {
+		targetMap = inputMap
+	}
+
+	if targetMap == nil {
+		return "", false, fmt.Errorf("target map not found in input")
+	}
+
+	// Extract target state machine ID
+	if smID, ok := targetMap["target_state_machine_id"].(string); ok {
+		targetSMID = smID
+	}
+
+	// Extract UseGroupEnqueue flag
+	if useGroup, ok := targetMap["use_group_enqueue"].(bool); ok {
+		useGroupEnqueue = useGroup
+	}
+
+	if targetSMID == "" {
+		return "", false, fmt.Errorf("target_state_machine_id not found in input")
+	}
+
+	return targetSMID, useGroupEnqueue, nil
 }
 
 // logBatchCompletionMetrics reads and logs batch completion metrics from Redis
