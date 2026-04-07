@@ -398,6 +398,9 @@ func (o *Orchestrator) cleanupBatchResources(ctx context.Context, execInput inte
 		return fmt.Errorf("extract batchID for cleanup: %w", err)
 	}
 
+	// ── Publish batch completion metrics before cleanup ───────────────────────
+	o.logBatchCompletionMetrics(ctx, batchID)
+
 	// Build list of keys to delete
 	keys := []string{
 		keyIDsList(batchID),
@@ -420,6 +423,52 @@ func (o *Orchestrator) cleanupBatchResources(ctx context.Context, execInput inte
 
 	fmt.Printf("info: cleaned up batch resources for batchID=%s\n", batchID)
 	return nil
+}
+
+// logBatchCompletionMetrics reads and logs batch completion metrics from Redis
+// before the keys are deleted during cleanup.
+func (o *Orchestrator) logBatchCompletionMetrics(ctx context.Context, batchID string) {
+	pipe := o.rdb.Pipeline()
+	totalProcessedCmd := pipe.Get(ctx, keyTotalProcessed(batchID))
+	totalFailedCmd := pipe.Get(ctx, keyTotalFailed(batchID))
+	cursorCmd := pipe.Get(ctx, keyCursor(batchID))
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		// Metrics may not exist or already expired, log and continue
+		fmt.Printf("info: batch completion metrics for batchID=%s (some metrics unavailable)\n", batchID)
+		return
+	}
+
+	// Extract values
+	totalProcessed := int64(0)
+	if val, err := totalProcessedCmd.Int64(); err == nil {
+		totalProcessed = val
+	}
+
+	totalFailed := int64(0)
+	if val, err := totalFailedCmd.Int64(); err == nil {
+		totalFailed = val
+	}
+
+	cursor := int64(0)
+	if val, err := cursorCmd.Int64(); err == nil {
+		cursor = val
+	}
+
+	totalCount := cursor // Cursor represents total dispatched
+	successCount := totalProcessed - totalFailed
+	if successCount < 0 {
+		successCount = 0
+	}
+
+	var failureRate float64
+	if totalProcessed > 0 {
+		failureRate = float64(totalFailed) / float64(totalProcessed) * 100
+	}
+
+	// Log comprehensive batch completion metrics
+	fmt.Printf("info: batch completed: batchID=%s, totalCount=%d, dispatched=%d, processed=%d, succeeded=%d, failed=%d, failureRate=%.2f%%\n",
+		batchID, totalCount, cursor, totalProcessed, successCount, totalFailed, failureRate)
 }
 
 // extractBatchIDFromInput extracts the batchID from the orchestrator execution input.
