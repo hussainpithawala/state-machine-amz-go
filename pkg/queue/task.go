@@ -30,6 +30,8 @@ type ExecutionTaskPayload struct {
 	CorrelationID string `json:"correlation_id,omitempty"`
 	// GroupID enables task aggregation via asynq.Group option
 	GroupID string `json:"group_id,omitempty"`
+	// GroupConcurrency controls the number of concurrent executions for a group
+	GroupConcurrency int `json:"group_concurrency,omitempty"`
 }
 
 // TimeoutTaskPayload represents the payload for a timeout boundary event task
@@ -48,6 +50,7 @@ type BatchTaskPayload struct {
 	StateMachineID       string            `json:"state_machine_id,omitempty"`
 	SourceStateName      string            `json:"source_state_name,omitempty"`
 	InputTransformerName string            `json:"input_transformer_name,omitempty"`
+	GroupConcurrency     int               `json:"group_concurrency,omitempty"`
 	TaskCount            int               `json:"task_count"`
 	OriginalType         string            `json:"original_type"`
 	Tasks                []json.RawMessage `json:"tasks"`

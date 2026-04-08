@@ -423,6 +423,7 @@ type BatchExecutionOptions struct {
 	ConcurrentBatches   int    // Number of concurrent executions (0 = sequential, >0 = concurrent)
 	StopOnError         bool   // Stop processing if an execution fails
 	UseGroupEnqueue     bool
+	GroupConcurrency    int
 	OnExecutionStart    func(sourceExecutionID string, index int)
 	OnExecutionComplete func(sourceExecutionID string, index int, err error)
 	// ── Micro-batch streaming fields ─────────────────────────────────────

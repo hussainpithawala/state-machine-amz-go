@@ -180,6 +180,7 @@ func (o *Orchestrator) Run(
 		TargetStateMachineID: targetMachineId,
 		FailurePolicy:        policy,
 		UseGroupEnqueue:      useGroupEnqueue,
+		GroupConcurrency:     opts.GroupConcurrency,
 	}
 
 	// ── 2. Build the orchestrator state machine ───────────────────────────────
@@ -1258,6 +1259,7 @@ func (o *Orchestrator) enqueueIDs(
 			ExecutionIndex:    idx,
 			Input:             taskInput,
 			ApplyUnique:       true, // Ensure each execution is enqueued only once within 24h
+			GroupConcurrency:  input.GroupConcurrency,
 		}
 		payloads = append(payloads, payload)
 	}

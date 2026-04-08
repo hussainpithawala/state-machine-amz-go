@@ -261,9 +261,9 @@ func (h *ExecutionHandler) HandleBatchExecution(ctx context.Context, payload *qu
 	log.Printf("Processing batch execution: GroupID=%s, TaskCount=%d", payload.GroupID, payload.TaskCount)
 
 	// Determine concurrency limit (default to number of tasks or reasonable max)
-	maxConcurrency := payload.TaskCount
-	if maxConcurrency > 50 {
-		maxConcurrency = 50 // Cap at 50 concurrent executions
+	maxConcurrency := payload.GroupConcurrency
+	if maxConcurrency > 500 {
+		maxConcurrency = 500 // Cap at 500 concurrent executions
 	}
 
 	// Semaphore to limit concurrent goroutines

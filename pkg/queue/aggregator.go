@@ -45,6 +45,7 @@ func (a *ExecutionTaskAggregator) Aggregate(group string, tasks []*asynq.Task) *
 				batchPayload.StateMachineID = execPayload.StateMachineID
 				batchPayload.SourceStateName = execPayload.SourceStateName
 				batchPayload.InputTransformerName = execPayload.InputTransformerName
+				batchPayload.GroupConcurrency = execPayload.GroupConcurrency
 			}
 		}
 	}
