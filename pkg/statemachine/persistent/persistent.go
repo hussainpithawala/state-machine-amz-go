@@ -8,9 +8,6 @@ import (
 	"sync"
 	"time"
 
-	// Third-party imports
-	"github.com/davecgh/go-spew/spew"
-	"github.com/google/uuid"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/redis/go-redis/v9"
 
@@ -97,10 +94,8 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 	// If input is already an Execution context, use it
 	if existingExec, ok := input.(*execution.Execution); ok {
 		execCtx = existingExec
-		// If ID is not set, generate a unique execution ID using UUID4
-		if execCtx.ID == "" {
-			execCtx.ID = fmt.Sprintf("%s-exec-%s", pm.stateMachineID, uuid.New().String())
-		}
+		// If ID is not set, leave it empty - PostgreSQL will auto-generate via gen_random_uuid()
+		// The generated ID will be returned after SaveExecution
 		// Set StateMachineID if not set
 		if execCtx.StateMachineID == "" {
 			execCtx.StateMachineID = pm.stateMachineID
@@ -118,8 +113,8 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 		}
 
 		execCtx = execution.NewContext(execName, pm.statemachine.StartAt, input)
-		// Generate unique execution ID using UUID4
-		execCtx.ID = fmt.Sprintf("%s-exec-%s", pm.stateMachineID, uuid.New().String())
+		// Leave ID empty - PostgreSQL will auto-generate via gen_random_uuid()
+		// The generated ID will be returned after SaveExecution
 		execCtx.StateMachineID = pm.stateMachineID
 	}
 
@@ -492,8 +487,6 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 			isTimeout = true
 		}
 		log.Printf("Info: timeout condition is %v :\n", isTimeout)
-		log.Printf("Info: inputMap is %v\n", inputMap)
-		spew.Dump(inputMap)
 	}
 
 	// Update correlation status
