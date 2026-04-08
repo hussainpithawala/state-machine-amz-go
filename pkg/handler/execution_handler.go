@@ -17,6 +17,9 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
+const MinGroupConcurrency = 10
+const MaxGroupConcurrency = 500
+
 // ExecutionHandler implements queue.ExecutionHandler interface
 // It handles all types of execution tasks from the queue including regular, chained, and timeout executions
 type ExecutionHandler struct {
@@ -261,13 +264,20 @@ func (h *ExecutionHandler) HandleBatchExecution(ctx context.Context, payload *qu
 	log.Printf("Processing batch execution: GroupID=%s, TaskCount=%d", payload.GroupID, payload.TaskCount)
 
 	// Determine concurrency limit (default to number of tasks or reasonable max)
-	maxConcurrency := payload.GroupConcurrency
-	if maxConcurrency > 500 {
-		maxConcurrency = 500 // Cap at 500 concurrent executions
+	groupConcurrency := payload.GroupConcurrency
+
+	if groupConcurrency > MaxGroupConcurrency {
+		groupConcurrency = MaxGroupConcurrency
+		log.Printf("Capping group concurrency to maximum allowed: %d", MaxGroupConcurrency)
+	}
+
+	if groupConcurrency <= MinGroupConcurrency {
+		groupConcurrency = MinGroupConcurrency
+		log.Printf("Capping group concurrency to minimum allowed: %d", MinGroupConcurrency)
 	}
 
 	// Semaphore to limit concurrent goroutines
-	semaphore := make(chan struct{}, maxConcurrency)
+	semaphore := make(chan struct{}, groupConcurrency)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var failures []string

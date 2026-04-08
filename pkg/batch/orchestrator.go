@@ -278,6 +278,8 @@ func (o *Orchestrator) RunBulk(
 		ExecutionNamePrefix:  opts.NamePrefix,
 		InputTransformerName: config.InputTransformerName,
 		ApplyUnique:          config.ApplyUnique,
+		UseGroupEnqueue:      opts.UseGroupEnqueue,
+		GroupConcurrency:     opts.GroupConcurrency,
 		FailurePolicy:        policy,
 	}
 
@@ -947,6 +949,8 @@ func (o *Orchestrator) handleEvaluateBulk(ctx context.Context, rawInput interfac
 }
 
 // enqueueBulkInputs pushes one task per input to the queue for bulk execution.
+// When input.UseGroupEnqueue is true, tasks are enqueued as a group for Asynq
+// task aggregation, reducing queue overhead by processing all tasks together.
 func (o *Orchestrator) enqueueBulkInputs(
 	ctx context.Context,
 	input BulkOrchestratorInput,
@@ -968,6 +972,8 @@ func (o *Orchestrator) enqueueBulkInputs(
 
 	mbStart := mbIndex * input.MicroBatchSize
 
+	// Build payloads for all inputs
+	payloads := make([]*queue.ExecutionTaskPayload, 0, len(inputs))
 	for idx, inputJSON := range inputs {
 		var inputData interface{}
 		if err := json.Unmarshal([]byte(inputJSON), &inputData); err != nil {
@@ -991,10 +997,23 @@ func (o *Orchestrator) enqueueBulkInputs(
 			ExecutionName:        fmt.Sprintf("%s-%d", input.ExecutionNamePrefix, globalIdx),
 			ExecutionIndex:       globalIdx,
 			Input:                inputMap,
+			GroupConcurrency:     input.GroupConcurrency,
 		}
+		payloads = append(payloads, payload)
+	}
 
-		if _, err := qc.EnqueueExecution(payload); err != nil {
-			return fmt.Errorf("enqueue input %d: %w", idx, err)
+	// Use group-based enqueuing if enabled
+	if input.UseGroupEnqueue {
+		groupID := mbID // Use micro-batch ID as the group identifier
+		if _, err := qc.EnqueueExecutionGroup(payloads, groupID); err != nil {
+			return fmt.Errorf("enqueue group %s: %w", groupID, err)
+		}
+	} else {
+		// Enqueue individually (legacy behavior)
+		for idx, payload := range payloads {
+			if _, err := qc.EnqueueExecution(payload); err != nil {
+				return fmt.Errorf("enqueue input %d: %w", idx, err)
+			}
 		}
 	}
 

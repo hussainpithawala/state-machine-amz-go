@@ -455,9 +455,12 @@ type BulkExecutionOptions struct {
 	StopOnError         bool   // Stop processing if an execution fails
 	OnExecutionStart    func(input interface{}, index int)
 	OnExecutionComplete func(input interface{}, index int, err error)
+	GroupConcurrency    int
 	// Micro-batch streaming fields
 	DoMicroBatch        bool        // Enable adaptive micro-batch streaming
 	MicroBatchSize      int         // Number of inputs per micro-batch
 	RedisClient         interface{} // *redis.Client for barrier/metrics
 	FailurePolicyConfig interface{} // cast to batch.FailurePolicy at call site
+	// Group enqueue for task aggregation
+	UseGroupEnqueue bool // Enable Asynq task aggregation for bulk micro-batches
 }

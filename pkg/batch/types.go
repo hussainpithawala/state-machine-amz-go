@@ -218,6 +218,12 @@ type BulkOrchestratorInput struct {
 
 	ApplyUnique bool `json:"apply_unique"`
 
+	// UseGroupEnqueue enables Asynq task aggregation for bulk micro-batch processing.
+	// When true, tasks are enqueued with a group ID and processed as a single batch
+	// task instead of individually. Reduces queue overhead for large micro-batches.
+	UseGroupEnqueue  bool `json:"use_group_enqueue,omitempty"`
+	GroupConcurrency int  `json:"group_concurrency,omitempty"`
+
 	FailurePolicy FailurePolicy `json:"failure_policy"`
 
 	DispatchResult *DispatchResult    `json:"dispatchResult,omitempty"`
