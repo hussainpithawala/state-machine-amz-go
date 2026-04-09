@@ -8,8 +8,6 @@ import (
 	"sync"
 	"time"
 
-	// Third-party imports
-	"github.com/davecgh/go-spew/spew"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/redis/go-redis/v9"
 
@@ -96,10 +94,8 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 	// If input is already an Execution context, use it
 	if existingExec, ok := input.(*execution.Execution); ok {
 		execCtx = existingExec
-		// If ID is not set, generate a unique execution ID
-		if execCtx.ID == "" {
-			execCtx.ID = fmt.Sprintf("%s-exec-%d", pm.stateMachineID, time.Now().UnixNano())
-		}
+		// If ID is not set, leave it empty - PostgreSQL will auto-generate via gen_random_uuid()
+		// The generated ID will be returned after SaveExecution
 		// Set StateMachineID if not set
 		if execCtx.StateMachineID == "" {
 			execCtx.StateMachineID = pm.stateMachineID
@@ -117,8 +113,8 @@ func (pm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 		}
 
 		execCtx = execution.NewContext(execName, pm.statemachine.StartAt, input)
-		// Generate unique execution ID
-		execCtx.ID = fmt.Sprintf("%s-exec-%d", pm.stateMachineID, time.Now().UnixNano())
+		// Leave ID empty - PostgreSQL will auto-generate via gen_random_uuid()
+		// The generated ID will be returned after SaveExecution
 		execCtx.StateMachineID = pm.stateMachineID
 	}
 
@@ -491,8 +487,6 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 			isTimeout = true
 		}
 		log.Printf("Info: timeout condition is %v :\n", isTimeout)
-		log.Printf("Info: inputMap is %v\n", inputMap)
-		spew.Dump(inputMap)
 	}
 
 	// Update correlation status
@@ -739,6 +733,8 @@ func (pm *StateMachine) ExecuteBatch(
 			linkedExecutionFilter.InputTransformerName = config.InputTransformerName
 		}
 
+		sourceStateMachineId := filter.StateMachineID
+
 		sourceExecutionIDs, err := pm.repositoryManager.ListNonLinkedExecutions(ctx, filter, linkedExecutionFilter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list non-linked-source executions: %w", err)
@@ -753,9 +749,10 @@ func (pm *StateMachine) ExecuteBatch(
 			stringExecutionIDs[i] = v.ExecutionID
 		}
 
-		return pm.executeBatchConcurrent(ctx, stringExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
+		return pm.executeBatchConcurrent(ctx, sourceStateMachineId, stringExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
 	}
 	// Retrieve source execution IDs based on filter
+	sourceStateMachineId := filter.StateMachineID
 	sourceExecutionIDs, err := pm.repositoryManager.ListExecutionIDs(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list source-executions: %w", err)
@@ -765,7 +762,7 @@ func (pm *StateMachine) ExecuteBatch(
 		return []*BatchExecutionResult{}, nil
 	}
 
-	return pm.executeBatchConcurrent(ctx, sourceExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
+	return pm.executeBatchConcurrent(ctx, sourceStateMachineId, sourceExecutionIDs, pm.GetID(), sourceStateName, opts, execOpts...)
 }
 
 // executeBatchConcurrent executes chained executions concurrently with controlled parallelism
@@ -773,6 +770,7 @@ func (pm *StateMachine) ExecuteBatch(
 // Otherwise, tasks are executed locally with goroutines
 func (pm *StateMachine) executeBatchConcurrent(
 	ctx context.Context,
+	sourceStateMachineId string,
 	sourceExecutionIDs []string,
 	targetMachineID string,
 	sourceStateName string,
@@ -781,7 +779,7 @@ func (pm *StateMachine) executeBatchConcurrent(
 ) ([]*BatchExecutionResult, error) {
 	// If queue client is configured, use distributed execution
 	if opts.DoMicroBatch && opts.MicroBatchSize > 0 {
-		return pm.executeMicroBatch(ctx, sourceExecutionIDs, targetMachineID, sourceStateName, opts, execOpts...)
+		return pm.executeMicroBatch(ctx, sourceStateMachineId, sourceExecutionIDs, targetMachineID, sourceStateName, opts, execOpts...)
 	}
 
 	// micro batching not requested follow general course of action

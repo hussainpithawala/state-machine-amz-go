@@ -14,6 +14,7 @@ import (
 type ExecutionHandler interface {
 	HandleExecution(ctx context.Context, payload *ExecutionTaskPayload) error
 	HandleTimeout(ctx context.Context, payload *TimeoutTaskPayload) error
+	HandleBatchExecution(ctx context.Context, payload *BatchTaskPayload) error
 }
 
 // Worker wraps asynq.Server for processing state machine execution tasks
@@ -55,6 +56,7 @@ func NewWorker(config *Config, handler ExecutionHandler) (*Worker, error) {
 func (w *Worker) registerHandlers() {
 	w.mux.HandleFunc(TypeExecutionTask, w.handleExecutionTask)
 	w.mux.HandleFunc(TypeTimeoutTask, w.handleTimeoutTask)
+	w.mux.HandleFunc(TypeBatchTask, w.handleBatchTask)
 }
 
 // handleExecutionTask processes a state machine execution task
@@ -102,6 +104,27 @@ func (w *Worker) handleTimeoutTask(ctx context.Context, task *asynq.Task) error 
 	}
 
 	log.Printf("Timeout task completed successfully: CorrelationID=%s", payload.CorrelationID)
+	return nil
+}
+
+// handleBatchTask processes an aggregated batch task
+func (w *Worker) handleBatchTask(ctx context.Context, task *asynq.Task) error {
+	// Parse the task payload
+	payload, err := ParseBatchTaskPayload(task)
+	if err != nil {
+		return fmt.Errorf("failed to parse batch task payload: %w", err)
+	}
+
+	log.Printf("Processing batch task: GroupID=%s, TaskCount=%d, StateMachineID=%s",
+		payload.GroupID, payload.TaskCount, payload.StateMachineID)
+
+	// Delegate to batch execution handler
+	if err := w.executionHandler.HandleBatchExecution(ctx, payload); err != nil {
+		log.Printf("Batch execution failed: GroupID=%s, Error=%v", payload.GroupID, err)
+		return fmt.Errorf("batch execution failed: %w", err)
+	}
+
+	log.Printf("Batch execution completed successfully: GroupID=%s, TaskCount=%d", payload.GroupID, payload.TaskCount)
 	return nil
 }
 

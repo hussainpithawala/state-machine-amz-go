@@ -25,9 +25,9 @@ type Execution struct {
 	History               []StateHistory
 	HistorySequenceNumber int
 	Metadata              map[string]interface{}
-	
+
 	// Recovery-related fields for crash-resilient execution
-	RecoveryMetadata      *RecoveryMetadata
+	RecoveryMetadata *RecoveryMetadata
 }
 
 // RecoveryMetadata holds information needed for crash recovery
@@ -196,12 +196,12 @@ func (e *Execution) CanRecover() bool {
 	if e.RecoveryMetadata == nil {
 		return true // No metadata means no limits set, allow recovery
 	}
-	
+
 	maxAttempts := e.RecoveryMetadata.MaxRecoveryAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 3 // Default
 	}
-	
+
 	return e.RecoveryMetadata.RecoveryAttemptCount < maxAttempts
 }
 
@@ -285,5 +285,5 @@ func (e *Execution) ToMap() map[string]interface{} {
 
 // generateExecutionID generates a unique execution ID
 func generateExecutionID() string {
-	return fmt.Sprintf("exec-%s", uuid.New().String()[:8])
+	return fmt.Sprintf("exec-%s", uuid.New().String())
 }

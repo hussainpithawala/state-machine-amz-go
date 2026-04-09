@@ -14,6 +14,27 @@ type Config struct {
 	Concurrency    int
 	Queues         map[string]int
 	RetryPolicy    *RetryPolicy
+
+	// GroupAggregation enables task aggregation for group-based processing
+	GroupAggregation *GroupAggregationConfig
+}
+
+// GroupAggregationConfig configures task grouping for batch processing
+type GroupAggregationConfig struct {
+	// Enabled turns on group aggregation
+	Enabled bool
+
+	// GroupMaxSize triggers group processing when this many tasks are collected
+	// If 0, defaults to asynq default (typically 100)
+	GroupMaxSize int
+
+	// GroupMaxDelay is the maximum time to wait before processing a group
+	// since the first task was added. If 0, defaults to 5 minutes.
+	GroupMaxDelay time.Duration
+
+	// GroupGracePeriod is the time to wait after the last task before processing.
+	// This resets with each new task. If 0, defaults to 15 seconds.
+	GroupGracePeriod time.Duration
 }
 
 // RetryPolicy defines retry behavior for failed tasks
@@ -76,8 +97,18 @@ func (c *Config) GetRedisClientOpt() asynq.RedisClientOpt {
 
 // GetServerConfig returns asynq server configuration
 func (c *Config) GetServerConfig() asynq.Config {
-	return asynq.Config{
+	cfg := asynq.Config{
 		Concurrency: c.Concurrency,
 		Queues:      c.Queues,
 	}
+
+	// Apply group aggregation settings if enabled
+	if c.GroupAggregation != nil && c.GroupAggregation.Enabled {
+		cfg.GroupMaxSize = c.GroupAggregation.GroupMaxSize
+		cfg.GroupMaxDelay = c.GroupAggregation.GroupMaxDelay
+		cfg.GroupGracePeriod = c.GroupAggregation.GroupGracePeriod
+		cfg.GroupAggregator = &ExecutionTaskAggregator{}
+	}
+
+	return cfg
 }

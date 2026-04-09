@@ -1562,3 +1562,139 @@ func TestChoiceStateValidationQuick(t *testing.T) {
 	err := state.Validate()
 	require.NoError(t, err)
 }
+
+func TestChoiceState_Execute_TypeCheckingOperators(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        interface{}
+		choices      []ChoiceRule
+		defaultState string
+		expected     string
+	}{
+		{
+			name: "IsPresent - field exists",
+			input: map[string]interface{}{
+				"paymentContext": map[string]interface{}{
+					"originalRequest": map[string]interface{}{
+						"fallbackMethod": "ACH",
+					},
+				},
+			},
+			choices: []ChoiceRule{
+				{
+					Variable:  "$.paymentContext.originalRequest.fallbackMethod",
+					IsPresent: boolPtr(true),
+					Next:      "HasFallback",
+				},
+			},
+			expected: "HasFallback",
+		},
+		{
+			name: "IsPresent - field missing",
+			input: map[string]interface{}{
+				"paymentContext": map[string]interface{}{
+					"originalRequest": map[string]interface{}{},
+				},
+			},
+			choices: []ChoiceRule{
+				{
+					Variable:  "$.paymentContext.originalRequest.fallbackMethod",
+					IsPresent: boolPtr(true),
+					Next:      "HasFallback",
+				},
+			},
+			defaultState: "NoFallback",
+			expected:     "NoFallback",
+		},
+		{
+			name: "IsNull - value is null",
+			input: map[string]interface{}{
+				"paymentMethod": nil,
+			},
+			choices: []ChoiceRule{
+				{
+					Variable: "$.paymentMethod",
+					IsNull:   boolPtr(true),
+					Next:     "NoPaymentMethod",
+				},
+			},
+			defaultState: "HasPaymentMethod",
+			expected:     "NoPaymentMethod",
+		},
+		{
+			name: "IsString - value is string",
+			input: map[string]interface{}{
+				"name": "John",
+			},
+			choices: []ChoiceRule{
+				{
+					Variable: "$.name",
+					IsString: boolPtr(true),
+					Next:     "HasName",
+				},
+			},
+			expected: "HasName",
+		},
+		{
+			name: "IsNumeric - value is number",
+			input: map[string]interface{}{
+				"age": 30.5,
+			},
+			choices: []ChoiceRule{
+				{
+					Variable:  "$.age",
+					IsNumeric: boolPtr(true),
+					Next:      "HasAge",
+				},
+			},
+			expected: "HasAge",
+		},
+		{
+			name: "IsBoolean - value is boolean",
+			input: map[string]interface{}{
+				"active": true,
+			},
+			choices: []ChoiceRule{
+				{
+					Variable:  "$.active",
+					IsBoolean: boolPtr(true),
+					Next:      "IsActive",
+				},
+			},
+			expected: "IsActive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := &ChoiceState{
+				Choices: tt.choices,
+			}
+			if tt.defaultState != "" {
+				state.Default = &tt.defaultState
+			}
+
+			_, nextState, err := state.Execute(context.Background(), tt.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.expected == "" {
+				if nextState != nil {
+					t.Errorf("expected nil nextState, got %s", *nextState)
+				}
+			} else {
+				if nextState == nil {
+					t.Fatalf("expected nextState %s, got nil", tt.expected)
+				}
+				if *nextState != tt.expected {
+					t.Errorf("expected nextState %s, got %s", tt.expected, *nextState)
+				}
+			}
+		})
+	}
+}
+
+func boolPtr(b bool) *bool {
+	return &b
+}

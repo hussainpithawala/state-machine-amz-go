@@ -23,12 +23,14 @@ A powerful, production-ready state machine implementation for Go that's fully co
 - 📦 **Batch Execution** - Execute chained workflows in batch mode with filtering and concurrency control
 - 🎛️ **Micro-Batch Orchestration** - Streaming framework with adaptive failure-rate control and pause/resume (NEW in v1.2.11)
 - 🌐 **Distributed Queue** - Redis-backed task queue for horizontal scaling across workers
+- 📊 **Task Aggregation** - Group-based queue processing for reduced overhead and improved throughput (NEW in v1.2.19)
 - 🎯 **REST API** - Complete HTTP API via [state-machine-amz-gin](https://github.com/hussainpithawala/state-machine-amz-gin)
 - 🏗️ **Clean Architecture** - Separation between state machine logic and persistence
 - 📊 **Execution History** - Complete audit trail with state-by-state tracking
 - 🧪 **Test-Friendly** - Easy mocking and comprehensive testing support
 - 🔌 **Pluggable Storage** - Support for multiple persistence backends (PostgreSQL, GORM, In-Memory)
 - ♻️ **Crash-Resilient Recovery** - Automatic detection and recovery from crashes with configurable strategies (NEW in v1.2.14)
+- 🔍 **Type-Checking Operators** - Route workflows based on variable presence and type (`IsPresent`, `IsNull`, `IsString`, etc.) (NEW in v1.2.19)
 
 ## 📦 Installation
 
@@ -264,8 +266,13 @@ RouteOrder:
     - Variable: "$.customer.tier"
       StringEquals: "PREMIUM"
       Next: "ProcessPremium"
+    - Variable: "$.order.discountCode"
+      IsPresent: true
+      Next: "ApplyDiscount"
   Default: "ProcessStandard"
 ```
+
+*Also supports type-checking operators: `IsPresent`, `IsNull`, `IsBoolean`, `IsNumeric`, `IsString`, `IsTimestamp`.*
 </details>
 
 <details>
@@ -607,6 +614,8 @@ for i := 0; i < 1000000; i++ {
 }
 ```
 
+> 💡 **Tip:** For large batches, enable task aggregation with `GroupAggregation` config to process tasks in groups, reducing queue overhead by up to 10x.
+
 **3. Worker Mode - Process Tasks:**
 
 ```go
@@ -683,6 +692,8 @@ Process large batches with intelligent failure management, adaptive evaluation, 
 - 🔄 **Redis Barrier Coordination** - Lua-based atomic operations for distributed worker sync
 - 📈 **Real-time Metrics** - Per-batch and per-micro-batch granular tracking
 - 🎛️ **Configurable Thresholds** - Soft (warning) and hard (halt) failure-rate limits
+- ⚡ **Concurrent Batch Execution** - Tasks execute in parallel with bounded concurrency (up to 50x faster)
+- 🧹 **Automatic Resource Cleanup** - Redis keys cleaned on batch completion to prevent leakage
 
 **1. Enable Micro-Batch Mode:**
 

@@ -62,7 +62,7 @@ func (StateMachineModel) TableName() string {
 
 // ExecutionModel represents the executions table
 type ExecutionModel struct {
-	ExecutionID           string    `gorm:"primaryKey;size:255;not null"`
+	ExecutionID           string    `gorm:"primaryKey;size:255;default:gen_random_uuid()"`
 	StateMachineID        string    `gorm:"size:255;not null;index:idx_state_machine;index:idx_exec_sm_name"`
 	Name                  string    `gorm:"size:255;not null;index:idx_exec_name;index:idx_exec_sm_name"`
 	Input                 JSONB     `gorm:"type:jsonb"`

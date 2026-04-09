@@ -1,11 +1,11 @@
 // Package main demonstrates crash recovery for batch/micro-batch orchestrations.
 //
 // This example shows:
-//   1. An orchestrator managing multiple micro-batch executions
-//   2. Simulated crash of both orchestrator and worker executions
-//   3. Recovery scanner detecting and resuming orphaned executions
-//   4. Barrier mechanism properly signaling orchestrator after worker recovery
-//   5. Orchestrator resuming normal operation after barrier completion
+//  1. An orchestrator managing multiple micro-batch executions
+//  2. Simulated crash of both orchestrator and worker executions
+//  3. Recovery scanner detecting and resuming orphaned executions
+//  4. Barrier mechanism properly signaling orchestrator after worker recovery
+//  5. Orchestrator resuming normal operation after barrier completion
 //
 // Key Scenario:
 //   - Orchestrator dispatches micro-batch and waits at barrier
@@ -15,7 +15,8 @@
 //   - Barrier properly signals orchestrator to continue
 //
 // Usage:
-//   go run main.go
+//
+//	go run main.go
 //
 // Requirements:
 //   - PostgreSQL database
@@ -42,23 +43,23 @@ import (
 
 const (
 	// Database and Redis configuration
-	databaseURL        = "postgres://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable"
-	redisURL           = "redis://localhost:6379/0"
-	
+	databaseURL = "postgres://postgres:postgres@localhost:5432/statemachine_test?sslmode=disable"
+	redisURL    = "redis://localhost:6379/0"
+
 	// Batch configuration
-	batchID            = "crash-recovery-batch-001"
-	microBatchSize     = 5
-	totalExecutions    = 15 // 3 micro-batches of 5 each
-	
+	batchID         = "crash-recovery-batch-001"
+	microBatchSize  = 5
+	totalExecutions = 15 // 3 micro-batches of 5 each
+
 	// State machine IDs
-	workerSMID         = "crash-recovery-worker-sm"
-	orchestratorSMID   = batch.OrchestratorStateMachineID
-	
+	workerSMID       = "crash-recovery-worker-sm"
+	orchestratorSMID = batch.OrchestratorStateMachineID
+
 	// Recovery configuration
-	scanInterval       = 2 * time.Second
-	orphanedThreshold  = 4 * time.Second
+	scanInterval        = 2 * time.Second
+	orphanedThreshold   = 4 * time.Second
 	maxRecoveryAttempts = 3
-	
+
 	// Keys for Redis
 	barrierKeyPrefix = "batch:barrier:"
 )
@@ -140,8 +141,9 @@ func main() {
 		log.Fatalf("Failed to create orchestrator: %v", err)
 	}
 
+	sourceStateMachineId := "source-sm"
 	// Start batch execution
-	doneCh, err := orchestrator.Run(ctx, batchID, sourceExecutionIDs, workerSMID, "ProcessData", &statemachine.BatchExecutionOptions{
+	doneCh, err := orchestrator.Run(ctx, batchID, sourceStateMachineId, sourceExecutionIDs, workerSMID, "ProcessData", &statemachine.BatchExecutionOptions{
 		NamePrefix:        "crash-recovery-batch",
 		ConcurrentBatches: 1,
 		MicroBatchSize:    microBatchSize,
@@ -195,10 +197,10 @@ func main() {
 
 	// Configure and start recovery scanner
 	recoveryConfig := &recovery.RecoveryConfig{
-		Enabled:                  true,
-		ScanInterval:             scanInterval,
-		OrphanedThreshold:        orphanedThreshold,
-		DefaultRecoveryStrategy:  recovery.StrategyRetry,
+		Enabled:                    true,
+		ScanInterval:               scanInterval,
+		OrphanedThreshold:          orphanedThreshold,
+		DefaultRecoveryStrategy:    recovery.StrategyRetry,
 		DefaultMaxRecoveryAttempts: maxRecoveryAttempts,
 	}
 
@@ -407,9 +409,9 @@ func createSourceExecutions(ctx context.Context, pm *repository.Manager) ([]stri
 				"value": fmt.Sprintf("data-%03d", i),
 			},
 			Output: map[string]interface{}{
-				"id":      execID,
+				"id":        execID,
 				"processed": true,
-				"data":    fmt.Sprintf("result-%03d", i),
+				"data":      fmt.Sprintf("result-%03d", i),
 			},
 		}
 
@@ -450,7 +452,7 @@ func getBarrierRemaining(ctx context.Context, rdb *redis.Client, batchID string)
 	// Check first micro-batch barrier
 	mbID := fmt.Sprintf("%s-mb-0", batchID)
 	barrierKey := fmt.Sprintf("%s%s", barrierKeyPrefix, mbID)
-	
+
 	remaining, err := rdb.Get(ctx, barrierKey).Int64()
 	if err == redis.Nil {
 		return 0
@@ -470,7 +472,7 @@ func displayFinalResults(ctx context.Context, pm *repository.Manager, rdb *redis
 	orchExecs, _ := pm.ListExecutions(ctx, &repository.ExecutionFilter{
 		StateMachineID: orchestratorSMID,
 	})
-	
+
 	fmt.Println("Orchestrator Executions:")
 	for _, exec := range orchExecs {
 		fmt.Printf("  ID: %s\n", exec.ExecutionID)
@@ -488,7 +490,7 @@ func displayFinalResults(ctx context.Context, pm *repository.Manager, rdb *redis
 	})
 
 	fmt.Printf("Worker Executions: %d total\n", len(workerExecs))
-	
+
 	succeeded := 0
 	failed := 0
 	for _, exec := range workerExecs {
@@ -507,7 +509,7 @@ func displayFinalResults(ctx context.Context, pm *repository.Manager, rdb *redis
 	cursorKey := fmt.Sprintf("batch:cursor:%s", batchID)
 	cursor, _ := rdb.Get(ctx, cursorKey).Int()
 	fmt.Printf("  Cursor: %d / %d\n", cursor, totalExecutions)
-	
+
 	idsListKey := fmt.Sprintf("batch:ids:%s", batchID)
 	idsLen, _ := rdb.LLen(ctx, idsListKey).Result()
 	fmt.Printf("  IDs List: %d items\n", idsLen)
@@ -551,7 +553,7 @@ func cleanupPreviousRun(ctx context.Context, pm *repository.Manager, rdb *redis.
 
 	// Delete previous executions (optional - in production you'd archive)
 	// For this example, we'll just use unique batch IDs
-	
+
 	fmt.Println("Cleanup complete")
 	fmt.Println()
 	return nil

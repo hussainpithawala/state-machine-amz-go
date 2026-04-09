@@ -58,6 +58,64 @@ func (c *Client) EnqueueExecution(payload *ExecutionTaskPayload, opts ...asynq.O
 	return info, nil
 }
 
+// EnqueueExecutionGroup enqueues multiple execution tasks as a group for
+// aggregated batch processing. All tasks share the same groupID, enabling
+// Asynq's task aggregation to collect them into a single batch task.
+//
+// This reduces queue overhead by processing multiple tasks together rather
+// than individually. The tasks are held in Redis until the group trigger
+// conditions are met (GroupMaxSize, GroupMaxDelay, or GroupGracePeriod).
+//
+// The payloads slice contains all individual task payloads. They are enqueued
+// in a single Redis pipeline operation for efficiency.
+func (c *Client) EnqueueExecutionGroup(payloads []*ExecutionTaskPayload, groupID string, opts ...asynq.Option) ([]*asynq.TaskInfo, error) {
+	if len(payloads) == 0 {
+		return nil, fmt.Errorf("no payloads provided")
+	}
+	if groupID == "" {
+		return nil, fmt.Errorf("groupID is required")
+	}
+
+	// Set groupID on all payloads
+	for _, payload := range payloads {
+		payload.GroupID = groupID
+	}
+
+	// Enqueue all tasks - they will be grouped by Asynq
+	infos := make([]*asynq.TaskInfo, 0, len(payloads))
+	for _, payload := range payloads {
+		task, err := NewExecutionTask(payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create task: %w", err)
+		}
+
+		// Build options for each task
+		taskOpts := make([]asynq.Option, 0, len(opts)+3)
+
+		// Add defaults if none provided
+		if len(opts) == 0 && c.retryPolicy != nil {
+			taskOpts = append(taskOpts,
+				asynq.MaxRetry(c.retryPolicy.MaxRetry),
+				asynq.Timeout(c.retryPolicy.Timeout),
+				asynq.Queue(payload.StateMachineID),
+			)
+			if payload.ApplyUnique {
+				taskOpts = append(taskOpts, asynq.Unique(24*time.Hour))
+			}
+		} else {
+			taskOpts = append(taskOpts, opts...)
+		}
+
+		info, err := c.client.Enqueue(task, taskOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to enqueue task %s: %w", payload.ExecutionName, err)
+		}
+		infos = append(infos, info)
+	}
+
+	return infos, nil
+}
+
 // EnqueueExecutionWithPriority enqueues a task with specific priority queue
 func (c *Client) EnqueueExecutionWithPriority(payload *ExecutionTaskPayload, priority string) (*asynq.TaskInfo, error) {
 	opts := []asynq.Option{

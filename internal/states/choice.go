@@ -21,28 +21,36 @@ type ChoiceState struct {
 
 // ChoiceRule represents a single choice rule
 type ChoiceRule struct {
-	Variable                   string       `json:"Variable"`
-	StringEquals               *string      `json:"StringEquals,omitempty"`
-	StringLessThan             *string      `json:"StringLessThan,omitempty"`
-	StringGreaterThan          *string      `json:"StringGreaterThan,omitempty"`
-	StringLessThanEquals       *string      `json:"StringLessThanEquals,omitempty"`
-	StringGreaterThanEquals    *string      `json:"StringGreaterThanEquals,omitempty"`
-	NumericEquals              *float64     `json:"NumericEquals,omitempty"`
-	NumericLessThan            *float64     `json:"NumericLessThan,omitempty"`
-	NumericGreaterThan         *float64     `json:"NumericGreaterThan,omitempty"`
-	NumericLessThanEquals      *float64     `json:"NumericLessThanEquals,omitempty"`
-	NumericGreaterThanEquals   *float64     `json:"NumericGreaterThanEquals,omitempty"`
-	BooleanEquals              *bool        `json:"BooleanEquals,omitempty"`
-	TimestampEquals            *string      `json:"TimestampEquals,omitempty"`
-	TimestampLessThan          *string      `json:"TimestampLessThan,omitempty"`
-	TimestampGreaterThan       *string      `json:"TimestampGreaterThan,omitempty"`
-	TimestampLessThanEquals    *string      `json:"TimestampLessThanEquals,omitempty"`
-	TimestampGreaterThanEquals *string      `json:"TimestampGreaterThanEquals,omitempty"`
-	And                        []ChoiceRule `json:"And,omitempty"`
-	Or                         []ChoiceRule `json:"Or,omitempty"`
-	Not                        *ChoiceRule  `json:"Not,omitempty"`
-	Next                       string       `json:"Next"`
-	Comment                    string       `json:"Comment,omitempty"`
+	Variable                   string   `json:"Variable"`
+	StringEquals               *string  `json:"StringEquals,omitempty"`
+	StringLessThan             *string  `json:"StringLessThan,omitempty"`
+	StringGreaterThan          *string  `json:"StringGreaterThan,omitempty"`
+	StringLessThanEquals       *string  `json:"StringLessThanEquals,omitempty"`
+	StringGreaterThanEquals    *string  `json:"StringGreaterThanEquals,omitempty"`
+	NumericEquals              *float64 `json:"NumericEquals,omitempty"`
+	NumericLessThan            *float64 `json:"NumericLessThan,omitempty"`
+	NumericGreaterThan         *float64 `json:"NumericGreaterThan,omitempty"`
+	NumericLessThanEquals      *float64 `json:"NumericLessThanEquals,omitempty"`
+	NumericGreaterThanEquals   *float64 `json:"NumericGreaterThanEquals,omitempty"`
+	BooleanEquals              *bool    `json:"BooleanEquals,omitempty"`
+	TimestampEquals            *string  `json:"TimestampEquals,omitempty"`
+	TimestampLessThan          *string  `json:"TimestampLessThan,omitempty"`
+	TimestampGreaterThan       *string  `json:"TimestampGreaterThan,omitempty"`
+	TimestampLessThanEquals    *string  `json:"TimestampLessThanEquals,omitempty"`
+	TimestampGreaterThanEquals *string  `json:"TimestampGreaterThanEquals,omitempty"`
+	// Type-checking operators (AWS States Language compatible)
+	IsPresent   *bool `json:"IsPresent,omitempty"`
+	IsNull      *bool `json:"IsNull,omitempty"`
+	IsBoolean   *bool `json:"IsBoolean,omitempty"`
+	IsNumeric   *bool `json:"IsNumeric,omitempty"`
+	IsString    *bool `json:"IsString,omitempty"`
+	IsTimestamp *bool `json:"IsTimestamp,omitempty"`
+	// Compound operators
+	And     []ChoiceRule `json:"And,omitempty"`
+	Or      []ChoiceRule `json:"Or,omitempty"`
+	Not     *ChoiceRule  `json:"Not,omitempty"`
+	Next    string       `json:"Next"`
+	Comment string       `json:"Comment,omitempty"`
 }
 
 // Execute executes the Choice state
@@ -101,26 +109,31 @@ func (s *ChoiceState) Execute(_ context.Context, input interface{}) (result inte
 // evaluateChoice evaluates a single choice rule
 func (s *ChoiceState) evaluateChoice(rule *ChoiceRule, input interface{}) (bool, error) {
 	// Determine the context for this rule
-	context := input
+	choiceContext := input
 	if rule.Variable != "" {
-		context = s.getVariableValue(rule.Variable, input)
-		// If the variable doesn't exist, the choice evaluates to false
-		if context == nil {
+		choiceContext = s.getVariableValue(rule.Variable, input)
+		// If the variable doesn't exist, check if we have type-checking operators that can handle nil
+		// Type-checking operators (IsNull, IsPresent, etc.) should still be evaluated
+		hasTypeCheckingOp := rule.IsPresent != nil || rule.IsNull != nil ||
+			rule.IsBoolean != nil || rule.IsNumeric != nil ||
+			rule.IsString != nil || rule.IsTimestamp != nil
+
+		if choiceContext == nil && !hasTypeCheckingOp {
 			return false, nil
 		}
 	}
 
 	// Handle compound operators
 	if len(rule.And) > 0 {
-		return s.evaluateAnd(rule.And, context)
+		return s.evaluateAnd(rule.And, choiceContext)
 	}
 
 	if len(rule.Or) > 0 {
-		return s.evaluateOr(rule.Or, context)
+		return s.evaluateOr(rule.Or, choiceContext)
 	}
 
 	if rule.Not != nil {
-		matched, err := s.evaluateChoice(rule.Not, context)
+		matched, err := s.evaluateChoice(rule.Not, choiceContext)
 		if err != nil {
 			return false, err
 		}
@@ -129,7 +142,7 @@ func (s *ChoiceState) evaluateChoice(rule *ChoiceRule, input interface{}) (bool,
 
 	// If we get here, we have comparison operators
 	// Evaluate based on comparison operators
-	return s.evaluateComparison(rule, context)
+	return s.evaluateComparison(rule, choiceContext)
 }
 
 // evaluateAnd evaluates AND conditions
@@ -165,6 +178,26 @@ func (s *ChoiceState) evaluateOr(rules []ChoiceRule, context interface{}) (bool,
 // evaluateComparison evaluates comparison operators
 // gocyclo:ignore
 func (s *ChoiceState) evaluateComparison(rule *ChoiceRule, variableValue interface{}) (bool, error) {
+	// Check type-checking operators first (don't require a comparison value)
+	if rule.IsPresent != nil {
+		return s.evaluateIsPresent(variableValue, *rule.IsPresent), nil
+	}
+	if rule.IsNull != nil {
+		return s.evaluateIsNull(variableValue, *rule.IsNull), nil
+	}
+	if rule.IsBoolean != nil {
+		return s.evaluateIsBoolean(variableValue, *rule.IsBoolean), nil
+	}
+	if rule.IsNumeric != nil {
+		return s.evaluateIsNumeric(variableValue, *rule.IsNumeric), nil
+	}
+	if rule.IsString != nil {
+		return s.evaluateIsString(variableValue, *rule.IsString), nil
+	}
+	if rule.IsTimestamp != nil {
+		return s.evaluateIsTimestamp(variableValue, *rule.IsTimestamp), nil
+	}
+
 	// Define comparison handlers for each operator type
 	comparisonHandlers := []struct {
 		condition  bool
@@ -228,6 +261,50 @@ func (s *ChoiceState) evaluateComparison(rule *ChoiceRule, variableValue interfa
 	}
 
 	return false, fmt.Errorf("no comparison operator specified in choice rule")
+}
+
+// Type-checking operator evaluators
+
+// evaluateIsPresent checks if a variable exists (is not nil)
+func (s *ChoiceState) evaluateIsPresent(variableValue interface{}, expected bool) bool {
+	isPresent := variableValue != nil
+	return isPresent == expected
+}
+
+// evaluateIsNull checks if a variable is null
+func (s *ChoiceState) evaluateIsNull(variableValue interface{}, expected bool) bool {
+	isNull := variableValue == nil
+	return isNull == expected
+}
+
+// evaluateIsBoolean checks if a variable is a boolean type
+func (s *ChoiceState) evaluateIsBoolean(variableValue interface{}, expected bool) bool {
+	_, ok := variableValue.(bool)
+	return ok == expected
+}
+
+// evaluateIsNumeric checks if a variable is a numeric type
+func (s *ChoiceState) evaluateIsNumeric(variableValue interface{}, expected bool) bool {
+	isNumeric := false
+	if variableValue != nil {
+		switch variableValue.(type) {
+		case float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			isNumeric = true
+		}
+	}
+	return isNumeric == expected
+}
+
+// evaluateIsString checks if a variable is a string type
+func (s *ChoiceState) evaluateIsString(variableValue interface{}, expected bool) bool {
+	_, ok := variableValue.(string)
+	return ok == expected
+}
+
+// evaluateIsTimestamp checks if a variable is a time.Time type
+func (s *ChoiceState) evaluateIsTimestamp(variableValue interface{}, expected bool) bool {
+	_, ok := variableValue.(time.Time)
+	return ok == expected
 }
 
 // Comparison function definitions
@@ -483,6 +560,13 @@ func countComparisonOperators(choice *ChoiceRule) int {
 		{choice.TimestampGreaterThan},
 		{choice.TimestampLessThanEquals},
 		{choice.TimestampGreaterThanEquals},
+		// Type-checking operators
+		{choice.IsPresent},
+		{choice.IsNull},
+		{choice.IsBoolean},
+		{choice.IsNumeric},
+		{choice.IsString},
+		{choice.IsTimestamp},
 	}
 
 	count := 0

@@ -1,0 +1,119 @@
+# Example: Using IsPresent Operator for Payment Processing
+# 
+# This example demonstrates how to use the IsPresent type-checking operator
+# to route based on whether a field exists in the input.
+
+PaymentProcessing:
+  Type: Task
+  Resource: "arn:aws:lambda:us-east-1:123456789012:function:ProcessPayment"
+  Next: CheckForDecline
+
+CheckForDecline:
+  Type: Choice
+  Choices:
+    - Variable: "$.paymentStatus"
+      StringEquals: "DECLINED"
+      Next: CreditCardDeclined
+    - Variable: "$.paymentStatus"
+      StringEquals: "SUCCEEDED"
+      Next: PaymentComplete
+  Default: PaymentFailed
+
+CreditCardDeclined:
+  Type: Choice
+  Choices:
+    # Check if fallbackMethod is present in the request
+    - Variable: "$.paymentContext.originalRequest.fallbackMethod"
+      IsPresent: true
+      Next: TryFallbackMethod
+    # Check if retry count exists
+    - Variable: "$.paymentContext.retryCount"
+      IsPresent: true
+      Next: CheckRetryLimit
+  Default: PaymentFailed
+
+TryFallbackMethod:
+  Type: Choice
+  Choices:
+    # Route based on the fallback method type
+    - Variable: "$.paymentContext.originalRequest.fallbackMethod"
+      StringEquals: "ACH"
+      Next: ProcessACHFallback
+    - Variable: "$.paymentContext.originalRequest.fallbackMethod"
+      StringEquals: "WireTransfer"
+      Next: ProcessWireFallback
+    - Variable: "$.paymentContext.originalRequest.fallbackMethod"
+      StringEquals: "CryptoWallet"
+      Next: ProcessCryptoFallback
+  Default: PaymentFailed
+
+CheckRetryLimit:
+  Type: Choice
+  Choices:
+    # Check if we've exceeded retry limit
+    - Variable: "$.paymentContext.retryCount"
+      NumericGreaterThanEquals: 3
+      Next: PaymentFailed
+    - Variable: "$.paymentContext.retryCount"
+      NumericLessThan: 3
+      Next: RetryPayment
+  Default: RetryPayment
+
+# Additional examples of type-checking operators
+
+TypeCheckingExamples:
+  Type: Choice
+  Choices:
+    # IsNull - Check if a field is explicitly null
+    - Variable: "$.customer.email"
+      IsNull: true
+      Next: HandleMissingEmail
+    
+    # IsString - Verify field is a string type
+    - Variable: "$.customer.name"
+      IsString: true
+      Next: ProcessCustomerName
+    
+    # IsNumeric - Verify field is a number
+    - Variable: "$.order.totalAmount"
+      IsNumeric: true
+      Next: ProcessPayment
+    
+    # IsBoolean - Verify field is a boolean
+    - Variable: "$.order.isExpress"
+      IsBoolean: true
+      Next: CheckExpressOptions
+    
+    # IsTimestamp - Verify field is a timestamp (if stored as time.Time)
+    - Variable: "$.order.createdAt"
+      IsTimestamp: true
+      Next: ValidateOrderTiming
+
+# Combining type-checking with other operators
+
+AdvancedRouting:
+  Type: Choice
+  Choices:
+    # Check if discount code exists AND is a string
+    - And:
+        - Variable: "$.order.discountCode"
+          IsPresent: true
+        - Variable: "$.order.discountCode"
+          IsString: true
+      Next: ApplyDiscount
+    
+    # Check if priority exists OR default to normal
+    - Or:
+        - Variable: "$.order.priority"
+          IsPresent: true
+        - Variable: "$.order.isVipCustomer"
+          BooleanEquals: true
+      Next: HighPriorityProcessing
+    
+    # Check if NOT null (using Not compound operator)
+    - Not:
+        Variable: "$.payment.method"
+        IsNull: true
+      Next: ProcessPayment
+    
+  Default: StandardProcessing

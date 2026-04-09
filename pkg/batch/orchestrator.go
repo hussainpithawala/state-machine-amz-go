@@ -128,12 +128,26 @@ func (o *Orchestrator) Signal(ctx context.Context, batchID, operator, notes stri
 func (o *Orchestrator) Run(
 	ctx context.Context,
 	batchID string,
+	sourceMachineId string,
 	sourceExecutionIDs []string,
 	targetMachineId string,
 	sourceStateName string,
 	opts *statemachine2.BatchExecutionOptions,
 	execOpts []statemachine2.ExecutionOption,
 ) (<-chan error, error) {
+	// ── Prevent duplicate batch orchestrations ─────────────────────────────────
+	// Use Redis SETNX to ensure only one orchestrator execution can run for a
+	// given batchID. This prevents duplicate processing when Run is called
+	// multiple times (e.g., due to retries, restarts, or caller bugs).
+	batchLockKey := fmt.Sprintf("batch:lock:%s", batchID)
+	locked, err := o.rdb.SetNX(ctx, batchLockKey, "locked", 24*time.Hour).Result()
+	if err != nil {
+		return nil, fmt.Errorf("batch:run: acquire lock: %w", err)
+	}
+	if !locked {
+		return nil, fmt.Errorf("batch:run: batch %s is already running", batchID)
+	}
+
 	// ── 1. Store IDs in Redis ─────────────────────────────────────────────────
 	if err := o.storeIDs(ctx, batchID, sourceExecutionIDs); err != nil {
 		return nil, err
@@ -154,14 +168,19 @@ func (o *Orchestrator) Run(
 		SoftFailureThreshold:   DefaultSoftFailureThreshold,
 	}
 
+	useGroupEnqueue := opts.UseGroupEnqueue
+
 	input := OrchestratorInput{
 		BatchID:              batchID,
 		TotalCount:           len(sourceExecutionIDs),
 		MicroBatchSize:       mbSize,
 		SourceStateName:      sourceStateName,
+		SourceStateMachineID: sourceMachineId,
 		OrchestratorSMID:     OrchestratorStateMachineID,
 		TargetStateMachineID: targetMachineId,
 		FailurePolicy:        policy,
+		UseGroupEnqueue:      useGroupEnqueue,
+		GroupConcurrency:     opts.GroupConcurrency,
 	}
 
 	// ── 2. Build the orchestrator state machine ───────────────────────────────
@@ -259,6 +278,8 @@ func (o *Orchestrator) RunBulk(
 		ExecutionNamePrefix:  opts.NamePrefix,
 		InputTransformerName: config.InputTransformerName,
 		ApplyUnique:          config.ApplyUnique,
+		UseGroupEnqueue:      opts.UseGroupEnqueue,
+		GroupConcurrency:     opts.GroupConcurrency,
 		FailurePolicy:        policy,
 	}
 
@@ -364,6 +385,318 @@ func (o *Orchestrator) waitForTermination(ctx context.Context, sm StateMachine, 
 	}
 }
 
+// cleanupBatchResources deletes all Redis keys associated with a batch after
+// completion (success or failure). This prevents resource leakage.
+func (o *Orchestrator) cleanupBatchResources(ctx context.Context, execInput interface{}) error {
+	batchID, err := extractBatchIDFromInput(execInput)
+	if err != nil {
+		return fmt.Errorf("extract batchID for cleanup: %w", err)
+	}
+
+	// ── Publish batch completion metrics before cleanup ───────────────────────
+	o.logBatchCompletionMetrics(ctx, batchID)
+
+	// Build list of keys to delete
+	keys := []string{
+		keyIDsList(batchID),
+		keyCursor(batchID),
+		keyMetricsWindow(batchID),
+		keyTotalProcessed(batchID),
+		keyTotalFailed(batchID),
+		keyResume(batchID),
+	}
+
+	// Delete keys in a pipeline for efficiency
+	pipe := o.rdb.Pipeline()
+	for _, key := range keys {
+		pipe.Del(ctx, key)
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("delete batch keys: %w", err)
+	}
+
+	// ── Clean up Asynq unique keys if group enqueue was used ──────────────────
+	if err := o.cleanupAsynqUniqueKeys(ctx, execInput); err != nil {
+		fmt.Printf("warn: cleanup Asynq unique keys for batchID=%s: %v\n", batchID, err)
+	}
+
+	fmt.Printf("info: cleaned up batch resources for batchID=%s\n", batchID)
+	return nil
+}
+
+// cleanupAsynqUniqueKeys deletes Asynq unique keys created during group enqueue.
+// Pattern: asynq:{stateMachineName}:unique:statemachine:execution:*
+func (o *Orchestrator) cleanupAsynqUniqueKeys(ctx context.Context, execInput interface{}) error {
+	// Extract target state machine ID and UseGroupEnqueue flag
+	targetSMID, useGroupEnqueue, err := extractGroupEnqueueInfo(execInput)
+	if err != nil {
+		return fmt.Errorf("extract group enqueue info: %w", err)
+	}
+
+	// Skip cleanup if group enqueue wasn't used
+	if !useGroupEnqueue {
+		return nil
+	}
+
+	// Build the pattern to match Asynq unique keys
+	// Pattern: asynq:{stateMachineName}:unique:statemachine:execution:*
+	pattern := fmt.Sprintf("asynq:{%s}:unique:statemachine:execution:*", targetSMID)
+	// Use SCAN to find all matching keys
+	var deletedCount int
+	cursor := uint64(0)
+	const scanCount = 100
+
+	for {
+		matchedKeys, nextCursor, err := o.rdb.Scan(ctx, cursor, pattern, scanCount).Result()
+		if err != nil {
+			return fmt.Errorf("scan for asynq unique keys: %w", err)
+		}
+
+		if len(matchedKeys) > 0 {
+			pipe := o.rdb.Pipeline()
+			for _, key := range matchedKeys {
+				pipe.Del(ctx, key)
+			}
+			if _, err := pipe.Exec(ctx); err != nil {
+				fmt.Printf("warn: delete asynq unique keys batch: %v\n", err)
+			}
+			deletedCount += len(matchedKeys)
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if deletedCount > 0 {
+		fmt.Printf("info: cleaned up %d Asynq unique keys for stateMachine=%s\n", deletedCount, targetSMID)
+	}
+	return nil
+}
+
+// extractGroupEnqueueInfo extracts the target state machine ID and UseGroupEnqueue flag from input.
+func extractGroupEnqueueInfo(input interface{}) (targetSMID string, useGroupEnqueue bool, err error) {
+	inputMap, ok := input.(map[string]interface{})
+	if !ok {
+		return "", false, fmt.Errorf("invalid input type: expected map[string]interface{}")
+	}
+
+	// The input is stored with a "$" key by the execution context
+	var targetMap map[string]interface{}
+	if dollarData, exists := inputMap["$"]; exists {
+		if nestedMap, ok := dollarData.(map[string]interface{}); ok {
+			targetMap = nestedMap
+		}
+	} else {
+		targetMap = inputMap
+	}
+
+	if targetMap == nil {
+		return "", false, fmt.Errorf("target map not found in input")
+	}
+
+	// Extract target state machine ID
+	if smID, ok := targetMap["target_state_machine_id"].(string); ok {
+		targetSMID = smID
+	}
+
+	// Extract UseGroupEnqueue flag
+	if useGroup, ok := targetMap["use_group_enqueue"].(bool); ok {
+		useGroupEnqueue = useGroup
+	}
+
+	if targetSMID == "" {
+		return "", false, fmt.Errorf("target_state_machine_id not found in input")
+	}
+
+	return targetSMID, useGroupEnqueue, nil
+}
+
+// logBatchCompletionMetrics reads and logs batch completion metrics from Redis
+// before the keys are deleted during cleanup.
+func (o *Orchestrator) logBatchCompletionMetrics(ctx context.Context, batchID string) {
+	pipe := o.rdb.Pipeline()
+	totalProcessedCmd := pipe.Get(ctx, keyTotalProcessed(batchID))
+	totalFailedCmd := pipe.Get(ctx, keyTotalFailed(batchID))
+	cursorCmd := pipe.Get(ctx, keyCursor(batchID))
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		// Metrics may not exist or already expired, log and continue
+		fmt.Printf("info: batch completion metrics for batchID=%s (some metrics unavailable)\n", batchID)
+		return
+	}
+
+	// Extract values
+	totalProcessed := int64(0)
+	if val, err := totalProcessedCmd.Int64(); err == nil {
+		totalProcessed = val
+	}
+
+	totalFailed := int64(0)
+	if val, err := totalFailedCmd.Int64(); err == nil {
+		totalFailed = val
+	}
+
+	cursor := int64(0)
+	if val, err := cursorCmd.Int64(); err == nil {
+		cursor = val
+	}
+
+	totalCount := cursor // Cursor represents total dispatched
+	successCount := totalProcessed - totalFailed
+	if successCount < 0 {
+		successCount = 0
+	}
+
+	var failureRate float64
+	if totalProcessed > 0 {
+		failureRate = float64(totalFailed) / float64(totalProcessed) * 100
+	}
+
+	// Log comprehensive batch completion metrics
+	fmt.Printf("info: batch completed: batchID=%s, totalCount=%d, dispatched=%d, processed=%d, succeeded=%d, failed=%d, failureRate=%.2f%%\n",
+		batchID, totalCount, cursor, totalProcessed, successCount, totalFailed, failureRate)
+}
+
+// extractBatchIDFromInput extracts the batchID from the orchestrator execution input.
+func extractBatchIDFromInput(input interface{}) (string, error) {
+	inputMap, ok := input.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid input type: expected map[string]interface{}")
+	}
+
+	// The input is stored with a "$" key by the execution context
+	if dollarData, exists := inputMap["$"]; exists {
+		if nestedMap, ok := dollarData.(map[string]interface{}); ok {
+			if batchID, ok := nestedMap["batch_id"].(string); ok {
+				return batchID, nil
+			}
+		}
+	}
+
+	// Try direct access (in case it's stored differently)
+	if batchID, ok := inputMap["batch_id"].(string); ok {
+		return batchID, nil
+	}
+
+	return "", fmt.Errorf("batch_id not found in input")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Common dispatch helpers
+// ──────────────────────────────────────────────────────────────────────────────
+
+// dispatchSlice represents a slice of micro-batch work returned by
+// computeDispatchSlice for both ID-based and input-based dispatching.
+type dispatchSlice struct {
+	mbIndex    int
+	mbID       string
+	actualSize int
+	cursorVal  int
+}
+
+// computeDispatchSlice calculates which micro-batch should be dispatched next.
+// Returns nil if all work has been dispatched.
+func (o *Orchestrator) computeDispatchSlice(
+	ctx context.Context,
+	batchID string,
+	totalCount int,
+	microBatchSize int,
+) (*dispatchSlice, error) {
+	mbSize := microBatchSize
+	if mbSize <= 0 {
+		mbSize = DefaultMicroBatchSize
+	}
+
+	cursorVal, err := o.rdb.Get(ctx, keyCursor(batchID)).Int()
+	if err == redis.Nil {
+		cursorVal = 0
+	} else if err != nil {
+		return nil, fmt.Errorf("read cursor for batch %s: %w", batchID, err)
+	}
+
+	if cursorVal >= totalCount {
+		return nil, nil // All work dispatched
+	}
+
+	mbIndex := cursorVal / mbSize
+	mbID := microBatchID(batchID, mbIndex)
+
+	return &dispatchSlice{
+		mbIndex:   mbIndex,
+		mbID:      mbID,
+		cursorVal: cursorVal,
+	}, nil
+}
+
+// checkIdempotency checks whether a micro-batch has already been dispatched.
+// Returns true if the batch was already dispatched (caller should skip).
+func (o *Orchestrator) checkIdempotency(
+	ctx context.Context,
+	batchID string,
+	mbIndex int,
+	prefix string,
+) (dispatchedKey string, alreadyDispatched bool, error error) {
+	dispatchedKey = fmt.Sprintf("batch:dispatched:%s:mb%d", batchID, mbIndex)
+	dispatched, err := o.rdb.Get(ctx, dispatchedKey).Result()
+	if err == nil && dispatched == "1" {
+		return dispatchedKey, true, nil
+	} else if err != nil && err != redis.Nil {
+		return dispatchedKey, false, fmt.Errorf("check dispatched key: %w", err)
+	}
+	return dispatchedKey, false, nil
+}
+
+// markDispatched atomically marks a micro-batch as dispatched and advances the cursor.
+func (o *Orchestrator) markDispatched(
+	ctx context.Context,
+	batchID string,
+	dispatchedKey string,
+	newCursor int,
+) error {
+	pipe := o.rdb.Pipeline()
+	pipe.Set(ctx, dispatchedKey, "1", IDsListTTL)
+	pipe.Set(ctx, keyCursor(batchID), newCursor, MetricsTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("mark dispatched and advance cursor: %w", err)
+	}
+	return nil
+}
+
+// buildDispatchResult constructs the standard dispatch result map.
+func buildDispatchResult(
+	batchID, orchestratorID string,
+	totalCount, mbSize int,
+	mbID string,
+	mbIndex, actualSize int,
+	alreadyDispatched bool,
+	extraFields map[string]interface{},
+) map[string]interface{} {
+	result := map[string]interface{}{
+		"batchID":        batchID,
+		"orchestratorID": orchestratorID,
+		"totalCount":     totalCount,
+		"microBatchSize": mbSize,
+		"dispatchResult": map[string]interface{}{
+			"isBatchComplete":   false,
+			"microBatchId":      mbID,
+			"microBatchIndex":   mbIndex,
+			"size":              actualSize,
+			"dispatchedAt":      time.Now().UTC(),
+			"alreadyDispatched": alreadyDispatched,
+		},
+	}
+
+	// Merge any extra fields specific to the dispatch type
+	for k, v := range extraFields {
+		result[k] = v
+	}
+
+	return result
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Task Handlers (local Go functions registered on the executor)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -383,15 +716,18 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 		mbSize = DefaultMicroBatchSize
 	}
 
-	// ── Read cursor ───────────────────────────────────────────────────────────
-	cursorVal, err := o.rdb.Get(ctx, keyCursor(input.BatchID)).Int()
-	if err == redis.Nil {
-		cursorVal = 0
-	} else if err != nil {
-		return nil, fmt.Errorf("batch:dispatch: cursor %s: %w", input.BatchID, err)
+	// ── Compute dispatch slice ────────────────────────────────────────────────
+	slice, err := o.computeDispatchSlice(ctx, input.BatchID, input.TotalCount, mbSize)
+	if err != nil {
+		return nil, fmt.Errorf("batch:dispatch: compute slice: %w", err)
 	}
 
-	if cursorVal >= input.TotalCount {
+	if slice == nil {
+		// All work has been dispatched - log completion metrics and clean up resources
+		o.logBatchCompletionMetrics(ctx, input.BatchID)
+		if err := o.cleanupBatchResources(ctx, rawInput); err != nil {
+			fmt.Printf("warn: batch cleanup after dispatch complete: %v\n", err)
+		}
 		return map[string]interface{}{
 			"batchID":              input.BatchID,
 			"orchestratorID":       input.OrchestratorSMID,
@@ -405,51 +741,60 @@ func (o *Orchestrator) handleDispatch(ctx context.Context, rawInput interface{})
 		}, nil
 	}
 
-	// ── Slice next micro-batch IDs from Redis list ────────────────────────────
-	end := int64(cursorVal + mbSize - 1)
+	// ── Read IDs from Redis ───────────────────────────────────────────────────
+	end := int64(slice.cursorVal + mbSize - 1)
 	if int(end) >= input.TotalCount {
 		end = int64(input.TotalCount - 1)
 	}
-	ids, err := o.rdb.LRange(ctx, keyIDsList(input.BatchID), int64(cursorVal), end).Result()
+	ids, err := o.rdb.LRange(ctx, keyIDsList(input.BatchID), int64(slice.cursorVal), end).Result()
 	if err != nil {
 		return nil, fmt.Errorf("batch:dispatch: lrange: %w", err)
 	}
+	slice.actualSize = len(ids)
 
-	mbIndex := cursorVal / mbSize
-	mbID := microBatchID(input.BatchID, mbIndex)
-	actualSize := len(ids)
+	// ── Idempotency guard ─────────────────────────────────────────────────────
+	dispatchedKey, alreadyDispatched, err := o.checkIdempotency(ctx, input.BatchID, slice.mbIndex, "dispatch")
+	if err != nil {
+		return nil, fmt.Errorf("batch:dispatch: %w", err)
+	}
+	if alreadyDispatched {
+		newCursor := slice.cursorVal + slice.actualSize
+		if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
+			return nil, fmt.Errorf("batch:dispatch: advance cursor (skip dispatched): %w", err)
+		}
+		return buildDispatchResult(
+			input.BatchID, input.OrchestratorSMID, input.TotalCount, mbSize,
+			slice.mbID, slice.mbIndex, slice.actualSize, true,
+			map[string]interface{}{
+				"sourceStateMachineID": input.SourceStateMachineID,
+				"sourceStateName":      input.SourceStateName,
+			},
+		), nil
+	}
 
-	// ── Initialise Redis barrier ──────────────────────────────────────────────
-	if err := o.barrier.Init(ctx, mbID, actualSize); err != nil {
+	// ── Initialise barrier and enqueue ────────────────────────────────────────
+	if err := o.barrier.Init(ctx, slice.mbID, slice.actualSize); err != nil {
 		return nil, fmt.Errorf("batch:dispatch: init barrier: %w", err)
 	}
 
-	// ── Enqueue each ID to the queue ──────────────────────────────────────────
-	if err := o.enqueueIDs(ctx, input, ids, mbID, mbIndex); err != nil {
+	if err := o.enqueueIDs(ctx, input, ids, slice.mbID, slice.mbIndex); err != nil {
 		return nil, fmt.Errorf("batch:dispatch: enqueue: %w", err)
 	}
 
-	// ── Advance cursor ────────────────────────────────────────────────────────
-	newCursor := cursorVal + actualSize
-	if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
-		return nil, fmt.Errorf("batch:dispatch: advance cursor: %w", err)
+	// ── Mark dispatched ───────────────────────────────────────────────────────
+	newCursor := slice.cursorVal + slice.actualSize
+	if err := o.markDispatched(ctx, input.BatchID, dispatchedKey, newCursor); err != nil {
+		return nil, fmt.Errorf("batch:dispatch: %w", err)
 	}
 
-	return map[string]interface{}{
-		"batchID":              input.BatchID,
-		"orchestratorID":       input.OrchestratorSMID,
-		"totalCount":           input.TotalCount,
-		"microBatchSize":       input.MicroBatchSize,
-		"sourceStateMachineID": input.SourceStateMachineID,
-		"sourceStateName":      input.SourceStateName,
-		"dispatchResult": map[string]interface{}{
-			"isBatchComplete": false,
-			"microBatchId":    mbID,
-			"microBatchIndex": mbIndex,
-			"size":            actualSize,
-			"dispatchedAt":    time.Now().UTC(),
+	return buildDispatchResult(
+		input.BatchID, input.OrchestratorSMID, input.TotalCount, mbSize,
+		slice.mbID, slice.mbIndex, slice.actualSize, false,
+		map[string]interface{}{
+			"sourceStateMachineID": input.SourceStateMachineID,
+			"sourceStateName":      input.SourceStateName,
 		},
-	}, nil
+	), nil
 }
 
 // handleEvaluate is the local handler for the EvaluateMicroBatch Task state.
@@ -495,14 +840,18 @@ func (o *Orchestrator) handleDispatchBulk(ctx context.Context, rawInput interfac
 		mbSize = DefaultMicroBatchSize
 	}
 
-	cursorVal, err := o.rdb.Get(ctx, keyCursor(input.BatchID)).Int()
-	if err == redis.Nil {
-		cursorVal = 0
-	} else if err != nil {
-		return nil, fmt.Errorf("batch:dispatch-bulk: cursor %s: %w", input.BatchID, err)
+	// ── Compute dispatch slice ────────────────────────────────────────────────
+	slice, err := o.computeDispatchSlice(ctx, input.BatchID, input.TotalCount, mbSize)
+	if err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: compute slice: %w", err)
 	}
 
-	if cursorVal >= input.TotalCount {
+	if slice == nil {
+		// All work has been dispatched - log completion metrics and clean up resources
+		o.logBatchCompletionMetrics(ctx, input.BatchID)
+		if err := o.cleanupBatchResources(ctx, rawInput); err != nil {
+			fmt.Printf("warn: batch cleanup after dispatch complete: %v\n", err)
+		}
 		return map[string]interface{}{
 			"batchID":              input.BatchID,
 			"orchestratorID":       input.OrchestratorSMID,
@@ -519,56 +868,68 @@ func (o *Orchestrator) handleDispatchBulk(ctx context.Context, rawInput interfac
 		}, nil
 	}
 
-	end := int64(cursorVal + mbSize - 1)
+	// ── Read inputs from Redis ────────────────────────────────────────────────
+	end := int64(slice.cursorVal + mbSize - 1)
 	if int(end) >= input.TotalCount {
 		end = int64(input.TotalCount - 1)
 	}
-
-	inputs, err := o.rdb.LRange(ctx, keyBulkInputsList(input.BatchID), int64(cursorVal), end).Result()
+	inputs, err := o.rdb.LRange(ctx, keyBulkInputsList(input.BatchID), int64(slice.cursorVal), end).Result()
 	if err != nil {
 		return nil, fmt.Errorf("batch:dispatch-bulk: lrange: %w", err)
 	}
+	slice.actualSize = len(inputs)
 
-	mbIndex := cursorVal / mbSize
-	mbID := microBatchID(input.BatchID, mbIndex)
-	actualSize := len(inputs)
+	// ── Idempotency guard ─────────────────────────────────────────────────────
+	dispatchedKey, alreadyDispatched, err := o.checkIdempotency(ctx, input.BatchID, slice.mbIndex, "dispatch-bulk")
+	if err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: %w", err)
+	}
+	if alreadyDispatched {
+		newCursor := slice.cursorVal + slice.actualSize
+		if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
+			return nil, fmt.Errorf("batch:dispatch-bulk: advance cursor (skip dispatched): %w", err)
+		}
+		return buildDispatchResult(
+			input.BatchID, input.OrchestratorSMID, input.TotalCount, mbSize,
+			slice.mbID, slice.mbIndex, slice.actualSize, true,
+			map[string]interface{}{
+				"targetStateMachineID": input.TargetStateMachineID,
+				"executionNamePrefix":  input.ExecutionNamePrefix,
+				"inputTransformerName": input.InputTransformerName,
+				"applyUnique":          input.ApplyUnique,
+				"failurePolicy":        input.FailurePolicy,
+			},
+		), nil
+	}
 
-	if err := o.barrier.Init(ctx, mbID, actualSize); err != nil {
+	// ── Initialise barrier ────────────────────────────────────────────────────
+	if err := o.barrier.Init(ctx, slice.mbID, slice.actualSize); err != nil {
 		return nil, fmt.Errorf("batch:dispatch-bulk: init barrier: %w", err)
 	}
 
-	// ── Advance cursor BEFORE enqueue ─────────────────────────────────────────
-	// Cursor is committed first so that any retry of this handler does not
-	// re-enqueue the same micro-batch a second time. If the process crashes
-	// after the cursor write but before enqueue completes, this micro-batch
-	// will be skipped (at-most-once) — preferable to duplicate processing.
-	newCursor := cursorVal + actualSize
-	if err := o.rdb.Set(ctx, keyCursor(input.BatchID), newCursor, MetricsTTL).Err(); err != nil {
-		return nil, fmt.Errorf("batch:dispatch-bulk: advance cursor: %w", err)
+	// ── Mark dispatched and enqueue ───────────────────────────────────────────
+	// Mark dispatched BEFORE enqueue for at-most-once semantics. If we crash
+	// after this point, the micro-batch is skipped (preferable to duplicates).
+	newCursor := slice.cursorVal + slice.actualSize
+	if err := o.markDispatched(ctx, input.BatchID, dispatchedKey, newCursor); err != nil {
+		return nil, fmt.Errorf("batch:dispatch-bulk: %w", err)
 	}
 
-	if err := o.enqueueBulkInputs(ctx, input, inputs, mbID, mbIndex); err != nil {
+	if err := o.enqueueBulkInputs(ctx, input, inputs, slice.mbID, slice.mbIndex); err != nil {
 		return nil, fmt.Errorf("batch:dispatch-bulk: enqueue: %w", err)
 	}
 
-	return map[string]interface{}{
-		"batchID":              input.BatchID,
-		"orchestratorID":       input.OrchestratorSMID,
-		"totalCount":           input.TotalCount,
-		"microBatchSize":       mbSize,
-		"targetStateMachineID": input.TargetStateMachineID,
-		"executionNamePrefix":  input.ExecutionNamePrefix,
-		"inputTransformerName": input.InputTransformerName,
-		"applyUnique":          input.ApplyUnique,
-		"failurePolicy":        input.FailurePolicy,
-		"dispatchResult": map[string]interface{}{
-			"isBatchComplete": false,
-			"microBatchId":    mbID,
-			"microBatchIndex": mbIndex,
-			"size":            actualSize,
-			"dispatchedAt":    time.Now().UTC(),
+	return buildDispatchResult(
+		input.BatchID, input.OrchestratorSMID, input.TotalCount, mbSize,
+		slice.mbID, slice.mbIndex, slice.actualSize, false,
+		map[string]interface{}{
+			"targetStateMachineID": input.TargetStateMachineID,
+			"executionNamePrefix":  input.ExecutionNamePrefix,
+			"inputTransformerName": input.InputTransformerName,
+			"applyUnique":          input.ApplyUnique,
+			"failurePolicy":        input.FailurePolicy,
 		},
-	}, nil
+	), nil
 }
 
 // handleEvaluateBulk is the local handler for the EvaluateBulkMicroBatch Task state.
@@ -588,6 +949,8 @@ func (o *Orchestrator) handleEvaluateBulk(ctx context.Context, rawInput interfac
 }
 
 // enqueueBulkInputs pushes one task per input to the queue for bulk execution.
+// When input.UseGroupEnqueue is true, tasks are enqueued as a group for Asynq
+// task aggregation, reducing queue overhead by processing all tasks together.
 func (o *Orchestrator) enqueueBulkInputs(
 	ctx context.Context,
 	input BulkOrchestratorInput,
@@ -609,6 +972,8 @@ func (o *Orchestrator) enqueueBulkInputs(
 
 	mbStart := mbIndex * input.MicroBatchSize
 
+	// Build payloads for all inputs
+	payloads := make([]*queue.ExecutionTaskPayload, 0, len(inputs))
 	for idx, inputJSON := range inputs {
 		var inputData interface{}
 		if err := json.Unmarshal([]byte(inputJSON), &inputData); err != nil {
@@ -632,10 +997,23 @@ func (o *Orchestrator) enqueueBulkInputs(
 			ExecutionName:        fmt.Sprintf("%s-%d", input.ExecutionNamePrefix, globalIdx),
 			ExecutionIndex:       globalIdx,
 			Input:                inputMap,
+			GroupConcurrency:     input.GroupConcurrency,
 		}
+		payloads = append(payloads, payload)
+	}
 
-		if _, err := qc.EnqueueExecution(payload); err != nil {
-			return fmt.Errorf("enqueue input %d: %w", idx, err)
+	// Use group-based enqueuing if enabled
+	if input.UseGroupEnqueue {
+		groupID := mbID // Use micro-batch ID as the group identifier
+		if _, err := qc.EnqueueExecutionGroup(payloads, groupID); err != nil {
+			return fmt.Errorf("enqueue group %s: %w", groupID, err)
+		}
+	} else {
+		// Enqueue individually (legacy behavior)
+		for idx, payload := range payloads {
+			if _, err := qc.EnqueueExecution(payload); err != nil {
+				return fmt.Errorf("enqueue input %d: %w", idx, err)
+			}
 		}
 	}
 
@@ -718,7 +1096,8 @@ func (o *Orchestrator) ResumeOrchestrator(ctx context.Context, mbMeta MicroBatch
 		return fmt.Errorf("signal: find waiting executions: %w", err)
 	}
 	if len(executions) == 0 {
-		return fmt.Errorf("signal: no waiting orchestrator for micro_batch_id=%s", mbMeta.MicroBatchID)
+		fmt.Printf("info: no waiting orchestrator for micro_batch_id=%s\t", mbMeta.MicroBatchID)
+		return nil
 	}
 
 	for _, rec := range executions {
@@ -860,6 +1239,9 @@ func (o *Orchestrator) storeIDs(ctx context.Context, batchID string, ids []strin
 
 // enqueueIDs pushes one task per sourceExecutionID to the queue.  Each payload
 // carries MicroBatchMeta so the queue worker can drive the barrier.
+//
+// When input.UseGroupEnqueue is true, tasks are enqueued as a group for Asynq
+// task aggregation, reducing queue overhead by processing all tasks together.
 func (o *Orchestrator) enqueueIDs(
 	ctx context.Context,
 	input OrchestratorInput,
@@ -879,6 +1261,8 @@ func (o *Orchestrator) enqueueIDs(
 	}
 	metaJSON, _ := json.Marshal(meta)
 
+	// Build payloads for all IDs
+	payloads := make([]*queue.ExecutionTaskPayload, 0, len(ids))
 	for idx, sourceExecID := range ids {
 		// Embed the MicroBatchMeta inside the task Input map so the worker
 		// can extract it without any change to ExecutionTaskPayload's struct.
@@ -893,12 +1277,27 @@ func (o *Orchestrator) enqueueIDs(
 			ExecutionName:     fmt.Sprintf("%s-mb%d-%d", input.BatchID, mbIndex, idx),
 			ExecutionIndex:    idx,
 			Input:             taskInput,
+			ApplyUnique:       true, // Ensure each execution is enqueued only once within 24h
+			GroupConcurrency:  input.GroupConcurrency,
 		}
+		payloads = append(payloads, payload)
+	}
 
-		if _, err := qc.EnqueueExecution(payload); err != nil {
-			return fmt.Errorf("enqueue id %s: %w", sourceExecID, err)
+	// Use group-based enqueuing if enabled
+	if input.UseGroupEnqueue {
+		groupID := mbID // Use micro-batch ID as the group identifier
+		if _, err := qc.EnqueueExecutionGroup(payloads, groupID); err != nil {
+			return fmt.Errorf("enqueue group %s: %w", groupID, err)
+		}
+	} else {
+		// Enqueue individually (legacy behavior)
+		for idx, payload := range payloads {
+			if _, err := qc.EnqueueExecution(payload); err != nil {
+				return fmt.Errorf("enqueue id %s: %w", ids[idx], err)
+			}
 		}
 	}
+
 	return nil
 }
 

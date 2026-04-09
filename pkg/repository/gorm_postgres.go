@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -18,6 +19,10 @@ import (
 type GormPostgresRepository struct {
 	db     *gorm.DB
 	config *Config
+
+	// stateMachineCache caches state machine definitions to avoid repeated DB lookups
+	// Key: stateMachineID, Value: *StateMachineRecord
+	stateMachineCache sync.Map
 }
 
 // NewGormPostgresRepository creates a new GORM-based repository
@@ -118,6 +123,7 @@ func parseGormConfig(options map[string]interface{}) *GormConfig {
 // Initialize creates tables and indexes using GORM AutoMigrate
 func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 	migrator := r.db.Migrator()
+	r.db.Logger = logger.Default.LogMode(logger.Error)
 
 	// Migrate tables in correct order (parent tables first)
 	tables := []struct {
@@ -146,12 +152,26 @@ func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 		}
 	}
 
+	// Ensure execution_id has gen_random_uuid() default (for existing tables)
+	if err := r.ensureExecutionIDDefault(ctx); err != nil {
+		fmt.Printf("Warning: could not set execution_id default: %v\n", err)
+	}
+
 	// Create additional indexes for better performance
 	if err := r.createAdditionalIndexes(ctx); err != nil {
 		return fmt.Errorf("failed to create additional indexes: %w", err)
 	}
 
 	return nil
+}
+
+// ensureExecutionIDDefault sets gen_random_uuid() as default for execution_id
+func (r *GormPostgresRepository) ensureExecutionIDDefault(ctx context.Context) error {
+	sql := `
+		ALTER TABLE executions 
+		ALTER COLUMN execution_id SET DEFAULT gen_random_uuid();
+	`
+	return r.db.WithContext(ctx).Exec(sql).Error
 }
 
 // migrateTable handles table creation or schema updates
@@ -232,20 +252,39 @@ func (r *GormPostgresRepository) createAdditionalIndexes(ctx context.Context) er
 // SaveStateMachine saves a state machine definition
 func (r *GormPostgresRepository) SaveStateMachine(ctx context.Context, sm *StateMachineRecord) error {
 	model := toStateMachineModel(sm)
-	return r.db.WithContext(ctx).Save(model).Error
+	if err := r.db.WithContext(ctx).Save(model).Error; err != nil {
+		return err
+	}
+	// Invalidate cache entry for this state machine
+	r.stateMachineCache.Delete(sm.ID)
+	return nil
 }
 
-// GetStateMachine retrieves a state machine by ID
+// GetStateMachine retrieves a state machine by ID with in-memory caching
 func (r *GormPostgresRepository) GetStateMachine(ctx context.Context, stateMachineID string) (*StateMachineRecord, error) {
+	// Check cache first
+	if cached, ok := r.stateMachineCache.Load(stateMachineID); ok {
+		if record, ok := cached.(*StateMachineRecord); ok {
+			return record, nil
+		}
+	}
+
+	// Cache miss - fetch from database
 	var model StateMachineModel
-	result := r.db.WithContext(ctx).Limit(1).Find(&model, "id = ?", stateMachineID)
+	result := r.db.WithContext(ctx).First(&model, "id = ?", stateMachineID)
 	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("state machine '%s' not found", stateMachineID)
+		}
 		return nil, result.Error
 	}
-	if result.RowsAffected == 0 {
-		return nil, fmt.Errorf("state machine '%s' not found", stateMachineID)
-	}
-	return fromStateMachineModel(&model), nil
+
+	record := fromStateMachineModel(&model)
+
+	// Cache the record
+	r.stateMachineCache.Store(stateMachineID, record)
+
+	return record, nil
 }
 
 // ListStateMachines lists all state machines with filtering
@@ -291,21 +330,73 @@ func (r *GormPostgresRepository) GetDB() *gorm.DB {
 	return r.db
 }
 
-// SaveExecution saves or updates an execution using GORM
+// SaveExecution saves or updates an execution using GORM.
+// If ExecutionID is empty, PostgreSQL will auto-generate it via gen_random_uuid().
+// If a duplicate key error occurs during INSERT, a new ID is generated and retried.
+// Updates are only attempted when the execution already exists and we're updating its state.
 func (r *GormPostgresRepository) SaveExecution(ctx context.Context, exec *ExecutionRecord) error {
 	model := toExecutionModel(exec)
 
-	// Use Clauses with OnConflict for proper upsert behavior
-	// This ensures we either insert a new record or update the existing one based on execution_id
-	result := r.db.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "execution_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"status", "current_state", "output", "error", "end_time", "updated_at", "history_sequence_number"}),
-		}).
-		Create(model)
+	// If ExecutionID is empty, let PostgreSQL generate it via gen_random_uuid()
+	generateID := model.ExecutionID == ""
+
+	result := r.db.WithContext(ctx).Session(&gorm.Session{Logger: r.db.Logger.LogMode(logger.Silent)}).Create(model)
 
 	if result.Error != nil {
+		// If this is a duplicate key error during INSERT (new execution)
+		if isDuplicateKeyError(result.Error) && generateID {
+			// Retry with a new PostgreSQL-generated UUID
+			// Clear the ID and try INSERT again
+			model.ExecutionID = ""
+			retryResult := r.db.WithContext(ctx).Session(&gorm.Session{Logger: r.db.Logger.LogMode(logger.Silent)}).Create(model)
+
+			if retryResult.Error != nil {
+				// If still failing with duplicate, something is seriously wrong
+				return fmt.Errorf("failed to save execution after retry: %w", retryResult.Error)
+			}
+
+			// Populate the generated ID back to the ExecutionRecord
+			if model.ExecutionID != "" {
+				exec.ExecutionID = model.ExecutionID
+			}
+			return nil
+		}
+
+		// If this is a duplicate during UPDATE, just update the existing record
+		if isDuplicateKeyError(result.Error) && !generateID {
+			// Use raw SQL for UPDATE to completely avoid GORM hooks and INSERT behavior
+			updateResult := r.db.WithContext(ctx).Exec(
+				`UPDATE executions SET 
+					status = ?, 
+					current_state = ?, 
+					output = ?, 
+					error = ?, 
+					end_time = ?, 
+					updated_at = ?, 
+					history_sequence_number = ?
+				WHERE execution_id = ?`,
+				model.Status,
+				model.CurrentState,
+				model.Output,
+				model.Error,
+				model.EndTime,
+				model.UpdatedAt,
+				model.HistorySequenceNumber,
+				model.ExecutionID,
+			)
+
+			if updateResult.Error != nil {
+				return fmt.Errorf("failed to update execution %s: %w", model.ExecutionID, updateResult.Error)
+			}
+			return nil
+		}
+
 		return fmt.Errorf("failed to save execution: %w", result.Error)
+	}
+
+	// If PostgreSQL generated the ID, populate it back to the ExecutionRecord
+	if generateID && model.ExecutionID != "" {
+		exec.ExecutionID = model.ExecutionID
 	}
 
 	return nil
@@ -355,20 +446,33 @@ func (r *GormPostgresRepository) GetExecutionByName(ctx context.Context, stateMa
 func (r *GormPostgresRepository) SaveStateHistory(ctx context.Context, history *StateHistoryRecord) error {
 	model := toStateHistoryModel(history)
 
-	// State history is immutable - use insert-only with ON CONFLICT DO NOTHING
-	// This avoids expensive upserts since history records should never be updated
-	result := r.db.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "id"}},
-			DoNothing: true,
-		}).
-		Create(model)
+	// State history is immutable - use plain INSERT for performance.
+	// IDs are constructed to be unique (execution_id + state_name + nanosecond timestamp),
+	// so conflicts are extremely rare. If a duplicate occurs, we ignore it.
+	result := r.db.WithContext(ctx).Create(model)
 
 	if result.Error != nil {
+		// Check if this is a duplicate key error (PostgreSQL error code 23505)
+		if isDuplicateKeyError(result.Error) {
+			// State history already exists - this is expected in rare race conditions
+			return nil
+		}
 		return fmt.Errorf("failed to save state history: %w", result.Error)
 	}
 
 	return nil
+}
+
+// isDuplicateKeyError checks if the error is a PostgreSQL unique violation
+func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Check for PostgreSQL unique violation error code 23505
+	errMsg := err.Error()
+	return strings.Contains(errMsg, "23505") ||
+		strings.Contains(errMsg, "duplicate key") ||
+		strings.Contains(errMsg, "unique constraint")
 }
 
 // GetStateHistory retrieves all state history for an execution
@@ -1150,13 +1254,6 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 		if linkedExecutionFilter.TargetExecutionID != "" {
 			subQuery = subQuery.Where("le.target_execution_id = ?", linkedExecutionFilter.TargetExecutionID)
 		}
-		if !linkedExecutionFilter.CreatedAfter.IsZero() {
-			subQuery = subQuery.Where("le.created_at >= ?", linkedExecutionFilter.CreatedAfter)
-		}
-		if !linkedExecutionFilter.CreatedBefore.IsZero() {
-			subQuery = subQuery.Where("le.created_at <= ?", linkedExecutionFilter.CreatedBefore)
-		}
-
 		query = query.Where("NOT EXISTS (?)", subQuery)
 	}
 
