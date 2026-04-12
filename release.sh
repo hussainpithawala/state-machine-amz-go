@@ -109,7 +109,7 @@ check_changelog() {
 # Create release notes file
 create_release_notes() {
     local version="$1"
-    local release_file="RELEASE_NOTES_${version}.md"
+    local release_file="releases/RELEASE_NOTES_${version}.md"
 
     info "Checking for release notes..."
 
@@ -120,7 +120,7 @@ create_release_notes() {
         warning "No release notes file found: $release_file"
         echo ""
         echo "Consider creating release notes with:"
-        echo "  RELEASE_NOTES_${version}.md"
+        echo "  releases/RELEASE_NOTES_${version}.md"
         echo ""
         read -p "Continue without release notes? [y/N] " -r
         echo ""
@@ -173,7 +173,7 @@ show_next_steps() {
     echo "     https://github.com/hussainpithawala/state-machine-amz-go/releases/new?tag=$version"
     echo ""
     echo "  2. Upload release notes from:"
-    echo "     RELEASE_NOTES_${version}.md"
+    echo "     releases/RELEASE_NOTES_${version}.md"
     echo ""
     echo "Links (available in ~5 minutes):"
     echo "  📦 Release: https://github.com/hussainpithawala/state-machine-amz-go/releases/tag/$version"

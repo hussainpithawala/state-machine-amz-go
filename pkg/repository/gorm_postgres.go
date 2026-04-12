@@ -176,16 +176,17 @@ func (r *GormPostgresRepository) ensureExecutionIDDefault(ctx context.Context) e
 
 // migrateTable handles table creation or schema updates
 func (r *GormPostgresRepository) migrateTable(ctx context.Context, migrator gorm.Migrator, model interface{}, tableName string) error {
-	err := migrator.CreateTable(model)
-	if err != nil {
-		// Ignore "already exists" errors
-		if strings.Contains(err.Error(), "already exists") {
-			// Table exists, try to auto-migrate
-			if autoErr := r.db.WithContext(ctx).AutoMigrate(model); autoErr != nil {
-				fmt.Printf("Warning: could not auto-migrate %s table: %v\n", tableName, autoErr)
-			}
-			return nil
+	// Check if table already exists
+	if migrator.HasTable(model) {
+		// Table exists, try to auto-migrate to update schema if needed
+		if autoErr := r.db.WithContext(ctx).AutoMigrate(model); autoErr != nil {
+			fmt.Printf("Warning: could not auto-migrate %s table: %v\n", tableName, autoErr)
 		}
+		return nil
+	}
+
+	// Table doesn't exist, create it
+	if err := migrator.CreateTable(model); err != nil {
 		return fmt.Errorf("failed to create %s table: %w", tableName, err)
 	}
 	return nil
