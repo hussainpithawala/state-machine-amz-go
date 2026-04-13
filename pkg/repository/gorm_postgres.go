@@ -221,24 +221,28 @@ func (r *GormPostgresRepository) addForeignKeyConstraints(ctx context.Context) e
 func (r *GormPostgresRepository) createAdditionalIndexes(ctx context.Context) error {
 	indexes := []string{
 		// Composite index for common query patterns
-		`CREATE INDEX IF NOT EXISTS idx_executions_sm_status_time 
+		`CREATE INDEX IF NOT EXISTS idx_executions_sm_status_time
 		 ON executions(state_machine_id, status, start_time DESC)`,
 
 		// Partial index for active executions only
-		`CREATE INDEX IF NOT EXISTS idx_executions_running 
-		 ON executions(state_machine_id, start_time DESC) 
+		`CREATE INDEX IF NOT EXISTS idx_executions_running
+		 ON executions(state_machine_id, start_time DESC)
 		 WHERE status = 'RUNNING'`,
 
 		// Index for execution-history joins
-		`CREATE INDEX IF NOT EXISTS idx_state_history_exec_seq 
+		`CREATE INDEX IF NOT EXISTS idx_state_history_exec_seq
 		 ON state_history(execution_id, sequence_number ASC)`,
 
 		// GIN indexes for JSONB searches
-		`CREATE INDEX IF NOT EXISTS idx_executions_metadata_gin 
+		`CREATE INDEX IF NOT EXISTS idx_executions_metadata_gin
 		 ON executions USING GIN (metadata)`,
 
-		`CREATE INDEX IF NOT EXISTS idx_state_history_metadata_gin 
+		`CREATE INDEX IF NOT EXISTS idx_state_history_metadata_gin
 		 ON state_history USING GIN (metadata)`,
+
+		// Composite index for NOT EXISTS subquery in ListNonLinkedExecutions
+		`CREATE INDEX IF NOT EXISTS idx_linked_exec_composite
+		 ON linked_executions(source_execution_id, source_state_machine_id, source_state_name)`,
 	}
 
 	for _, indexSQL := range indexes {

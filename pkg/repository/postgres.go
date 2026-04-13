@@ -282,6 +282,10 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_linked_source_sm ON linked_executions(source_state_machine_id);
 	CREATE INDEX IF NOT EXISTS idx_linked_source_exec ON linked_executions(source_execution_id);
 	CREATE INDEX IF NOT EXISTS idx_linked_target_exec ON linked_executions(target_execution_id);
+
+	-- Composite index for NOT EXISTS subquery with filters
+	CREATE INDEX IF NOT EXISTS idx_linked_exec_composite
+		ON linked_executions(source_execution_id, source_state_machine_id, source_state_name);
 	`
 
 	// Execute all schema creation statements
