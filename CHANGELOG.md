@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.20] - 2026-04-13
+
+### Added
+- **Composite Index for Linked Executions**: Performance optimization for correlated subqueries
+  - Added `idx_linked_exec_composite` index on `linked_executions` table
+  - Significantly improves performance for filtered `NOT EXISTS` queries
+  - Optimizes execution filtering in `ListNonLinkedExecutions` queries
+
+### Changed
+- **Project Organization**: Improved repository structure
+  - Moved all release notes to dedicated `releases/` folder
+  - Moved example documentation to `example-docs/` folder for better organization
+  - Cleaned up root directory for better maintainability
+
+- **Code Cleanup**: General code improvements
+  - Removed binary artifacts and temporary files
+  - Cleaned up example binaries and database message files
+  - Updated release script for new folder structure
+
+### Performance Improvements
+- **Linked Execution Queries**: Faster filtering with composite index
+  - Improved performance for correlated subquery patterns
+  - Better execution filtering performance in production workloads
+
+### Technical Details
+- **Files Modified**: 58 files (primarily documentation reorganization)
+  - 27 lines added, 18 lines removed (net: +9 lines)
+  - Major reorganization: moved release notes and example docs to dedicated folders
+  - Removed binary artifacts and temporary database files
+
+### Migration Notes
+- **Database Index**: Run the following SQL to add the composite index:
+  ```sql
+  CREATE INDEX IF NOT EXISTS idx_linked_exec_composite 
+  ON linked_executions (state_machine_id, execution_id, source_state_name);
+  ```
+  Check your actual index columns based on your implementation.
+
 ## [1.2.19] - 2026-04-08
 
 ### Added
