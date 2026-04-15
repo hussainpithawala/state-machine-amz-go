@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.21] - 2026-04-15
+
+### Added
+- **Query Timeout Handling**: Configurable statement_timeout for GORM PostgreSQL
+  - Added `statement_timeout` config option (default: `30s`)
+  - Queries execute within transaction-scoped `SET LOCAL statement_timeout`
+  - Prevents indefinite hangs on large tables (2M+ rows)
+  - Configurable via repository `Options["statement_timeout"]`
+
+- **Composite Indexes for Optimized Queries**: Performance improvements for common query patterns
+  - `idx_executions_sm_status_time` - State machine + status + time queries
+  - `idx_executions_filter` - Filtered execution count/list queries
+  - `idx_executions_running` - Partial index for active executions
+  - `idx_state_history_exec_seq` - Execution-history joins
+  - `idx_state_history_lookup` - State history lookups with filters
+  - `idx_executions_metadata_gin` / `idx_state_history_metadata_gin` - JSONB searches
+  - `idx_linked_exec_composite` - Linked execution filtering (updated)
+
+### Changed
+- **Linked Execution Filtering**: Replaced `NOT EXISTS` with `NOT IN` subquery
+  - Correlated `NOT EXISTS` evaluates per-row and can timeout on large tables
+  - `NOT IN` materializes linked execution IDs once for fast hash/merge anti-join
+  - Up to 10-50x faster on 2M+ row tables with proper indexes
+
+### Performance Improvements
+- **ListNonLinkedExecutions**: Dramatically faster batch filtering with `NOT IN` + composite indexes
+- **Large Table Protection**: Configurable timeout prevents resource exhaustion
+- **Execution Filtering**: Significantly faster with new composite indexes
+- **History Queries**: Optimized with dedicated join indexes
+
+### Migration Notes
+- **Database Indexes**: Run `Initialize()` or execute the SQL statements in RELEASE_NOTES_v1.2.21.md
+- **Configuration**: Optional `statement_timeout` via config options
+
 ## [1.2.20] - 2026-04-13
 
 ### Added
