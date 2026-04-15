@@ -1246,28 +1246,31 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 		Table("executions").
 		Select(execColumns)
 
-	// Correlated NOT EXISTS subquery for better performance and correctness
+	// Use NOT IN with a pre-filtered subquery instead of correlated NOT EXISTS.
+	// For large tables (2M+ rows), correlated NOT EXISTS evaluates per-row and can
+	// time out or return empty results. NOT IN lets PostgreSQL materialize the
+	// linked execution IDs once, then do a fast hash/merge anti-join.
 	if linkedExecutionFilter != nil {
-		subQuery := r.db.Table("linked_executions le").
-			Select("1").
-			Where("le.source_execution_id = executions.execution_id")
+		subQuery := r.db.Table("linked_executions").
+			Select("DISTINCT source_execution_id").
+			Where("source_execution_id IS NOT NULL")
 
 		if linkedExecutionFilter.SourceStateMachineID != "" {
-			subQuery = subQuery.Where("le.source_state_machine_id = ?", linkedExecutionFilter.SourceStateMachineID)
+			subQuery = subQuery.Where("source_state_machine_id = ?", linkedExecutionFilter.SourceStateMachineID)
 		}
 		if linkedExecutionFilter.SourceStateName != "" {
-			subQuery = subQuery.Where("le.source_state_name = ?", linkedExecutionFilter.SourceStateName)
+			subQuery = subQuery.Where("source_state_name = ?", linkedExecutionFilter.SourceStateName)
 		}
 		if linkedExecutionFilter.InputTransformerName != "" {
-			subQuery = subQuery.Where("le.input_transformer_name = ?", linkedExecutionFilter.InputTransformerName)
+			subQuery = subQuery.Where("input_transformer_name = ?", linkedExecutionFilter.InputTransformerName)
 		}
 		if linkedExecutionFilter.TargetStateMachineName != "" {
-			subQuery = subQuery.Where("le.target_state_machine_name = ?", linkedExecutionFilter.TargetStateMachineName)
+			subQuery = subQuery.Where("target_state_machine_name = ?", linkedExecutionFilter.TargetStateMachineName)
 		}
 		if linkedExecutionFilter.TargetExecutionID != "" {
-			subQuery = subQuery.Where("le.target_execution_id = ?", linkedExecutionFilter.TargetExecutionID)
+			subQuery = subQuery.Where("target_execution_id = ?", linkedExecutionFilter.TargetExecutionID)
 		}
-		query = query.Where("NOT EXISTS (?)", subQuery)
+		query = query.Where("executions.execution_id NOT IN (?)", subQuery)
 	}
 
 	// Apply general execution filters
