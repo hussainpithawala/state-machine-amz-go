@@ -211,6 +211,9 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_executions_name ON executions(name) WHERE name IS NOT NULL;
 	CREATE INDEX IF NOT EXISTS idx_executions_state_machine_name ON executions(state_machine_id, name);
 
+	-- Composite index for filtered execution count/list queries
+	CREATE INDEX IF NOT EXISTS idx_executions_filter ON executions(state_machine_id, status, start_time);
+
 	-- JSONB indexes for metadata queries
 	CREATE INDEX IF NOT EXISTS idx_executions_metadata_gin ON executions USING GIN (metadata);
 	`

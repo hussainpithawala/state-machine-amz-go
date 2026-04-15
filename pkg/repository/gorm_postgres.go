@@ -224,6 +224,10 @@ func (r *GormPostgresRepository) createAdditionalIndexes(ctx context.Context) er
 		`CREATE INDEX IF NOT EXISTS idx_executions_sm_status_time
 		 ON executions(state_machine_id, status, start_time DESC)`,
 
+		// Composite index for filtered execution count/list queries
+		`CREATE INDEX IF NOT EXISTS idx_executions_filter
+		 ON executions(state_machine_id, status, start_time)`,
+
 		// Partial index for active executions only
 		`CREATE INDEX IF NOT EXISTS idx_executions_running
 		 ON executions(state_machine_id, start_time DESC)
@@ -232,6 +236,10 @@ func (r *GormPostgresRepository) createAdditionalIndexes(ctx context.Context) er
 		// Index for execution-history joins
 		`CREATE INDEX IF NOT EXISTS idx_state_history_exec_seq
 		 ON state_history(execution_id, sequence_number ASC)`,
+
+		// Composite index for state_history execution lookups with state filters
+		`CREATE INDEX IF NOT EXISTS idx_state_history_lookup
+		 ON state_history(execution_id, execution_start_time, state_name, status)`,
 
 		// GIN indexes for JSONB searches
 		`CREATE INDEX IF NOT EXISTS idx_executions_metadata_gin
