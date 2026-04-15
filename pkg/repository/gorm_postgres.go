@@ -65,24 +65,47 @@ func NewGormPostgresRepository(config *Config) (*GormPostgresRepository, error) 
 	}, nil
 }
 
+// withQueryTimeout wraps the query execution with a statement_timeout setting.
+// For PostgreSQL, this uses SET LOCAL statement_timeout within a transaction to
+// prevent long-running queries from hanging indefinitely on large tables (2M+ rows).
+func (r *GormPostgresRepository) withQueryTimeout(fn func(tx *gorm.DB) error) error {
+	gormCfg := parseGormConfig(r.config.Options)
+
+	// If no timeout configured, execute directly
+	if gormCfg.StatementTimeout == "" {
+		return fn(r.db)
+	}
+
+	// Execute within a transaction to scope the timeout
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// Set session-level timeout
+		if err := tx.Exec(fmt.Sprintf("SET LOCAL statement_timeout = '%s'", gormCfg.StatementTimeout)).Error; err != nil {
+			return fmt.Errorf("failed to set query timeout: %w", err)
+		}
+		return fn(tx)
+	})
+}
+
 // GormConfig holds GORM-specific configuration
 type GormConfig struct {
-	MaxOpenConns    int
-	MaxIdleConns    int
-	ConnMaxLifetime time.Duration
-	ConnMaxIdleTime time.Duration
-	Logger          logger.Interface
-	LogLevel        logger.LogLevel
+	MaxOpenConns     int
+	MaxIdleConns     int
+	ConnMaxLifetime  time.Duration
+	ConnMaxIdleTime  time.Duration
+	Logger           logger.Interface
+	LogLevel         logger.LogLevel
+	StatementTimeout string // Query timeout (e.g., "30s", "60s")
 }
 
 // parseGormConfig extracts GORM-specific options from config
 func parseGormConfig(options map[string]interface{}) *GormConfig {
 	cfg := &GormConfig{
-		MaxOpenConns:    25,
-		MaxIdleConns:    5,
-		ConnMaxLifetime: 5 * time.Minute,
-		ConnMaxIdleTime: 5 * time.Minute,
-		LogLevel:        logger.Warn,
+		MaxOpenConns:     25,
+		MaxIdleConns:     5,
+		ConnMaxLifetime:  5 * time.Minute,
+		ConnMaxIdleTime:  5 * time.Minute,
+		LogLevel:         logger.Warn,
+		StatementTimeout: "30s",
 	}
 
 	if options == nil {
@@ -112,6 +135,9 @@ func parseGormConfig(options map[string]interface{}) *GormConfig {
 		case "info":
 			cfg.LogLevel = logger.Info
 		}
+	}
+	if v, ok := options["statement_timeout"].(string); ok {
+		cfg.StatementTimeout = v
 	}
 
 	// Create logger with configured level
@@ -224,6 +250,10 @@ func (r *GormPostgresRepository) createAdditionalIndexes(ctx context.Context) er
 		`CREATE INDEX IF NOT EXISTS idx_executions_sm_status_time
 		 ON executions(state_machine_id, status, start_time DESC)`,
 
+		// Composite index for filtered execution count/list queries
+		`CREATE INDEX IF NOT EXISTS idx_executions_filter
+		 ON executions(state_machine_id, status, start_time)`,
+
 		// Partial index for active executions only
 		`CREATE INDEX IF NOT EXISTS idx_executions_running
 		 ON executions(state_machine_id, start_time DESC)
@@ -232,6 +262,10 @@ func (r *GormPostgresRepository) createAdditionalIndexes(ctx context.Context) er
 		// Index for execution-history joins
 		`CREATE INDEX IF NOT EXISTS idx_state_history_exec_seq
 		 ON state_history(execution_id, sequence_number ASC)`,
+
+		// Composite index for state_history execution lookups with state filters
+		`CREATE INDEX IF NOT EXISTS idx_state_history_lookup
+		 ON state_history(execution_id, execution_start_time, state_name, status)`,
 
 		// GIN indexes for JSONB searches
 		`CREATE INDEX IF NOT EXISTS idx_executions_metadata_gin
@@ -1234,66 +1268,75 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 		"executions.end_time, executions.current_state, executions.error, executions.metadata, " +
 		"executions.created_at, executions.updated_at"
 
-	query := r.db.WithContext(ctx).
-		Table("executions").
-		Select(execColumns)
-
-	// Correlated NOT EXISTS subquery for better performance and correctness
-	if linkedExecutionFilter != nil {
-		subQuery := r.db.Table("linked_executions le").
-			Select("1").
-			Where("le.source_execution_id = executions.execution_id")
-
-		if linkedExecutionFilter.SourceStateMachineID != "" {
-			subQuery = subQuery.Where("le.source_state_machine_id = ?", linkedExecutionFilter.SourceStateMachineID)
-		}
-		if linkedExecutionFilter.SourceStateName != "" {
-			subQuery = subQuery.Where("le.source_state_name = ?", linkedExecutionFilter.SourceStateName)
-		}
-		if linkedExecutionFilter.InputTransformerName != "" {
-			subQuery = subQuery.Where("le.input_transformer_name = ?", linkedExecutionFilter.InputTransformerName)
-		}
-		if linkedExecutionFilter.TargetStateMachineName != "" {
-			subQuery = subQuery.Where("le.target_state_machine_name = ?", linkedExecutionFilter.TargetStateMachineName)
-		}
-		if linkedExecutionFilter.TargetExecutionID != "" {
-			subQuery = subQuery.Where("le.target_execution_id = ?", linkedExecutionFilter.TargetExecutionID)
-		}
-		query = query.Where("NOT EXISTS (?)", subQuery)
-	}
-
-	// Apply general execution filters
-	if executionFilter.StateMachineID != "" {
-		query = query.Where("executions.state_machine_id = ?", executionFilter.StateMachineID)
-	}
-	if executionFilter.Status != "" {
-		query = query.Where("executions.status = ?", executionFilter.Status)
-	}
-	if executionFilter.CurrentState != "" {
-		query = query.Where("executions.current_state = ?", executionFilter.CurrentState)
-	}
-	if executionFilter.Name != "" {
-		query = query.Where("executions.name ILIKE ?", "%"+executionFilter.Name+"%")
-	}
-	if !executionFilter.StartAfter.IsZero() {
-		query = query.Where("executions.start_time >= ?", executionFilter.StartAfter)
-	}
-	if !executionFilter.StartBefore.IsZero() {
-		query = query.Where("executions.start_time <= ?", executionFilter.StartBefore)
-	}
-
-	// Apply pagination
-	if executionFilter.Limit > 0 {
-		query = query.Limit(executionFilter.Limit)
-	}
-	if executionFilter.Offset > 0 {
-		query = query.Offset(executionFilter.Offset)
-	}
-
-	query = query.Order("executions.start_time DESC")
-
 	var models []ExecutionModel
-	if err := query.Find(&models).Error; err != nil {
+
+	// Wrap with timeout handling for large tables (2M+ rows)
+	err := r.withQueryTimeout(func(tx *gorm.DB) error {
+		query := tx.WithContext(ctx).
+			Table("executions").
+			Select(execColumns)
+
+		// Use NOT IN with a pre-filtered subquery instead of correlated NOT EXISTS.
+		// For large tables (2M+ rows), correlated NOT EXISTS evaluates per-row and can
+		// time out or return empty results. NOT IN lets PostgreSQL materialize the
+		// linked execution IDs once, then do a fast hash/merge anti-join.
+		if linkedExecutionFilter != nil {
+			subQuery := tx.Table("linked_executions").
+				Select("DISTINCT source_execution_id").
+				Where("source_execution_id IS NOT NULL")
+
+			if linkedExecutionFilter.SourceStateMachineID != "" {
+				subQuery = subQuery.Where("source_state_machine_id = ?", linkedExecutionFilter.SourceStateMachineID)
+			}
+			if linkedExecutionFilter.SourceStateName != "" {
+				subQuery = subQuery.Where("source_state_name = ?", linkedExecutionFilter.SourceStateName)
+			}
+			if linkedExecutionFilter.InputTransformerName != "" {
+				subQuery = subQuery.Where("input_transformer_name = ?", linkedExecutionFilter.InputTransformerName)
+			}
+			if linkedExecutionFilter.TargetStateMachineName != "" {
+				subQuery = subQuery.Where("target_state_machine_name = ?", linkedExecutionFilter.TargetStateMachineName)
+			}
+			if linkedExecutionFilter.TargetExecutionID != "" {
+				subQuery = subQuery.Where("target_execution_id = ?", linkedExecutionFilter.TargetExecutionID)
+			}
+			query = query.Where("executions.execution_id NOT IN (?)", subQuery)
+		}
+
+		// Apply general execution filters
+		if executionFilter.StateMachineID != "" {
+			query = query.Where("executions.state_machine_id = ?", executionFilter.StateMachineID)
+		}
+		if executionFilter.Status != "" {
+			query = query.Where("executions.status = ?", executionFilter.Status)
+		}
+		if executionFilter.CurrentState != "" {
+			query = query.Where("executions.current_state = ?", executionFilter.CurrentState)
+		}
+		if executionFilter.Name != "" {
+			query = query.Where("executions.name ILIKE ?", "%"+executionFilter.Name+"%")
+		}
+		if !executionFilter.StartAfter.IsZero() {
+			query = query.Where("executions.start_time >= ?", executionFilter.StartAfter)
+		}
+		if !executionFilter.StartBefore.IsZero() {
+			query = query.Where("executions.start_time <= ?", executionFilter.StartBefore)
+		}
+
+		// Apply pagination
+		if executionFilter.Limit > 0 {
+			query = query.Limit(executionFilter.Limit)
+		}
+		if executionFilter.Offset > 0 {
+			query = query.Offset(executionFilter.Offset)
+		}
+
+		query = query.Order("executions.start_time DESC")
+
+		return query.Find(&models).Error
+	})
+
+	if err != nil {
 		return nil, fmt.Errorf("failed to list non-linked executions: %w", err)
 	}
 
