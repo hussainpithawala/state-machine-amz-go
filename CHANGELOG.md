@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.22] - 2026-04-21
+
+### Added
+- **Enhanced Query Performance with Composite Indexes**: New indexes for optimized execution queries
+  - `idx_state_machine_current_state_start_time`
+  - `idx_state_machine_current_state_start_time_status`
+  - `idx_state_machine_status_start_time`
+  - `idx_state_machine_status_start_time_current_state`
+
+### Changed
+- **Schema Constraints Refactoring**: Streamlined `CHECK` and `FOREIGN KEY` handling
+  - Refactored schema constraints for better maintainability and consistency
+  - Improved `Initialize()` logic for reliable schema setup
+
+### Migration Notes
+- **Database Indexes**: Run `Initialize()` or execute the SQL statements in RELEASE_NOTES_v1.2.22.md
+
 ## [1.2.21] - 2026-04-15
 
 ### Added
