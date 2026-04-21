@@ -202,19 +202,19 @@ func (r *GormPostgresRepository) ensureExecutionIDDefault(ctx context.Context) e
 
 // migrateTable handles table creation or schema updates
 func (r *GormPostgresRepository) migrateTable(ctx context.Context, migrator gorm.Migrator, model interface{}, tableName string) error {
-	// Check if table already exists
+	// 1. Explicitly check for existence
 	if migrator.HasTable(model) {
-		// Table exists, try to auto-migrate to update schema if needed
-		if autoErr := r.db.WithContext(ctx).AutoMigrate(model); autoErr != nil {
-			fmt.Printf("Warning: could not auto-migrate %s table: %v\n", tableName, autoErr)
-		}
+		// Table exists: Exit immediately to avoid any schema overhead or locks
 		return nil
 	}
 
-	// Table doesn't exist, create it
+	// 2. Table doesn't exist: Create it
+	// Using CreateTable is safer here than AutoMigrate because you've
+	// already confirmed it is missing and want a clean initialization.
 	if err := migrator.CreateTable(model); err != nil {
 		return fmt.Errorf("failed to create %s table: %w", tableName, err)
 	}
+
 	return nil
 }
 
@@ -222,21 +222,23 @@ func (r *GormPostgresRepository) migrateTable(ctx context.Context, migrator gorm
 func (r *GormPostgresRepository) addForeignKeyConstraints(ctx context.Context) error {
 	// Add foreign key from state_history to executions
 	constraint_state_history := `
-		ALTER TABLE state_history 
-		DROP CONSTRAINT IF EXISTS fk_state_history_execution;
-	`
-	constraint_executions := `
-			ALTER TABLE state_history 
-		ADD CONSTRAINT fk_state_history_execution 
-		FOREIGN KEY (execution_id) 
-		REFERENCES executions(execution_id) 
-		ON DELETE CASCADE;
+		DO $$ 
+		BEGIN 
+			IF NOT EXISTS (
+				SELECT 1 
+				FROM pg_constraint 
+				WHERE conname = 'fk_state_history_execution'
+			) THEN 
+				ALTER TABLE state_history 
+				ADD CONSTRAINT fk_state_history_execution 
+				FOREIGN KEY (execution_id) 
+				REFERENCES executions(execution_id) 
+				ON DELETE CASCADE; 
+			END IF; 
+		END $$;
 	`
 
 	if err := r.db.WithContext(ctx).Exec(constraint_state_history).Error; err != nil {
-		return fmt.Errorf("failed to add foreign key constraint: %w", err)
-	}
-	if err := r.db.WithContext(ctx).Exec(constraint_executions).Error; err != nil {
 		return fmt.Errorf("failed to add foreign key constraint: %w", err)
 	}
 
@@ -277,6 +279,22 @@ func (r *GormPostgresRepository) createAdditionalIndexes(ctx context.Context) er
 		// Composite index for NOT EXISTS subquery in ListNonLinkedExecutions
 		`CREATE INDEX IF NOT EXISTS idx_linked_exec_composite
 		 ON linked_executions(source_execution_id, source_state_machine_id, source_state_name)`,
+
+		// Composite index for state_machine_id, current_state, and start_time
+		`CREATE INDEX IF NOT EXISTS idx_state_machine_current_state_start_time
+		 ON executions(state_machine_id, current_state, start_time)`,
+
+		// Composite index for state_machine_id, current_state, start_time, and status
+		`CREATE INDEX IF NOT EXISTS idx_state_machine_current_state_start_time_status
+		 ON executions(state_machine_id, current_state, start_time, status)`,
+
+		// Composite index for state_machine_id, status, and start_time
+		`CREATE INDEX IF NOT EXISTS idx_state_machine_status_start_time
+		 ON executions(state_machine_id, status, start_time)`,
+
+		// Composite index for state_machine_id, status, and start_time
+		`CREATE INDEX IF NOT EXISTS idx_state_machine_status_start_time_current_state
+		 ON executions(state_machine_id, status, start_time, current_state)`,
 	}
 
 	for _, indexSQL := range indexes {

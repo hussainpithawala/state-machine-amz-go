@@ -210,6 +210,10 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_executions_end_time ON executions(end_time DESC) WHERE end_time IS NOT NULL;
 	CREATE INDEX IF NOT EXISTS idx_executions_name ON executions(name) WHERE name IS NOT NULL;
 	CREATE INDEX IF NOT EXISTS idx_executions_state_machine_name ON executions(state_machine_id, name);
+	CREATE INDEX IF NOT EXISTS idx_state_machine_current_state_start_time ON executions(state_machine_id, current_state, start_time);
+	CREATE INDEX IF NOT EXISTS idx_state_machine_current_state_start_time_status ON executions(state_machine_id, current_state, start_time, status);
+    CREATE INDEX IF NOT EXISTS idx_state_machine_status_start_time ON executions(state_machine_id, status, start_time);
+    CREATE INDEX IF NOT EXISTS idx_state_machine_status_start_time_current_state ON executions(state_machine_id, status, start_time, current_state);
 
 	-- Composite index for filtered execution count/list queries
 	CREATE INDEX IF NOT EXISTS idx_executions_filter ON executions(state_machine_id, status, start_time);
@@ -314,14 +318,16 @@ func (ps *PostgresRepository) Initialize(ctx context.Context) error {
 		`DO $$ 
 		BEGIN 
 			BEGIN
-				ALTER TABLE executions DROP CONSTRAINT IF EXISTS executions_status_check;
-				ALTER TABLE executions ADD CONSTRAINT executions_status_check CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'ABORTED', 'PAUSED'));
+				ALTER TABLE executions 
+				DROP CONSTRAINT IF EXISTS executions_status_check,
+				ADD CONSTRAINT executions_status_check CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'ABORTED', 'PAUSED'));
 			EXCEPTION WHEN OTHERS THEN 
 				-- Ignore errors if table doesn't exist yet (though it should after the above loop)
 			END;
 			BEGIN
-				ALTER TABLE state_history DROP CONSTRAINT IF EXISTS state_history_status_check;
-				ALTER TABLE state_history ADD CONSTRAINT state_history_status_check CHECK (status IN ('SUCCEEDED', 'FAILED', 'RUNNING', 'CANCELLED', 'TIMED_OUT', 'RETRYING', 'WAITING'));
+				ALTER TABLE state_history 
+				DROP CONSTRAINT IF EXISTS state_history_status_check,
+				ADD CONSTRAINT state_history_status_check CHECK (status IN ('SUCCEEDED', 'FAILED', 'RUNNING', 'CANCELLED', 'TIMED_OUT', 'RETRYING', 'WAITING'));
 			EXCEPTION WHEN OTHERS THEN 
 				-- Ignore errors
 			END;
