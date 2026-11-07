@@ -21,6 +21,21 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 )
 
+// Option configures StateMachine construction behavior
+type Option func(*smConfig)
+
+type smConfig struct {
+	allowMessageStates bool
+}
+
+// WithAllowMessageStates permits Message states in the definition.
+// This should only be used by persistent state machine constructors.
+func WithAllowMessageStates() Option {
+	return func(c *smConfig) {
+		c.allowMessageStates = true
+	}
+}
+
 // StateMachine represents an Amazon States Language state machine
 type StateMachine struct {
 	Name           string                  `json:"Name"`
@@ -31,9 +46,10 @@ type StateMachine struct {
 	Version        string                  `json:"Version,omitempty"`
 
 	// Internal fields
-	ID        string
-	validator validator.Validator
-	createdAt time.Time
+	ID           string
+	validator    validator.Validator
+	validateOpts *validator.ValidateOptions
+	createdAt    time.Time
 }
 
 // rawStateMachine is a temporary struct for unmarshaling
@@ -47,7 +63,7 @@ type rawStateMachine struct {
 }
 
 // New creates a new state machine from JSON/YAML definition
-func New(definition []byte, isJson bool) (*StateMachine, error) {
+func New(definition []byte, isJson bool, opts ...Option) (*StateMachine, error) {
 	// First unmarshal into rawStateMachine to capture raw state definitions
 	var rawSM rawStateMachine
 	if isJson {
@@ -64,6 +80,17 @@ func New(definition []byte, isJson bool) (*StateMachine, error) {
 		}
 	}
 
+	// Process options
+	cfg := &smConfig{}
+	for _, o := range opts {
+		o(cfg)
+	}
+
+	var validateOpts *validator.ValidateOptions
+	if cfg.allowMessageStates {
+		validateOpts = &validator.ValidateOptions{AllowMessageStates: true}
+	}
+
 	// Create the StateMachine instance
 	sm := &StateMachine{
 		Name:           rawSM.Name,
@@ -72,6 +99,7 @@ func New(definition []byte, isJson bool) (*StateMachine, error) {
 		TimeoutSeconds: rawSM.TimeoutSeconds,
 		Version:        rawSM.Version,
 		States:         make(map[string]states.State),
+		validateOpts:   validateOpts,
 	}
 
 	// Set default values
@@ -120,7 +148,7 @@ func (sm *StateMachine) Validate() error {
 		sm.validator = validator.NewStateMachineValidator()
 	}
 
-	return sm.validator.Validate(sm.StartAt, sm.States, sm.TimeoutSeconds)
+	return sm.validator.Validate(sm.StartAt, sm.States, sm.TimeoutSeconds, sm.validateOpts)
 }
 
 // GetStartAt returns the start state name

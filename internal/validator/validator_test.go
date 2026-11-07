@@ -217,6 +217,49 @@ func TestValidateGraph_AllowsLegitimateLoops(t *testing.T) {
 	}
 }
 
+func TestValidate_MessageStateRequiresPersistence(t *testing.T) {
+	v := NewStateMachineValidator()
+
+	messageStates := map[string]states.State{
+		"Start":   &mockState{name: "Start", next: stringPtr("WaitMsg"), stateType: "Task"},
+		"WaitMsg": &mockState{name: "WaitMsg", next: stringPtr("Done"), stateType: "Message"},
+		"Done":    &mockState{name: "Done", isEnd: true, stateType: "Succeed"},
+	}
+
+	nonMessageStates := map[string]states.State{
+		"Start": &mockState{name: "Start", next: stringPtr("Done"), stateType: "Task"},
+		"Done":  &mockState{name: "Done", isEnd: true, stateType: "Succeed"},
+	}
+
+	t.Run("rejected when opts is nil", func(t *testing.T) {
+		err := v.Validate("Start", messageStates, nil, nil)
+		if err == nil || !contains(err.Error(), "only allowed in persistent") {
+			t.Errorf("expected rejection, got: %v", err)
+		}
+	})
+
+	t.Run("rejected when AllowMessageStates is false", func(t *testing.T) {
+		err := v.Validate("Start", messageStates, nil, &ValidateOptions{AllowMessageStates: false})
+		if err == nil || !contains(err.Error(), "only allowed in persistent") {
+			t.Errorf("expected rejection, got: %v", err)
+		}
+	})
+
+	t.Run("allowed when AllowMessageStates is true", func(t *testing.T) {
+		err := v.Validate("Start", messageStates, nil, &ValidateOptions{AllowMessageStates: true})
+		if err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("non-message states pass regardless", func(t *testing.T) {
+		err := v.Validate("Start", nonMessageStates, nil, nil)
+		if err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsSubstring(s, substr))
 }
