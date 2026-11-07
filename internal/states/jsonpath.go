@@ -330,29 +330,64 @@ func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
 	return result
 }
 
-// ExpandParameters expands parameter values using JSONPath expressions.
-func (p *JSONPathProcessor) ExpandParameters(params map[string]interface{}, input interface{}) (map[string]interface{}, error) {
-	result := make(map[string]interface{})
-	for k, v := range params {
-		expanded, err := p.expandValue(v, input)
-		if err != nil {
-			return nil, fmt.Errorf("failed to expand parameter '%s': %w", k, err)
-		}
-		result[k] = expanded
+// ToJSON converts a value to its JSON string representation.
+func (p *JSONPathProcessor) ToJSON(value interface{}) (string, error) {
+	bytes, err := json.Marshal(value)
+	if err != nil {
+		return "", err
 	}
-	return result, nil
+	return string(bytes), nil
 }
 
+// ExpandParameters expands parameter values using JSONPath expressions.
+// FIX: Delegates to expandValue to correctly handle root-level ".$" keys.
+func (p *JSONPathProcessor) ExpandParameters(params map[string]interface{}, input interface{}) (map[string]interface{}, error) {
+	res, err := p.expandValue(params, input)
+	if err != nil {
+		return nil, err
+	}
+	if m, ok := res.(map[string]interface{}); ok {
+		return m, nil
+	}
+	// Fallback (should theoretically never happen if params is a map)
+	return params, nil
+}
+
+// expandValue recursively expands JSONPath expressions in a template.
+// Supports both AWS-standard "key.$" syntax and legacy bare-JSONPath syntax.
 func (p *JSONPathProcessor) expandValue(value, input interface{}) (interface{}, error) {
 	switch v := value.(type) {
 	case string:
+		// Legacy syntax: if a bare string starts with "$", evaluate it as JSONPath
 		if strings.HasPrefix(v, "$") {
 			return p.getValue(input, v)
 		}
 		return v, nil
+
 	case map[string]interface{}:
 		result := make(map[string]interface{})
 		for key, val := range v {
+			outputKey := key
+			// 1. AWS-standard syntax: key ends with ".$"
+			if strings.HasSuffix(key, ".$") {
+				outputKey = strings.TrimSuffix(key, ".$")
+
+				// The value MUST be a string representing the JSONPath
+				strVal, ok := val.(string)
+				if !ok {
+					return nil, fmt.Errorf("key '%s' marked as JSONPath (.$) must have a string value", key)
+				}
+
+				// Evaluate the JSONPath expression
+				evaluated, err := p.getValue(input, strVal)
+				if err != nil {
+					return nil, fmt.Errorf("failed to evaluate JSONPath '%s' for key '%s': %w", strVal, outputKey, err)
+				}
+				result[outputKey] = evaluated
+				continue // Move to next key
+			}
+
+			// 2. Legacy syntax: recursive expansion (handles bare "$.path" strings and nested structures)
 			expanded, err := p.expandValue(val, input)
 			if err != nil {
 				return nil, err
@@ -360,6 +395,7 @@ func (p *JSONPathProcessor) expandValue(value, input interface{}) (interface{}, 
 			result[key] = expanded
 		}
 		return result, nil
+
 	case []interface{}:
 		result := make([]interface{}, len(v))
 		for i, val := range v {
@@ -370,18 +406,10 @@ func (p *JSONPathProcessor) expandValue(value, input interface{}) (interface{}, 
 			result[i] = expanded
 		}
 		return result, nil
+
 	default:
 		return value, nil
 	}
-}
-
-// ToJSON converts a value to its JSON string representation.
-func (p *JSONPathProcessor) ToJSON(value interface{}) (string, error) {
-	bytes, err := json.Marshal(value)
-	if err != nil {
-		return "", err
-	}
-	return string(bytes), nil
 }
 
 // FromJSON parses a JSON string into a value.
