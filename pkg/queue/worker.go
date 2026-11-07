@@ -32,9 +32,22 @@ func NewWorker(config *Config, handler ExecutionHandler) (*Worker, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
+	// Ensure the timeout queue is present for the worker that handles TypeTimeoutTask.
+	// Use a copy so the caller's map is not mutated.
+	queues := make(map[string]int, len(config.Queues)+1)
+	for k, v := range config.Queues {
+		queues[k] = v
+	}
+	if _, ok := queues[TimeoutQueue]; !ok {
+		queues[TimeoutQueue] = TimeoutQueueDefault
+	}
+
+	serverCfg := config.GetServerConfig()
+	serverCfg.Queues = queues
+
 	server := asynq.NewServer(
 		config.GetRedisClientOpt(),
-		config.GetServerConfig(),
+		serverCfg,
 	)
 
 	mux := asynq.NewServeMux()

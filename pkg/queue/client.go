@@ -169,7 +169,7 @@ func (c *Client) ScheduleTimeout(payload *TimeoutTaskPayload, delay time.Duratio
 
 	opts := []asynq.Option{
 		asynq.ProcessIn(delay),
-		asynq.Queue("timeout"), // Dedicated queue for timeout tasks
+		asynq.Queue(TimeoutQueue),
 		asynq.TaskID(fmt.Sprintf("timeout-%s", payload.CorrelationID)), // Unique ID for cancellation
 		asynq.Retention(24 * time.Hour),                                // Keep completed tasks for 24 hours for debugging
 	}
@@ -195,7 +195,7 @@ func (c *Client) CancelTimeout(correlationID string) (bool, error) {
 	taskID := fmt.Sprintf("timeout-%s", correlationID)
 
 	// Try to delete from scheduled queue
-	err := c.inspector.DeleteTask("timeout", taskID)
+	err := c.inspector.DeleteTask(TimeoutQueue, taskID)
 	if err != nil {
 		// Check if task not found or already processed
 		if err == asynq.ErrTaskNotFound {

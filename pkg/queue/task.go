@@ -13,6 +13,12 @@ const (
 	TypeTimeoutTask   = "statemachine:timeout"
 )
 
+// Queue name constants
+const (
+	TimeoutQueue        = "timeout"
+	TimeoutQueueDefault = 5
+)
+
 // ExecutionTaskPayload represents the payload for a state machine execution task
 type ExecutionTaskPayload struct {
 	StateMachineID       string                 `json:"state_machine_id"`
