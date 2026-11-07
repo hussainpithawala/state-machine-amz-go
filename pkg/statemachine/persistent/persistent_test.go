@@ -826,12 +826,12 @@ States:
 	execCtx, execErr := sm.Execute(ctx, map[string]interface{}{"test": "data"})
 
 	// Verify error occurred
-	require.NoError(t, execErr)
+	require.ErrorContains(t, execErr, "This is a test failure")
 
 	// Verify execution context is marked as FAILED
 	require.NotNil(t, execCtx)
-	require.Equal(t, SUCCEEDED, execCtx.Status)
-	require.Nil(t, execCtx.Error)
+	require.Equal(t, FAILED, execCtx.Status)
+	require.NotNil(t, execCtx.Error)
 
 	// Verify EndTime is set
 	require.False(t, execCtx.EndTime.IsZero())
