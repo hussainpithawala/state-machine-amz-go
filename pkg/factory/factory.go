@@ -87,6 +87,7 @@ func (f *StateFactory) getStateConstructor(stateType string) (states.State, erro
 		"Choice":   func() states.State { return &states.ChoiceState{} },
 		"Parallel": func() states.State { return &states.ParallelState{} },
 		"Task":     func() states.State { return &states.TaskState{} },
+		"Map":      func() states.State { return &states.MapState{} },
 		"Message":  func() states.State { return &states.MessageState{} },
 	}
 
@@ -124,6 +125,8 @@ func (f *StateFactory) setStateName(state states.State, name string) error {
 	case *states.ChoiceState:
 		s.Name = name
 	case *states.ParallelState:
+		s.Name = name
+	case *states.MapState:
 		s.Name = name
 	case *states.TaskState:
 		s.Name = name
