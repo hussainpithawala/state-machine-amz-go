@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -624,4 +625,103 @@ func TestTaskState_ErrorMatching(t *testing.T) {
 			assert.Equal(t, tt.shouldMatch, result)
 		})
 	}
+}
+
+// mockExecutionContext is a minimal mock for testing DefaultTaskHandler behavior
+type mockExecutionContext struct {
+	handlers map[string]func(ctx context.Context, input interface{}) (interface{}, error)
+}
+
+func (m *mockExecutionContext) GetTaskHandler(resource string) (func(ctx context.Context, input interface{}) (interface{}, error), bool) {
+	h, ok := m.handlers[resource]
+	return h, ok
+}
+
+func TestTaskState_DefaultTaskHandler_MissingContextFailsFast(t *testing.T) {
+	// Do NOT set TaskHandler on the state, forcing it to use DefaultTaskHandler
+	state := &TaskState{
+		BaseState: BaseState{
+			Name: "TaskState",
+			Type: "Task",
+			End:  true,
+		},
+		Resource: "arn:aws:lambda:us-east-1:123456789012:function:MyFunction",
+		// TaskHandler is intentionally nil
+	}
+
+	// Empty context WITHOUT ExecutionContext injected
+	emptyCtx := context.Background()
+	input := map[string]interface{}{"data": "original"}
+
+	output, nextState, err := state.Execute(emptyCtx, input)
+
+	// ASSERTIONS: Must fail explicitly, NOT return input silently
+	require.Error(t, err, "Execute must return an error when ExecutionContext is missing from context")
+	assert.Contains(t, err.Error(), "no ExecutionContext found in context", "Error message must clearly indicate the missing context")
+	assert.Nil(t, output, "Output should be nil when execution fails")
+	assert.Nil(t, nextState, "NextState should be nil when execution fails")
+}
+
+func TestTaskState_DefaultTaskHandler_MissingHandlerFailsFast(t *testing.T) {
+	// Do NOT set TaskHandler on the state, forcing it to use DefaultTaskHandler
+	state := &TaskState{
+		BaseState: BaseState{
+			Name: "TaskState",
+			Type: "Task",
+			End:  true,
+		},
+		Resource: "arn:aws:lambda:us-east-1:123456789012:function:MyFunction",
+		// TaskHandler is intentionally nil
+	}
+
+	// Context WITH ExecutionContext, but NO handler registered for the requested resource
+	mockCtx := &mockExecutionContext{
+		handlers: make(map[string]func(ctx context.Context, input interface{}) (interface{}, error)),
+	}
+	ctx := context.WithValue(context.Background(), types.ExecutionContextKey, mockCtx)
+	input := map[string]interface{}{"data": "original"}
+
+	output, nextState, err := state.Execute(ctx, input)
+
+	// ASSERTIONS: Must fail explicitly, NOT return input silently
+	require.Error(t, err, "Execute must return an error when no TaskHandler is registered for the resource")
+	assert.Contains(t, err.Error(), "no TaskHandler registered for resource", "Error message must clearly indicate the missing handler")
+	assert.Nil(t, output, "Output should be nil when execution fails")
+	assert.Nil(t, nextState, "NextState should be nil when execution fails")
+}
+
+func TestTaskState_DefaultTaskHandler_SuccessWithValidContext(t *testing.T) {
+	// Do NOT set TaskHandler on the state, forcing it to use DefaultTaskHandler
+	state := &TaskState{
+		BaseState: BaseState{
+			Name: "TaskState",
+			Type: "Task",
+			End:  true,
+		},
+		Resource: "arn:aws:lambda:us-east-1:123456789012:function:MyFunction",
+		// TaskHandler is intentionally nil
+	}
+
+	// Context WITH ExecutionContext AND a registered handler for the resource
+	mockCtx := &mockExecutionContext{
+		handlers: map[string]func(ctx context.Context, input interface{}) (interface{}, error){
+			"arn:aws:lambda:us-east-1:123456789012:function:MyFunction": func(ctx context.Context, input interface{}) (interface{}, error) {
+				return map[string]interface{}{"processed": true, "input": input}, nil
+			},
+		},
+	}
+	ctx := context.WithValue(context.Background(), types.ExecutionContextKey, mockCtx)
+	input := map[string]interface{}{"data": "original"}
+
+	output, nextState, err := state.Execute(ctx, input)
+
+	// ASSERTIONS: Should succeed normally
+	require.NoError(t, err)
+	assert.NotNil(t, output)
+	assert.True(t, state.IsEnd()) // End state, so nextState should be nil
+	assert.Nil(t, nextState)
+
+	resultMap, ok := output.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, true, resultMap["processed"])
 }

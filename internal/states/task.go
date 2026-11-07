@@ -65,31 +65,35 @@ func NewDefaultTaskHandler() *DefaultTaskHandler {
 }
 
 // Execute tries to delegate to handler from execution context
+// Execute tries to delegate to handler from execution context
 func (h *DefaultTaskHandler) Execute(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
-	// Try to get execution context
-	if execCtx, ok := ctx.Value(types.ExecutionContextKey).(types.ExecutionContext); ok && execCtx != nil {
-		// Get handler from execution context
-		if handler, exists := execCtx.GetTaskHandler(resource); exists {
-			// Apply parameters if provided
-			taskInput := input
-			if parameters != nil {
-				processor := NewJSONPathProcessor()
-				expandedInput, err := processor.expandValue(parameters, map[string]interface{}{
-					"$": input,
-				})
-				if err != nil {
-					return nil, fmt.Errorf("failed to expand parameters: %w", err)
-				}
-				taskInput = expandedInput
-			}
-
-			// Execute the registered handler
-			return handler(ctx, taskInput)
-		}
+	// 1. Fail fast if ExecutionContext is missing from context
+	execCtx, ok := ctx.Value(types.ExecutionContextKey).(types.ExecutionContext)
+	if !ok || execCtx == nil {
+		return nil, fmt.Errorf("task execution failed: no ExecutionContext found in context. Ensure context is created with states.WithExecutionContext(ctx, execCtx)")
 	}
 
-	// If no handler found, fall back to original behavior (return input as-is)
-	return input, nil
+	// 2. Fail fast if no handler is registered for this specific resource
+	handler, exists := execCtx.GetTaskHandler(resource)
+	if !exists || handler == nil {
+		return nil, fmt.Errorf("task execution failed: no TaskHandler registered for resource '%s' in ExecutionContext", resource)
+	}
+
+	// 3. Apply parameters if provided
+	taskInput := input
+	if parameters != nil {
+		processor := NewJSONPathProcessor()
+		expandedInput, err := processor.expandValue(parameters, map[string]interface{}{
+			"$": input,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to expand parameters: %w", err)
+		}
+		taskInput = expandedInput
+	}
+
+	// 4. Execute the registered handler
+	return handler(ctx, taskInput)
 }
 
 // ExecuteWithTimeout executes the task with a specific timeout context
