@@ -37,7 +37,7 @@ StartAt: InitialTask
 States:
   InitialTask:
     Type: Task
-    Resource: "arn:aws:states:::lambda:function:initial-task"
+    Resource: "initial-task"
     Next: WaitForApproval
 
   WaitForApproval:
@@ -48,7 +48,7 @@ States:
 
   FinalTask:
     Type: Task
-    Resource: "arn:aws:states:::lambda:function:final-task"
+    Resource: "final-task"
     End: true
 `
 	// 1. state machine id

@@ -71,7 +71,7 @@ States:
 	exec := executor.NewBaseExecutor()
 
 	// Register handlers for the resources defined in YAML
-	exec.RegisterGoFunction("process:order", func(_ context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("arn:aws:lambda:::process:order", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Processing order...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -83,7 +83,7 @@ States:
 		}, nil
 	})
 
-	exec.RegisterGoFunction("validate:payment", func(_ context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("arn:aws:lambda:::validate:payment", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Validating payment...")
 		time.Sleep(100 * time.Millisecond)
 
@@ -93,7 +93,7 @@ States:
 		}, nil
 	})
 
-	exec.RegisterGoFunction("send:notification", func(_ context.Context, input interface{}) (interface{}, error) {
+	exec.RegisterGoFunction("arn:aws:lambda:::send:notification", func(_ context.Context, input interface{}) (interface{}, error) {
 		fmt.Println("  → Sending notification...")
 		time.Sleep(100 * time.Millisecond)
 

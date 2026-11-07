@@ -146,10 +146,10 @@ func (s *ChoiceState) evaluateChoice(rule *ChoiceRule, input interface{}) (bool,
 }
 
 // evaluateAnd evaluates AND conditions
-func (s *ChoiceState) evaluateAnd(rules []ChoiceRule, context interface{}) (bool, error) {
+func (s *ChoiceState) evaluateAnd(rules []ChoiceRule, input interface{}) (bool, error) {
 	for index := range rules {
 		rule := &rules[index]
-		matched, err := s.evaluateChoice(rule, context)
+		matched, err := s.evaluateChoice(rule, input)
 		if err != nil {
 			return false, err
 		}
@@ -161,10 +161,10 @@ func (s *ChoiceState) evaluateAnd(rules []ChoiceRule, context interface{}) (bool
 }
 
 // evaluateOr evaluates OR conditions
-func (s *ChoiceState) evaluateOr(rules []ChoiceRule, context interface{}) (bool, error) {
+func (s *ChoiceState) evaluateOr(rules []ChoiceRule, input interface{}) (bool, error) {
 	for index := range rules {
 		rule := &rules[index]
-		matched, err := s.evaluateChoice(rule, context)
+		matched, err := s.evaluateChoice(rule, input)
 		if err != nil {
 			return false, err
 		}
@@ -600,6 +600,7 @@ func isNil(value interface{}) bool {
 	}
 
 	val := reflect.ValueOf(value)
+	//nolint:govet // reflect.Kind constants in switch are idiomatic Go
 	switch val.Kind() {
 	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map:
 		return val.IsNil()

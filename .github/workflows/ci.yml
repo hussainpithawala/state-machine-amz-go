@@ -5,11 +5,11 @@ on:
   push:
     branches: [ development, main ]
   pull_request:
-    branches: [ master, main, development ]
+    branches: [ master, main, development, rel_v1.2.23 ]
   workflow_call:
 
 env:
-  GO_VERSION: '1.24'
+  GO_VERSION: '1.26'
 
 jobs:
   lint:
@@ -22,7 +22,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'  # or your project's Go version
+          go-version: '1.26'
           cache: true
 
       - name: Install golangci-lint v2.4.0
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: [ '1.24' ]
+        go-version: [ '1.24', '1.26' ]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -73,7 +73,7 @@ jobs:
     needs: [ lint ]
     strategy:
       matrix:
-        go-version: [ '1.24' ]
+        go-version: [ '1.24', '1.26' ]
 
     services:
       postgres:
@@ -162,7 +162,7 @@ jobs:
     needs: [ lint, test-unit ]
     strategy:
       matrix:
-        go-version: [ '1.24' ]
+        go-version: [ '1.24', '1.26' ]
 
     services:
       postgres:
@@ -258,7 +258,7 @@ jobs:
     needs: [ lint ]
     strategy:
       matrix:
-        go-version: [ '1.24' ]
+        go-version: [ '1.24', '1.26' ]
 
     services:
       postgres:

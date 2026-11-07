@@ -1,12 +1,11 @@
-# .golangci.yml
-version: "2"  # Must be a string, not a number
+version: "2"
 
 run:
   timeout: 5m
   modules-download-mode: readonly
 
 linters:
-  default-enable: false
+  default: none
   enable:
     - errcheck
     - govet
@@ -19,43 +18,24 @@ linters:
     - misspell
     - prealloc
     - whitespace
-
-linters-settings:
-  revive:
+  settings:
+    gocyclo:
+      min-complexity: 15
+    gocritic:
+      enabled-tags:
+        - performance
+        - style
+        - diagnostic
+      disabled-checks:
+        - hugeParam
+  exclusions:
+    paths:
+      - examples
+      - '_test\.go$'
     rules:
-      - name: exported
-        severity: warning
-      - name: package-comments
-        severity: warning
-  gocyclo:
-    min-complexity: 15
-  goimports:
-    local-prefixes: github.com/hussainpithawala/state-machine-amz-go
-  gocritic:
-    enabled-tags:
-      - performance
-      - style
-      - diagnostic
-    disabled-checks:
-      - hugeParam
-
-issues:
-  exclude-dirs:
-    - examples
-    - ./examples
-    - examples/
-    - examples/**
-    - ./examples/**
-  exclude-files:
-    - ".*_test\\.go"
-  exclude-rules:
-    - path: examples/
-      linters:
-        - revive
-        - misspell
-        - unused
-        - gocyclo
-        - goconst
-        - errcheck
-  max-same-issues: 50
-  max-issues-per-linter: 50
+      - linters:
+          - goconst
+          - errcheck
+          - misspell
+          - gocyclo
+        path: 'examples/'

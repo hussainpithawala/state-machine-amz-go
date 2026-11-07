@@ -47,7 +47,6 @@ const (
 	redisURL    = "redis://localhost:6379/0"
 
 	// Batch configuration
-	batchID         = "crash-recovery-batch-001"
 	microBatchSize  = 5
 	totalExecutions = 15 // 3 micro-batches of 5 each
 
@@ -75,6 +74,9 @@ func main() {
 	fmt.Println("  5. Orchestrator continuing after barrier is cleared")
 	fmt.Println()
 
+	runID := time.Now().Unix()
+	batchID := fmt.Sprintf("crash-recovery-batch-%d", runID)
+
 	ctx := context.Background()
 
 	// Initialize components
@@ -94,7 +96,7 @@ func main() {
 	}()
 
 	// Clean up previous run
-	if err := cleanupPreviousRun(ctx, persistenceManager, redisClient); err != nil {
+	if err := cleanupPreviousRun(ctx, persistenceManager, redisClient, batchID); err != nil {
 		fmt.Printf("Warning: cleanup failed: %v\n", err)
 	}
 
@@ -117,7 +119,7 @@ func main() {
 	fmt.Println()
 
 	// Create source executions in database
-	sourceExecutionIDs, err := createSourceExecutions(ctx, persistenceManager)
+	sourceExecutionIDs, err := createSourceExecutions(ctx, persistenceManager, batchID)
 	if err != nil {
 		log.Fatalf("Failed to create source executions: %v", err)
 	}
@@ -389,7 +391,7 @@ States:
 }
 
 // createSourceExecutions creates dummy source executions in the database
-func createSourceExecutions(ctx context.Context, pm *repository.Manager) ([]string, error) {
+func createSourceExecutions(ctx context.Context, pm *repository.Manager, batchID string) ([]string, error) {
 	var ids []string
 
 	for i := 0; i < totalExecutions; i++ {
@@ -533,7 +535,7 @@ func displayFinalResults(ctx context.Context, pm *repository.Manager, rdb *redis
 }
 
 // cleanupPreviousRun removes Redis keys and optionally database records from previous runs
-func cleanupPreviousRun(ctx context.Context, pm *repository.Manager, rdb *redis.Client) error {
+func cleanupPreviousRun(ctx context.Context, pm *repository.Manager, rdb *redis.Client, batchID string) error {
 	fmt.Println("Cleaning up previous run...")
 
 	// Delete Redis keys

@@ -1,6 +1,6 @@
 module github.com/hussainpithawala/state-machine-amz-go
 
-go 1.24.0
+go 1.26.0
 
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0

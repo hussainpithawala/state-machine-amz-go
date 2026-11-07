@@ -161,7 +161,11 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 	if input != nil {
 		execCtx.Input = input
 	}
-	currentStateName := execCtx.CurrentState
+	currentStateName := pm.GetStartAt()
+
+	if execCtx.CurrentState != "" {
+		currentStateName = execCtx.CurrentState
+	}
 
 	for {
 		if err := pm.checkContext(ctx, execCtx); err != nil {
@@ -519,7 +523,16 @@ func (pm *StateMachine) ResumeExecution(ctx context.Context, execCtx *execution.
 	}
 
 	// Continue execution from the current state and hence use the output of the previous execution as the input
-	return pm.RunExecution(ctx, execCtx.Output, execCtx)
+	result, err := pm.RunExecution(ctx, execCtx.Output, execCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to run execution: %w", err)
+	}
+
+	// FIX: Persist the final execution state (SUCCEEDED or FAILED) to the database!
+	// RunExecution updates the result in memory, but we must save it to the DB.
+	pm.persistExecution(ctx, result)
+
+	return result, nil
 }
 
 // cancelTimeoutTask attempts to cancel a scheduled timeout task

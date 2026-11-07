@@ -357,7 +357,7 @@ func TestParallelState_Execute_BranchError(t *testing.T) {
 	input := testInitial
 
 	_, _, err := state.Execute(ctx, input)
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "Branch failed intentionally")
 }
 
 func TestParallelState_Validate(t *testing.T) {

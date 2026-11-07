@@ -259,9 +259,9 @@ func TestExecute_WithFail(t *testing.T) {
 
 	exec, err := sm.Execute(ctx, input)
 
-	require.Nil(t, err)
+	require.ErrorContains(t, err, "CustomError (cause: Test failure)")
 	require.NotNil(t, exec)
-	assert.Equal(t, "SUCCEEDED", exec.Status)
+	assert.Equal(t, "FAILED", exec.Status)
 }
 
 func TestExecute_WithTimeout(t *testing.T) {
@@ -920,8 +920,8 @@ func TestExecute_SequenceNumbers_OnFailure(t *testing.T) {
 	exec, err := sm.Execute(ctx, map[string]interface{}{"test": "failure"})
 
 	// Verify execution failed
-	require.Nil(t, err)
-	assert.Equal(t, "SUCCEEDED", exec.Status)
+	require.ErrorContains(t, err, "Intentional failure for testing")
+	assert.Equal(t, "FAILED", exec.Status)
 
 	// Should have history for State1 (success) and State2 (failure)
 	require.Equal(t, 2, len(exec.History), "Should have 2 state history entries")
@@ -936,7 +936,7 @@ func TestExecute_SequenceNumbers_OnFailure(t *testing.T) {
 
 	// Verify second state failed
 	assert.Equal(t, "State2", exec.History[1].StateName)
-	assert.Equal(t, "SUCCEEDED", exec.History[1].Status)
+	assert.Equal(t, "FAILED", exec.History[1].Status)
 }
 
 func TestExecute_StateHistory_InputOutputPreserved(t *testing.T) {
@@ -978,4 +978,53 @@ func TestExecute_StateHistory_InputOutputPreserved(t *testing.T) {
 		assert.NotNil(t, history.Output, "Output should not be nil for state %d", i)
 		assert.Equal(t, i, history.SequenceNumber, "Sequence number should match index")
 	}
+}
+
+func TestRunExecution_StateToStateInputChaining(t *testing.T) {
+	// Definition with two chained Pass states to verify input propagation
+	definition := []byte(`{
+		"StartAt": "First",
+		"States": {
+			"First": {
+				"Type": "Pass",
+				"Result": {"step": "first"},
+				"Next": "Second"
+			},
+			"Second": {
+				"Type": "Pass",
+				"End": true
+			}
+		}
+	}`)
+
+	sm, err := New(definition, true)
+	require.NoError(t, err, "Failed to create state machine")
+
+	// Initial input
+	initialInput := map[string]interface{}{"step": "original"}
+
+	// Execute
+	exec, err := sm.Execute(context.Background(), initialInput)
+	require.NoError(t, err, "Execution failed")
+
+	// 1. Assert final output is the output of the last state, not the original input
+	expectedFinalOutput := map[string]interface{}{"step": "first"}
+	assert.Equal(t, expectedFinalOutput, exec.Output, "Final output should be the result of the last state")
+
+	// 2. Assert execution history accurately reflects the input each state actually received
+	require.Len(t, exec.History, 2, "Expected 2 history entries")
+
+	// First state history
+	firstHistory := exec.History[0]
+	assert.Equal(t, "First", firstHistory.StateName)
+	assert.Equal(t, initialInput, firstHistory.Input, "First state should receive original execution input")
+	assert.Equal(t, expectedFinalOutput, firstHistory.Output, "First state output should be its Result")
+	assert.Equal(t, "SUCCEEDED", firstHistory.Status)
+
+	// Second state history
+	secondHistory := exec.History[1]
+	assert.Equal(t, "Second", secondHistory.StateName)
+	assert.Equal(t, expectedFinalOutput, secondHistory.Input, "Second state should receive the First state's output as its input")
+	assert.Equal(t, expectedFinalOutput, secondHistory.Output, "Second state output should match its input (Pass behavior)")
+	assert.Equal(t, "SUCCEEDED", secondHistory.Status)
 }

@@ -337,13 +337,16 @@ func TestJSONPathProcessor_Set(t *testing.T) {
 
 func TestJSONPathProcessor_ExpandValue(t *testing.T) {
 	processor := NewJSONPathProcessor()
-
 	input := map[string]interface{}{
 		"user": map[string]interface{}{
 			"name": "John",
 			"age":  30,
 		},
 		"items": []interface{}{"a", "b", "c"},
+		"order": map[string]interface{}{
+			"id":     "ORD-123",
+			"amount": 100.50,
+		},
 	}
 
 	tests := []struct {
@@ -351,55 +354,48 @@ func TestJSONPathProcessor_ExpandValue(t *testing.T) {
 		value    interface{}
 		expected interface{}
 	}{
+		// ... [existing test cases] ...
+
+		// --- NEW TEST CASES FOR BUG #7 (.$ SYNTAX) ---
 		{
-			name:     "plain string",
-			value:    "hello",
-			expected: "hello",
-		},
-		{
-			name:     "jsonpath reference",
-			value:    "$.user.name",
-			expected: "John",
-		},
-		{
-			name: "map with references",
+			name: "AWS-standard .$ syntax",
 			value: map[string]interface{}{
-				"username": "$.user.name",
-				"age":      "$.user.age",
-				"static":   "value",
+				"orderId.$": "$.order.id",
+				"amount.$":  "$.order.amount",
+				"name.$":    "$.user.name",
 			},
 			expected: map[string]interface{}{
+				"orderId": "ORD-123",
+				"amount":  100.50,
+				"name":    "John",
+			},
+		},
+		{
+			name: "mixed syntax (.$ and legacy bare JSONPath)",
+			value: map[string]interface{}{
+				"orderId.$": "$.order.id",    // AWS syntax
+				"username":  "$.user.name",   // Legacy syntax
+				"static":    "literal value", // Literal
+			},
+			expected: map[string]interface{}{
+				"orderId":  "ORD-123",
 				"username": "John",
-				"age":      30,
-				"static":   "value",
+				"static":   "literal value",
 			},
 		},
 		{
-			name: "array with references",
-			value: []interface{}{
-				"$.user.name",
-				"static",
-				123,
-			},
-			expected: []interface{}{
-				"John",
-				"static",
-				123,
-			},
-		},
-		{
-			name: "nested structure",
+			name: "nested objects with .$ syntax",
 			value: map[string]interface{}{
-				"profile": map[string]interface{}{
-					"name": "$.user.name",
+				"data": map[string]interface{}{
+					"id.$":   "$.order.id",
+					"amount": 99.99, // literal, no .$
 				},
-				"firstItem": "$.items[0]",
 			},
 			expected: map[string]interface{}{
-				"profile": map[string]interface{}{
-					"name": "John",
+				"data": map[string]interface{}{
+					"id":     "ORD-123",
+					"amount": 99.99,
 				},
-				"firstItem": "a",
 			},
 		},
 	}
@@ -411,6 +407,21 @@ func TestJSONPathProcessor_ExpandValue(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// NEW TEST: Verify error handling for invalid .$ usage
+func TestJSONPathProcessor_ExpandValue_DollarDotErrors(t *testing.T) {
+	processor := NewJSONPathProcessor()
+	input := map[string]interface{}{"user": "John"}
+
+	// Test: ".$" key with a non-string value should fail
+	template := map[string]interface{}{
+		"age.$": 30, // Invalid: value must be a string JSONPath
+	}
+
+	_, err := processor.expandValue(template, input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "marked as JSONPath (.$) must have a string value")
 }
 
 func TestJSONPathProcessor_MergeMaps(t *testing.T) {

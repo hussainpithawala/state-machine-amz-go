@@ -31,7 +31,6 @@ func TestFailState_New(t *testing.T) {
 			expectedErr: "ValidationError",
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := &FailState{
@@ -43,7 +42,6 @@ func TestFailState_New(t *testing.T) {
 				Cause:    tt.cause,
 				HasCause: tt.hasCause,
 			}
-
 			assert.Equal(t, "TestFailState", state.GetName())
 			assert.Equal(t, "Fail", state.GetType())
 			assert.Nil(t, state.GetNext())
@@ -189,7 +187,6 @@ func TestFailState_Validate(t *testing.T) {
 			errorMsg:    "cannot have OutputPath",
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.state.Validate()
@@ -206,7 +203,6 @@ func TestFailState_Validate(t *testing.T) {
 // TestFailState_Execute tests execution of FailState
 func TestFailState_Execute(t *testing.T) {
 	ctx := context.Background()
-
 	tests := []struct {
 		name          string
 		state         *FailState
@@ -225,7 +221,8 @@ func TestFailState_Execute(t *testing.T) {
 			input: map[string]interface{}{
 				"data": "test",
 			},
-			expectedError: "State machine failed at state 'FailState' with error: TaskFailed",
+			// Aligned with actual implementation: "State machine at a Failed state..."
+			expectedError: "State machine at a Failed state 'FailState' with error: TaskFailed",
 		},
 		{
 			name: "fail state with cause",
@@ -241,7 +238,7 @@ func TestFailState_Execute(t *testing.T) {
 			input: map[string]interface{}{
 				"user": "test",
 			},
-			expectedError: "State machine failed at state 'FailState' with error: ValidationError (cause: Invalid input format)",
+			expectedError: "State machine at a Failed state 'FailState' with error: ValidationError (cause: Invalid input format)",
 		},
 		{
 			name: "fail state with different input",
@@ -253,7 +250,7 @@ func TestFailState_Execute(t *testing.T) {
 				Error: "TimeoutError",
 			},
 			input:         "simple string input",
-			expectedError: "State machine failed at state 'FailState' with error: TimeoutError",
+			expectedError: "State machine at a Failed state 'FailState' with error: TimeoutError",
 		},
 		{
 			name: "fail state with nil input",
@@ -265,19 +262,16 @@ func TestFailState_Execute(t *testing.T) {
 				Error: "UnexpectedError",
 			},
 			input:         nil,
-			expectedError: "State machine failed at state 'FailState' with error: UnexpectedError",
+			expectedError: "State machine at a Failed state 'FailState' with error: UnexpectedError",
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			output, nextState, err := tt.state.Execute(ctx, tt.input)
-
-			// Fail states should always return an error
-			require.NoError(t, err)
-
+			// FIX: Fail states MUST return an error to halt execution
+			require.Error(t, err, "Fail state should return an error")
+			assert.Contains(t, err.Error(), tt.expectedError)
 			require.Equal(t, tt.input, output)
-
 			// Next state should be nil (end state)
 			assert.Nil(t, nextState)
 		})
@@ -328,22 +322,17 @@ func TestFailState_MarshalJSON(t *testing.T) {
 			expectedJSON: `{"Type":"Fail","Error":"ProcessingError","Comment":"This is a failure state"}`,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			jsonBytes, err := json.Marshal(tt.state)
 			require.NoError(t, err)
-
 			// Parse both JSON strings to compare structures
 			var actual, expected interface{}
 			err = json.Unmarshal(jsonBytes, &actual)
 			require.NoError(t, err)
-
 			err = json.Unmarshal([]byte(tt.expectedJSON), &expected)
 			require.NoError(t, err)
-
 			assert.Equal(t, expected, actual)
-
 			// Verify certain fields are NOT in the JSON
 			jsonStr := string(jsonBytes)
 			assert.NotContains(t, jsonStr, `"Next"`)
@@ -364,22 +353,18 @@ func TestFailState_InterfaceMethods(t *testing.T) {
 		},
 		Error: "TestError",
 	}
-
 	// Test that FailState implements State interface
 	var _ State = state
-
 	// Test individual interface methods
 	assert.Equal(t, "TestFail", state.GetName())
 	assert.Equal(t, "Fail", state.GetType())
 	assert.Nil(t, state.GetNext())
 	assert.True(t, state.IsEnd())
-
 	// Execute should always return error
 	ctx := context.Background()
 	input := map[string]interface{}{"test": "data"}
 	output, nextState, err := state.Execute(ctx, input)
-
-	assert.NoError(t, err)
+	assert.Error(t, err, "Fail state should return an error")
 	assert.NotNil(t, output)
 	assert.Nil(t, nextState)
 }
@@ -393,17 +378,14 @@ func TestFailState_ContextCancellation(t *testing.T) {
 		},
 		Error: "TestError",
 	}
-
 	// Create a cancellable context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
-
 	// Execute with cancelled context
 	input := map[string]interface{}{"test": "data"}
 	output, nextState, err := state.Execute(ctx, input)
-
 	// Fail states don't check context (they always fail)
-	assert.NoError(t, err)
+	assert.Error(t, err, "Fail state should return an error even with cancelled context")
 	assert.NotNil(t, output)
 	assert.Nil(t, nextState)
 }
@@ -417,11 +399,9 @@ func TestFailState_ConcurrentExecution(t *testing.T) {
 		},
 		Error: "ConcurrentError",
 	}
-
 	ctx := context.Background()
 	numGoroutines := 50
 	errors := make(chan error, numGoroutines)
-
 	// Run concurrent executions
 	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
@@ -432,18 +412,16 @@ func TestFailState_ConcurrentExecution(t *testing.T) {
 			errors <- err
 		}(i)
 	}
-
 	// Collect results
 	for i := 0; i < numGoroutines; i++ {
 		err := <-errors
-		require.NoError(t, err)
+		require.Error(t, err, "Concurrent execution should return an error")
 	}
 }
 
 // TestFailState_EdgeCases tests edge cases
 func TestFailState_EdgeCases(t *testing.T) {
 	ctx := context.Background()
-
 	tests := []struct {
 		name  string
 		state *FailState
@@ -483,7 +461,6 @@ func TestFailState_EdgeCases(t *testing.T) {
 			input: "test",
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Skip validation test for empty error (it should fail validation)
@@ -492,10 +469,8 @@ func TestFailState_EdgeCases(t *testing.T) {
 				require.Error(t, err)
 				return
 			}
-
 			output, nextState, err := tt.state.Execute(ctx, tt.input)
-
-			assert.Nil(t, err)
+			assert.Error(t, err, "Fail state should return an error even in edge cases")
 			assert.NotNil(t, output)
 			assert.Nil(t, nextState)
 		})
@@ -506,7 +481,6 @@ func TestFailState_EdgeCases(t *testing.T) {
 func TestFailState_Integration(t *testing.T) {
 	// Test that FailState works with pkg/errors
 	ctx := context.Background()
-
 	state := &FailState{
 		BaseState: BaseState{
 			Name: "IntegrationFail",
@@ -516,17 +490,14 @@ func TestFailState_Integration(t *testing.T) {
 		Cause:    "The task failed to execute properly",
 		HasCause: true,
 	}
-
 	input := map[string]interface{}{
 		"task": "process_data",
 		"input": map[string]interface{}{
 			"data": "test data",
 		},
 	}
-
 	output, nextState, err := state.Execute(ctx, input)
-
-	require.NoError(t, err)
+	require.Error(t, err, "Fail state should return an error")
 	assert.NotNil(t, output)
 	assert.Nil(t, nextState)
 }
@@ -541,11 +512,9 @@ func BenchmarkFailState_Execute(b *testing.B) {
 		},
 		Error: "BenchmarkError",
 	}
-
 	input := map[string]interface{}{
 		"test": "data",
 	}
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, _ = state.Execute(ctx, input)

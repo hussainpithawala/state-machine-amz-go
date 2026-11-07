@@ -133,31 +133,38 @@ func TestTaskExecutor(t *testing.T) {
 	})
 
 	// Test 2: Task execution with parameters
+	// UPDATED: Verifies that DefaultTaskHandler receives and passes the PRE-EXPANDED input
+	// to the registered handler, without attempting a second JSONPath expansion.
 	t.Run("TaskWithParameters", func(t *testing.T) {
-		input := map[string]interface{}{
-			"payment": map[string]interface{}{
-				"amount":   100.50,
-				"currency": "USD",
-			},
+		// 1. Simulate the ALREADY EXPANDED input that TaskState.prepareInput produces.
+		// (If double-expansion occurred, nested lookups like "$.customer" would fail here).
+		expandedInput := map[string]interface{}{
+			"amount":   100.50,
+			"currency": "USD",
 			"customer": map[string]interface{}{
 				"id":   "cust_123",
 				"name": "John Doe",
 			},
+			"reference": "test-123",
 		}
 
-		parameters := map[string]interface{}{
+		// 2. The raw parameters template (DefaultTaskHandler now ignores this for expansion)
+		rawParameters := map[string]interface{}{
 			"amount":    "$.payment.amount",
 			"currency":  "$.payment.currency",
 			"customer":  "$.customer",
 			"reference": "test-123",
 		}
 
-		result, err := handler.Execute(ctx, "arn:aws:states:::payment:process", input, parameters)
+		// 3. Execute the handler
+		result, err := handler.Execute(ctx, "arn:aws:states:::payment:process", expandedInput, rawParameters)
 		require.NoError(t, err)
 
 		resultMap, ok := result.(map[string]interface{})
 		require.True(t, ok)
 
+		// 4. Assert the handler received the pre-expanded input and processed it correctly.
+		// (The mock handler registered for this resource is expected to add "status" and "transaction_id")
 		assert.Equal(t, 100.50, resultMap["amount"])
 		assert.Equal(t, "USD", resultMap["currency"])
 		assert.Equal(t, "COMPLETED", resultMap["status"])
@@ -180,15 +187,20 @@ func TestTaskExecutor(t *testing.T) {
 	})
 
 	// Test 4: Fallback behavior (no handler registered)
-	t.Run("FallbackToDefault", func(t *testing.T) {
+	// No Handler Registered -> NOW FAILS FAST (Bug #2 Fix)
+	// UPDATED: Changed from expecting silent fallback to expecting an explicit error.
+	t.Run("NoHandlerRegisteredFailsFast", func(t *testing.T) {
 		input := map[string]interface{}{
 			"test": "data",
 		}
 
-		// This resource doesn't have a handler registered
+		// This resource doesn't have a handler registered in the mock execution context
 		result, err := handler.Execute(ctx, "arn:aws:lambda:::unknown:function", input, nil)
-		require.NoError(t, err)
-		assert.Equal(t, input, result) // Should return input as-is
+
+		// FIX: Should return an explicit error, NOT fall back to returning input as-is
+		require.Error(t, err, "Expected an error when no handler is registered for the resource")
+		assert.Contains(t, err.Error(), "no TaskHandler registered for resource")
+		assert.Nil(t, result, "Result should be nil on failure")
 	})
 
 	// Test 5: Error handling
@@ -218,15 +230,19 @@ func TestTaskExecutor(t *testing.T) {
 	})
 
 	// Test 7: Without execution context in context
-	t.Run("NoExecutionContext", func(t *testing.T) {
-		emptyCtx := context.Background() // No execution context
+	// UPDATED: Changed from expecting silent fallback to expecting an explicit error.
+	t.Run("NoExecutionContextFailsFast", func(t *testing.T) {
+		emptyCtx := context.Background() // No execution context injected
 		input := map[string]interface{}{
 			"test": "data",
 		}
 
 		result, err := handler.Execute(emptyCtx, "arn:aws:lambda:::any:function", input, nil)
-		require.NoError(t, err)
-		assert.Equal(t, input, result) // Should fall back to returning input as-is
+
+		// FIX: Should return an explicit error, NOT fall back to returning input as-is
+		require.Error(t, err, "Expected an error when ExecutionContext is missing from context")
+		assert.Contains(t, err.Error(), "no ExecutionContext found in context")
+		assert.Nil(t, result, "Result should be nil on failure")
 	})
 }
 

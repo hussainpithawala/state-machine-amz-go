@@ -38,7 +38,7 @@ StartAt: InitialTask
 States:
   InitialTask:
     Type: Task
-    Resource: "arn:aws:states:::lambda:function:initial-task"
+    Resource: "initial-task"
     Next: WaitForApproval
 
   WaitForApproval:
@@ -49,7 +49,7 @@ States:
 
   FinalTask:
     Type: Task
-    Resource: "arn:aws:states:::lambda:function:final-task"
+    Resource: "final-task"
     End: true
 `
 	// 1. state machine id
@@ -95,7 +95,28 @@ States:
 	}
 
 	fmt.Printf("\n1. Starting execution %s...\n", execID)
+
+	exec := executor.NewBaseExecutor()
+	exec.RegisterGoFunction("initial-task", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Executing initial task...")
+		inputMap := input.(map[string]interface{})
+		return map[string]interface{}{
+			"orderId": inputMap["orderId"],
+			"status":  "INITIAL_DONE",
+		}, nil
+	})
+	exec.RegisterGoFunction("final-task", func(ctx context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  → Executing final task...")
+		return map[string]interface{}{
+			"status": "COMPLETED",
+		}, nil
+	})
+	exec.SetRepositoryManager(persistenceManager)
+	executionContextAdapter := executor.NewExecutionContextAdapter(exec)
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executionContextAdapter)
+
 	executionInstance, err := persistentStateMachine.Execute(ctx, execCtx)
+
 	if err != nil {
 		return fmt.Errorf("initial execution failed: %w", err)
 	}
@@ -122,10 +143,8 @@ States:
 
 	fmt.Println("   Sending message to resume execution...")
 
-	exec := executor.BaseExecutor{}
-	exec.SetRepositoryManager(persistenceManager)
-	executionContextAdapter := executor.NewExecutionContextAdapter(&exec)
-	ctx = context.WithValue(ctx, types.ExecutionContextKey, executionContextAdapter)
+	executionContextAdapter2 := executor.NewExecutionContextAdapter(exec)
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executionContextAdapter2)
 
 	response, err := exec.Message(ctx, messageRequest, registryMap)
 	if err != nil {

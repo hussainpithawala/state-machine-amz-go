@@ -159,6 +159,12 @@ func (sm *StateMachine) Execute(ctx context.Context, input interface{}, opts ...
 func (sm *StateMachine) RunExecution(ctx context.Context, execCtx *execution.Execution) (*execution.Execution, error) {
 	// Execute the state machine
 	currentStateName := sm.StartAt
+
+	// FIX: Resume from checkpoint if CurrentState is already set (e.g., loaded from DB after a pause)
+	if execCtx.CurrentState != "" {
+		currentStateName = execCtx.CurrentState
+	}
+
 	currentInput := execCtx.Input
 
 	for {
@@ -189,7 +195,7 @@ func (sm *StateMachine) RunExecution(ctx context.Context, execCtx *execution.Exe
 		execCtx.CurrentState = currentStateName
 
 		// Execute the state
-		output, nextState, err := sm.executeStateWithRecovery(ctx, state, execCtx.Input, currentStateName)
+		output, nextState, err := sm.executeStateWithRecovery(ctx, state, currentInput, currentStateName)
 
 		// Handle state execution result
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -624,4 +625,300 @@ func TestTaskState_ErrorMatching(t *testing.T) {
 			assert.Equal(t, tt.shouldMatch, result)
 		})
 	}
+}
+
+// mockExecutionContext is a minimal mock for testing DefaultTaskHandler behavior
+type mockExecutionContext struct {
+	handlers map[string]func(ctx context.Context, input interface{}) (interface{}, error)
+}
+
+func (m *mockExecutionContext) GetTaskHandler(resource string) (func(ctx context.Context, input interface{}) (interface{}, error), bool) {
+	h, ok := m.handlers[resource]
+	return h, ok
+}
+
+func TestTaskState_DefaultTaskHandler_MissingContextFailsFast(t *testing.T) {
+	// Do NOT set TaskHandler on the state, forcing it to use DefaultTaskHandler
+	state := &TaskState{
+		BaseState: BaseState{
+			Name: "TaskState",
+			Type: "Task",
+			End:  true,
+		},
+		Resource: "arn:aws:lambda:us-east-1:123456789012:function:MyFunction",
+		// TaskHandler is intentionally nil
+	}
+
+	// Empty context WITHOUT ExecutionContext injected
+	emptyCtx := context.Background()
+	input := map[string]interface{}{"data": "original"}
+
+	output, nextState, err := state.Execute(emptyCtx, input)
+
+	// ASSERTIONS: Must fail explicitly, NOT return input silently
+	require.Error(t, err, "Execute must return an error when ExecutionContext is missing from context")
+	assert.Contains(t, err.Error(), "no ExecutionContext found in context", "Error message must clearly indicate the missing context")
+	assert.Nil(t, output, "Output should be nil when execution fails")
+	assert.Nil(t, nextState, "NextState should be nil when execution fails")
+}
+
+func TestTaskState_DefaultTaskHandler_MissingHandlerFailsFast(t *testing.T) {
+	// Do NOT set TaskHandler on the state, forcing it to use DefaultTaskHandler
+	state := &TaskState{
+		BaseState: BaseState{
+			Name: "TaskState",
+			Type: "Task",
+			End:  true,
+		},
+		Resource: "arn:aws:lambda:us-east-1:123456789012:function:MyFunction",
+		// TaskHandler is intentionally nil
+	}
+
+	// Context WITH ExecutionContext, but NO handler registered for the requested resource
+	mockCtx := &mockExecutionContext{
+		handlers: make(map[string]func(ctx context.Context, input interface{}) (interface{}, error)),
+	}
+	ctx := context.WithValue(context.Background(), types.ExecutionContextKey, mockCtx)
+	input := map[string]interface{}{"data": "original"}
+
+	output, nextState, err := state.Execute(ctx, input)
+
+	// ASSERTIONS: Must fail explicitly, NOT return input silently
+	require.Error(t, err, "Execute must return an error when no TaskHandler is registered for the resource")
+	assert.Contains(t, err.Error(), "no TaskHandler registered for resource", "Error message must clearly indicate the missing handler")
+	assert.Nil(t, output, "Output should be nil when execution fails")
+	assert.Nil(t, nextState, "NextState should be nil when execution fails")
+}
+
+func TestTaskState_DefaultTaskHandler_SuccessWithValidContext(t *testing.T) {
+	// Do NOT set TaskHandler on the state, forcing it to use DefaultTaskHandler
+	state := &TaskState{
+		BaseState: BaseState{
+			Name: "TaskState",
+			Type: "Task",
+			End:  true,
+		},
+		Resource: "arn:aws:lambda:us-east-1:123456789012:function:MyFunction",
+		// TaskHandler is intentionally nil
+	}
+
+	// Context WITH ExecutionContext AND a registered handler for the resource
+	mockCtx := &mockExecutionContext{
+		handlers: map[string]func(ctx context.Context, input interface{}) (interface{}, error){
+			"arn:aws:lambda:us-east-1:123456789012:function:MyFunction": func(ctx context.Context, input interface{}) (interface{}, error) {
+				return map[string]interface{}{"processed": true, "input": input}, nil
+			},
+		},
+	}
+	ctx := context.WithValue(context.Background(), types.ExecutionContextKey, mockCtx)
+	input := map[string]interface{}{"data": "original"}
+
+	output, nextState, err := state.Execute(ctx, input)
+
+	// ASSERTIONS: Should succeed normally
+	require.NoError(t, err)
+	assert.NotNil(t, output)
+	assert.True(t, state.IsEnd()) // End state, so nextState should be nil
+	assert.Nil(t, nextState)
+
+	resultMap, ok := output.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, true, resultMap["processed"])
+}
+
+func TestTaskState_Parameters_NestedJSONPath_NoDoubleExpansion(t *testing.T) {
+	// Do NOT set TaskHandler on the state, forcing it to use DefaultTaskHandler
+	state := &TaskState{
+		BaseState: BaseState{
+			Name: "TaskState",
+			Type: "Task",
+			End:  true,
+		},
+		Resource: "arn:aws:lambda:us-east-1:123456789012:function:MyFunction",
+		// Nested JSONPath lookup in Parameters
+		Parameters: map[string]interface{}{
+			"orderId":    "$.order.id",
+			"customerId": "$.customer.details.id",
+			"staticVal":  "literal",
+		},
+	}
+
+	// Context WITH ExecutionContext and a handler that simply echoes the input it receives
+	mockCtx := &mockExecutionContext{
+		handlers: map[string]func(ctx context.Context, input interface{}) (interface{}, error){
+			"arn:aws:lambda:us-east-1:123456789012:function:MyFunction": func(ctx context.Context, input interface{}) (interface{}, error) {
+				// This handler should receive the ALREADY EXPANDED parameters.
+				// If double-expansion occurs, it will receive an error or malformed data.
+				return input, nil
+			},
+		},
+	}
+	ctx := context.WithValue(context.Background(), types.ExecutionContextKey, mockCtx)
+
+	// Deeply nested input data
+	input := map[string]interface{}{
+		"order": map[string]interface{}{
+			"id": "ORD-98765",
+		},
+		"customer": map[string]interface{}{
+			"details": map[string]interface{}{
+				"id": "CUST-12345",
+			},
+		},
+		"ignored": "data",
+	}
+
+	output, nextState, err := state.Execute(ctx, input)
+
+	// ASSERTIONS
+	require.NoError(t, err, "Execution must not fail due to double JSONPath expansion")
+	assert.Nil(t, nextState) // End state
+
+	resultMap, ok := output.(map[string]interface{})
+	require.True(t, ok, "Output should be the expanded parameters map")
+
+	// Verify nested lookups resolved correctly
+	assert.Equal(t, "ORD-98765", resultMap["orderId"])
+	assert.Equal(t, "CUST-12345", resultMap["customerId"])
+	assert.Equal(t, "literal", resultMap["staticVal"])
+
+	// Verify non-referenced data was correctly excluded (Parameters acts as a filter/constructor)
+	_, exists := resultMap["ignored"]
+	assert.False(t, exists, "Non-referenced root data should not be in the expanded parameters")
+}
+
+// customNamedError is a package-level test error type that implements
+// both the standard error interface and a custom ErrorName interface.
+type customNamedError struct {
+	name string
+	msg  string
+}
+
+// Error implements the standard error interface (value receiver ensures both value and pointer work)
+func (e customNamedError) Error() string { return e.msg }
+
+// ErrorName implements our custom interface for typed error matching
+func (e customNamedError) ErrorName() string { return e.name }
+
+func TestTaskState_ErrorMatches_WrappedAndTypedErrors(t *testing.T) {
+	state := &TaskState{
+		BaseState: BaseState{Name: "TestTask", Type: "Task"},
+		Resource:  "arn:aws:lambda:::test",
+	}
+
+	tests := []struct {
+		name     string
+		err      error
+		patterns []string
+		expected bool
+	}{
+		{
+			name:     "exact string match (backwards compatibility)",
+			err:      fmt.Errorf("SimpleError"),
+			patterns: []string{"SimpleError"},
+			expected: true,
+		},
+		{
+			name:     "wrapped error with colon prefix",
+			err:      fmt.Errorf("CustomError: something went wrong"),
+			patterns: []string{"CustomError"},
+			expected: true,
+		},
+		{
+			name:     "wrapped error with space prefix",
+			err:      fmt.Errorf("CustomError - something went wrong"),
+			patterns: []string{"CustomError"},
+			expected: true,
+		},
+		{
+			name:     "typed error with ErrorName interface",
+			err:      customNamedError{name: "CustomError", msg: "something went wrong"},
+			patterns: []string{"CustomError"},
+			expected: true,
+		},
+		{
+			name:     "deeply wrapped error",
+			err:      fmt.Errorf("outer wrapper: %w", fmt.Errorf("CustomError: inner details")),
+			patterns: []string{"CustomError"},
+			expected: true,
+		},
+		{
+			name:     "States.ALL matches anything",
+			err:      fmt.Errorf("RandomError: details"),
+			patterns: []string{"States.ALL"},
+			expected: true,
+		},
+		{
+			name:     "no match for different error",
+			err:      fmt.Errorf("CustomError: details"),
+			patterns: []string{"DifferentError"},
+			expected: false,
+		},
+		{
+			name:     "no match for nil error",
+			err:      nil,
+			patterns: []string{"CustomError"},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := state.errorMatches(tt.err, tt.patterns)
+			assert.Equal(t, tt.expected, result, "errorMatches result mismatch for case: %s", tt.name)
+		})
+	}
+}
+func TestTaskState_Execute_WithRetry_IntervalSecondsAndMaxAttempts(t *testing.T) {
+	ctx := context.Background()
+	callCount := 0
+
+	handler := &MockTaskHandler{
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+			callCount++
+			// Always fail with an error that ONLY matches Policy 2
+			return nil, fmt.Errorf("Policy2Error")
+		},
+	}
+
+	state := &TaskState{
+		BaseState: BaseState{
+			Name: "TaskState",
+			Type: "Task",
+			End:  true,
+		},
+		Resource: "arn:aws:lambda:::test",
+		Retry: []RetryPolicy{
+			{
+				// Policy 1: Should be completely ignored because the error doesn't match
+				ErrorEquals:     []string{"Policy1Error"},
+				IntervalSeconds: IntPtr(10), // 10 seconds base
+				MaxAttempts:     IntPtr(5),
+				BackoffRate:     Float64Ptr(1.0),
+			},
+			{
+				// Policy 2: Should match and dictate the retry behavior
+				ErrorEquals:     []string{"Policy2Error"},
+				IntervalSeconds: IntPtr(1),       // 1 second base
+				MaxAttempts:     IntPtr(2),       // Max 2 retries
+				BackoffRate:     Float64Ptr(2.0), // 1s (1st retry), 2s (2nd retry)
+			},
+		},
+		TaskHandler: handler,
+	}
+
+	input := testInput
+	startTime := time.Now()
+	_, _, err := state.Execute(ctx, input)
+	elapsed := time.Since(startTime)
+
+	require.Error(t, err)
+
+	// 1 initial attempt + 2 retries = 3 total calls
+	assert.Equal(t, 3, callCount, "Should execute 1 initial + 2 retries based on Policy 2 MaxAttempts")
+
+	// Verify IntervalSeconds and BackoffRate from Policy 2 were used
+	// Expected wait: 1s (1st retry) + 2s (2nd retry) = ~3s total wait time
+	assert.GreaterOrEqual(t, elapsed, 2900*time.Millisecond, "Should wait at least ~3s based on Policy 2 Interval/Backoff")
+	assert.Less(t, elapsed, 4*time.Second, "Should not wait 10s+ from Policy 1")
 }

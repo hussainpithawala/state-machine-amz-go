@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
@@ -125,13 +126,13 @@ StartAt: ProcessData
 States:
   ProcessData:
     Type: Task
-    Resource: "arn:aws:lambda:::process:data"
+    Resource: "process:data"
     ResultPath: "$.processResult"
     Next: ValidateData
 
   ValidateData:
     Type: Task
-    Resource: "arn:aws:lambda:::validate:data"
+    Resource: "validate:data"
     ResultPath: "$.validationResult"
     End: true
 `
@@ -157,7 +158,9 @@ States:
 		"deviceId": "device-123",
 	}
 
-	execA, err := smA.Execute(ctx, inputA, statemachine.WithExecutionName("execution-A-001"))
+	runID := time.Now().Unix()
+	execName := fmt.Sprintf("execution-A-%d", runID)
+	execA, err := smA.Execute(ctx, inputA, statemachine.WithExecutionName(execName))
 	if err != nil {
 		return fmt.Errorf("state machine A execution failed: %w", err)
 	}
@@ -174,13 +177,13 @@ StartAt: EnrichData
 States:
   EnrichData:
     Type: Task
-    Resource: "arn:aws:lambda:::enrich:data"
+    Resource: "enrich:data"
     ResultPath: "$.enrichResult"
     Next: StoreData
 
   StoreData:
     Type: Task
-    Resource: "arn:aws:lambda:::store:data"
+    Resource: "store:data"
     ResultPath: "$.storeResult"
     End: true
 `
@@ -200,8 +203,9 @@ States:
 
 	// Example 1: Chain using final output from State Machine A
 	fmt.Println("\n--- Example 1: Using final output from Execution A ---")
+	execnameB := fmt.Sprintf("execution-B-%d", time.Now().Unix())
 	execB1, err := smB.Execute(ctx, nil,
-		statemachine.WithExecutionName("execution-B-001"),
+		statemachine.WithExecutionName(execnameB),
 		statemachine.WithSourceExecution(execA.ID),
 	)
 	if err != nil {
@@ -215,8 +219,9 @@ States:
 
 	// Example 2: Chain using specific state output from State Machine A
 	fmt.Println("\n--- Example 2: Using output from 'ProcessData' state of Execution A ---")
+	execNameB2 := fmt.Sprintf("execution-B-2-%d", time.Now().Unix())
 	execB2, err := smB.Execute(ctx, nil,
-		statemachine.WithExecutionName("execution-B-002"),
+		statemachine.WithExecutionName(execNameB2),
 		statemachine.WithSourceExecution(execA.ID, "ProcessData"),
 	)
 	if err != nil {
@@ -230,8 +235,9 @@ States:
 
 	// Example 3: Chain with input transformation
 	fmt.Println("\n--- Example 3: Using transformation function ---")
+	execNameB3 := fmt.Sprintf("execution-B-3-%d", time.Now().Unix())
 	execB3, err := smB.Execute(ctx, nil,
-		statemachine.WithExecutionName("execution-B-003"),
+		statemachine.WithExecutionName(execNameB3),
 		statemachine.WithSourceExecution(execA.ID, "ValidateData"),
 		statemachine.WithInputTransformer(func(output interface{}) (interface{}, error) {
 			fmt.Println("[Transformer] Transforming input from Execution A...")
@@ -240,7 +246,7 @@ States:
 			// Extract only specific fields and add metadata
 			transformed := map[string]interface{}{
 				"validatedData": data["validationResult"],
-				"source":        "execution-A-001",
+				"source":        execName,
 				"transformedAt": "2024-01-01T12:05:00Z",
 			}
 

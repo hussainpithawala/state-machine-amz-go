@@ -1463,108 +1463,13 @@ func (ps *PostgresRepository) SaveLinkedExecution(ctx context.Context, linkedExe
 
 // ListLinkedExecutions lists linked executions with filtering and pagination
 func (ps *PostgresRepository) ListLinkedExecutions(ctx context.Context, filter *LinkedExecutionFilter) ([]*LinkedExecutionRecord, error) {
-	var conditions []string
-	var args []interface{}
-	argPos := 1
-
-	// Determine if we need to join with executions table for status filtering
-	needsJoin := filter != nil && filter.SourceExecutionStatus != ""
-
-	// Build WHERE clause
-	if filter != nil {
-		if filter.SourceStateMachineID != "" {
-			conditions = append(conditions, fmt.Sprintf("le.source_state_machine_id = $%d", argPos))
-			args = append(args, filter.SourceStateMachineID)
-			argPos++
-		}
-		if filter.SourceExecutionID != "" {
-			conditions = append(conditions, fmt.Sprintf("le.source_execution_id = $%d", argPos))
-			args = append(args, filter.SourceExecutionID)
-			argPos++
-		}
-		if filter.SourceStateName != "" {
-			conditions = append(conditions, fmt.Sprintf("le.source_state_name = $%d", argPos))
-			args = append(args, filter.SourceStateName)
-			argPos++
-		}
-		if filter.SourceExecutionStatus != "" {
-			conditions = append(conditions, fmt.Sprintf("e.status = $%d", argPos))
-			args = append(args, filter.SourceExecutionStatus)
-			argPos++
-		}
-		if filter.InputTransformerName != "" {
-			conditions = append(conditions, fmt.Sprintf("le.input_transformer_name = $%d", argPos))
-			args = append(args, filter.InputTransformerName)
-			argPos++
-		}
-		if filter.TargetStateMachineName != "" {
-			conditions = append(conditions, fmt.Sprintf("le.target_state_machine_name = $%d", argPos))
-			args = append(args, filter.TargetStateMachineName)
-			argPos++
-		}
-		if filter.TargetExecutionID != "" {
-			conditions = append(conditions, fmt.Sprintf("le.target_execution_id = $%d", argPos))
-			args = append(args, filter.TargetExecutionID)
-			argPos++
-		}
-		if !filter.CreatedAfter.IsZero() {
-			conditions = append(conditions, fmt.Sprintf("le.created_at >= $%d", argPos))
-			args = append(args, filter.CreatedAfter)
-			argPos++
-		}
-		if !filter.CreatedBefore.IsZero() {
-			conditions = append(conditions, fmt.Sprintf("le.created_at <= $%d", argPos))
-			args = append(args, filter.CreatedBefore)
-			argPos++
-		}
-	}
-
-	// Build query
-	var query string
-	if needsJoin {
-		query = `
-			SELECT le.id, le.source_state_machine_id, le.source_execution_id, le.source_state_name,
-				   le.input_transformer_name, le.target_state_machine_name, le.target_execution_id, le.created_at
-			FROM linked_executions le
-			INNER JOIN executions e ON le.source_execution_id = e.execution_id
-		`
-	} else {
-		query = `
-			SELECT id, source_state_machine_id, source_execution_id, source_state_name,
-				   input_transformer_name, target_state_machine_name, target_execution_id, created_at
-			FROM linked_executions le
-		`
-	}
-
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	query += " ORDER BY le.created_at DESC"
-
-	// Apply pagination
-	if filter != nil {
-		if filter.Limit > 0 {
-			query += fmt.Sprintf(" LIMIT $%d", argPos)
-			args = append(args, filter.Limit)
-			argPos++
-		}
-		if filter.Offset > 0 {
-			query += fmt.Sprintf(" OFFSET $%d", argPos)
-			args = append(args, filter.Offset)
-		}
-	}
+	query, args := ps.buildLinkedExecutionsQuery(filter)
 
 	rows, err := ps.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list linked executions: %w", err)
 	}
-	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-			log.Printf("Failed to close linked executions rows: %v\n", err)
-		}
-	}(rows)
+	defer ps.closeRows(rows)
 
 	var records []*LinkedExecutionRecord
 	for rows.Next() {
@@ -1590,6 +1495,86 @@ func (ps *PostgresRepository) ListLinkedExecutions(ctx context.Context, filter *
 	}
 
 	return records, nil
+}
+
+func (ps *PostgresRepository) buildLinkedExecutionsQuery(filter *LinkedExecutionFilter) (query string, args []interface{}) {
+	var conditions []string
+	argPos := 1
+
+	needsJoin := filter != nil && filter.SourceExecutionStatus != ""
+
+	if filter != nil {
+		argPos = ps.addLinkedExecutionFilterConditions(filter, &conditions, &args, argPos)
+	}
+
+	if needsJoin {
+		query = `
+			SELECT le.id, le.source_state_machine_id, le.source_execution_id, le.source_state_name,
+				   le.input_transformer_name, le.target_state_machine_name, le.target_execution_id, le.created_at
+			FROM linked_executions le
+			INNER JOIN executions e ON le.source_execution_id = e.execution_id
+		`
+	} else {
+		query = `
+			SELECT id, source_state_machine_id, source_execution_id, source_state_name,
+				   input_transformer_name, target_state_machine_name, target_execution_id, created_at
+			FROM linked_executions le
+		`
+	}
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	query += " ORDER BY le.created_at DESC"
+
+	if filter != nil {
+		if filter.Limit > 0 {
+			query += fmt.Sprintf(" LIMIT $%d", argPos)
+			args = append(args, filter.Limit)
+			argPos++
+		}
+		if filter.Offset > 0 {
+			query += fmt.Sprintf(" OFFSET $%d", argPos)
+			args = append(args, filter.Offset)
+		}
+	}
+
+	return query, args
+}
+
+func (ps *PostgresRepository) addLinkedExecutionFilterConditions(filter *LinkedExecutionFilter, conditions *[]string, args *[]interface{}, argPos int) int {
+	type filterField struct {
+		value  string
+		column string
+	}
+	fields := []filterField{
+		{filter.SourceStateMachineID, "le.source_state_machine_id = $%d"},
+		{filter.SourceExecutionID, "le.source_execution_id = $%d"},
+		{filter.SourceStateName, "le.source_state_name = $%d"},
+		{filter.SourceExecutionStatus, "e.status = $%d"},
+		{filter.InputTransformerName, "le.input_transformer_name = $%d"},
+		{filter.TargetStateMachineName, "le.target_state_machine_name = $%d"},
+		{filter.TargetExecutionID, "le.target_execution_id = $%d"},
+	}
+	for _, f := range fields {
+		if f.value != "" {
+			*conditions = append(*conditions, fmt.Sprintf(f.column, argPos))
+			*args = append(*args, f.value)
+			argPos++
+		}
+	}
+	if !filter.CreatedAfter.IsZero() {
+		*conditions = append(*conditions, fmt.Sprintf("le.created_at >= $%d", argPos))
+		*args = append(*args, filter.CreatedAfter)
+		argPos++
+	}
+	if !filter.CreatedBefore.IsZero() {
+		*conditions = append(*conditions, fmt.Sprintf("le.created_at <= $%d", argPos))
+		*args = append(*args, filter.CreatedBefore)
+		argPos++
+	}
+	return argPos
 }
 
 // CountLinkedExecutions returns the count of linked executions matching the filter
@@ -1680,9 +1665,16 @@ func (ps *PostgresRepository) ListNonLinkedExecutionsAnyState(ctx context.Contex
 	return ps.executeNonLinkedExecutionsQuery(ctx, query, args)
 }
 
-func (ps *PostgresRepository) buildNonLinkedExecutionsQuery(executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) (string, []interface{}) {
+func (ps *PostgresRepository) buildNonLinkedExecutionsQuery(executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) (query string, args []interface{}) {
 	builder := newNonLinkedExecutionsQueryBuilder(executionFilter, linkedExecutionFilter)
 	return builder.build()
+}
+
+type nonLinkedExecutionsQueryBuilder struct {
+	linkedFilter *LinkedExecutionFilter
+	execFilter   *ExecutionFilter
+	args         []interface{}
+	argPos       int
 }
 
 func newNonLinkedExecutionsQueryBuilder(executionFilter *ExecutionFilter, linkedExecutionFilter *LinkedExecutionFilter) *nonLinkedExecutionsQueryBuilder {
@@ -1914,14 +1906,7 @@ func (b *nonLinkedExecutionsQueryBuilder) addExecutionCondition(conditions *[]st
 	}
 }
 
-type nonLinkedExecutionsQueryBuilder struct {
-	linkedFilter *LinkedExecutionFilter
-	execFilter   *ExecutionFilter
-	args         []interface{}
-	argPos       int
-}
-
-func (b *nonLinkedExecutionsQueryBuilder) build() (string, []interface{}) {
+func (b *nonLinkedExecutionsQueryBuilder) build() (query string, args []interface{}) {
 	b.argPos = 1
 	b.args = make([]interface{}, 0)
 
