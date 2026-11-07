@@ -303,7 +303,7 @@ func (pm *Manager) GetDistinctStateStatuses(ctx context.Context, stateMachineID 
 }
 
 // DeleteLinkedExecutions deletes linked executions by IDs or by filter.
-func (pm *Manager) DeleteLinkedExecutions(ctx context.Context, ids []string, filter *LinkedExecutionFilter) (int64, []string, error) {
+func (pm *Manager) DeleteLinkedExecutions(ctx context.Context, ids []string, filter *LinkedExecutionFilter) (deleted int64, deletedIDs []string, err error) {
 	if len(ids) == 0 && (filter == nil || *filter == (LinkedExecutionFilter{})) {
 		return 0, nil, fmt.Errorf("refusing wide delete: both ids and filter are empty")
 	}

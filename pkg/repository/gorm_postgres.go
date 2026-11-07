@@ -15,6 +15,12 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+const (
+	orderDESC    = "DESC"
+	orderASC     = "ASC"
+	sortByStatus = "status"
+)
+
 // GormPostgresRepository implements Repository using GORM
 type GormPostgresRepository struct {
 	db     *gorm.DB
@@ -576,13 +582,13 @@ func (r *GormPostgresRepository) ListExecutions(ctx context.Context, filter *Exe
 		switch filter.SortBy {
 		case "endTime":
 			sortColumn = "end_time"
-		case "status":
-			sortColumn = "status"
+		case sortByStatus:
+			sortColumn = sortByStatus
 		}
 	}
-	direction := "DESC"
+	direction := orderDESC
 	if filter != nil && strings.EqualFold(filter.Order, "asc") {
-		direction = "ASC"
+		direction = orderASC
 	}
 	query = query.Order(fmt.Sprintf("%s %s", sortColumn, direction))
 
@@ -1220,9 +1226,9 @@ func (r *GormPostgresRepository) ListLinkedExecutions(ctx context.Context, filte
 			leSortColumn = "linked_executions.target_state_machine_name"
 		}
 	}
-	leDirection := "DESC"
+	leDirection := orderDESC
 	if filter != nil && strings.EqualFold(filter.Order, "asc") {
-		leDirection = "ASC"
+		leDirection = orderASC
 	}
 
 	result := query.Order(fmt.Sprintf("%s %s", leSortColumn, leDirection)).Find(&models)
@@ -1502,9 +1508,9 @@ func (r *GormPostgresRepository) ListStateHistory(ctx context.Context, execution
 		return nil, 0, fmt.Errorf("failed to count state history: %w", err)
 	}
 
-	dir := "ASC"
+	dir := orderASC
 	if strings.EqualFold(order, "desc") {
-		dir = "DESC"
+		dir = orderDESC
 	}
 
 	query := r.db.WithContext(ctx).Where("execution_id = ?", executionID)
@@ -1656,7 +1662,7 @@ func (r *GormPostgresRepository) GetDistinctStateStatuses(ctx context.Context, s
 }
 
 // DeleteLinkedExecutions deletes linked-execution records by IDs or by filter.
-func (r *GormPostgresRepository) DeleteLinkedExecutions(ctx context.Context, ids []string, filter *LinkedExecutionFilter) (int64, []string, error) {
+func (r *GormPostgresRepository) DeleteLinkedExecutions(ctx context.Context, ids []string, filter *LinkedExecutionFilter) (deleted int64, deletedIDs []string, err error) {
 	if len(ids) == 0 && (filter == nil || *filter == (LinkedExecutionFilter{})) {
 		return 0, nil, fmt.Errorf("refusing wide delete: both ids and filter are empty")
 	}
@@ -1669,13 +1675,19 @@ func (r *GormPostgresRepository) DeleteLinkedExecutions(ctx context.Context, ids
 		return result.RowsAffected, ids, nil
 	}
 
-	// Delete by filter
-	query := r.db.WithContext(ctx).Table("linked_executions")
+	query := addLinkedDeleteFilters(r.db.WithContext(ctx).Table("linked_executions"), filter)
+	result := query.Delete(&LinkedExecutionModel{})
+	if result.Error != nil {
+		return 0, nil, fmt.Errorf("failed to delete linked executions by filter: %w", result.Error)
+	}
 
+	return result.RowsAffected, nil, nil
+}
+
+func addLinkedDeleteFilters(query *gorm.DB, filter *LinkedExecutionFilter) *gorm.DB {
 	if filter.SourceExecutionStatus != "" {
 		query = query.Where("source_execution_id IN (SELECT execution_id FROM executions WHERE status = ?)", filter.SourceExecutionStatus)
 	}
-
 	if filter.SourceStateMachineID != "" {
 		query = query.Where("source_state_machine_id = ?", filter.SourceStateMachineID)
 	}
@@ -1700,13 +1712,7 @@ func (r *GormPostgresRepository) DeleteLinkedExecutions(ctx context.Context, ids
 	if !filter.CreatedBefore.IsZero() {
 		query = query.Where("created_at <= ?", filter.CreatedBefore)
 	}
-
-	result := query.Delete(&LinkedExecutionModel{})
-	if result.Error != nil {
-		return 0, nil, fmt.Errorf("failed to delete linked executions by filter: %w", result.Error)
-	}
-
-	return result.RowsAffected, nil, nil
+	return query
 }
 
 // GetExecutionStartTime returns the earliest state-history execution_start_time.

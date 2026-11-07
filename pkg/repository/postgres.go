@@ -1042,9 +1042,9 @@ func (ps *PostgresRepository) buildListExecutionsQuery(filter *ExecutionFilter) 
 			sortColumn = "status"
 		}
 	}
-	direction := "DESC"
+	direction := orderDESC
 	if filter != nil && strings.EqualFold(filter.Order, "asc") {
-		direction = "ASC"
+		direction = orderASC
 	}
 	query += fmt.Sprintf(" ORDER BY execution_id, %s %s", sortColumn, direction)
 
@@ -1182,7 +1182,6 @@ func (ps *PostgresRepository) buildExecutionFilters(
 		if filter.StateStatus != "" {
 			existsSQL += fmt.Sprintf(" AND sh.status = $%d", argCount)
 			args = append(args, filter.StateStatus)
-			argCount++
 		}
 		existsSQL += ")"
 		conditions = append(conditions, existsSQL)
@@ -1564,9 +1563,9 @@ func (ps *PostgresRepository) buildLinkedExecutionsQuery(filter *LinkedExecution
 			leSortColumn = "le.target_state_machine_name"
 		}
 	}
-	leDirection := "DESC"
+	leDirection := orderDESC
 	if filter != nil && strings.EqualFold(filter.Order, "asc") {
-		leDirection = "ASC"
+		leDirection = orderASC
 	}
 	query += fmt.Sprintf(" ORDER BY %s %s", leSortColumn, leDirection)
 
@@ -2023,9 +2022,9 @@ func (ps *PostgresRepository) ListStateHistory(ctx context.Context, executionID 
 		return nil, 0, fmt.Errorf("failed to count state history: %w", err)
 	}
 
-	dir := "ASC"
+	dir := orderASC
 	if strings.EqualFold(order, "desc") {
-		dir = "DESC"
+		dir = orderDESC
 	}
 
 	query := `
@@ -2148,35 +2147,9 @@ func (ps *PostgresRepository) GetDashboardStats(ctx context.Context) (*Dashboard
 	}
 
 	// 4. Recent failures
-	failRows, err := ps.db.QueryContext(ctx, `
-		SELECT execution_id, state_machine_id, name, status, start_time, current_state, error
-		FROM executions
-		WHERE status = 'FAILED'
-		ORDER BY start_time DESC
-		LIMIT 10
-	`)
+	stats.RecentFailures, err = ps.queryRecentFailures(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query recent failures: %w", err)
-	}
-	defer ps.closeRows(failRows)
-
-	for failRows.Next() {
-		f := &DashboardFailure{}
-		var startTime sql.NullTime
-		var errorStr sql.NullString
-		if err := failRows.Scan(&f.ExecutionID, &f.StateMachineID, &f.Name, &f.Status, &startTime, &f.CurrentState, &errorStr); err != nil {
-			return nil, fmt.Errorf("failed to scan failure: %w", err)
-		}
-		if startTime.Valid {
-			f.StartTime = &startTime.Time
-		}
-		if errorStr.Valid {
-			f.Error = errorStr.String
-		}
-		stats.RecentFailures = append(stats.RecentFailures, f)
-	}
-	if err := failRows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating failures: %w", err)
+		return nil, err
 	}
 
 	// 5. Total state machines (all time)
@@ -2192,6 +2165,41 @@ func (ps *PostgresRepository) GetDashboardStats(ctx context.Context) (*Dashboard
 	}
 
 	return stats, nil
+}
+
+func (ps *PostgresRepository) queryRecentFailures(ctx context.Context) ([]*DashboardFailure, error) {
+	failRows, err := ps.db.QueryContext(ctx, `
+		SELECT execution_id, state_machine_id, name, status, start_time, current_state, error
+		FROM executions
+		WHERE status = 'FAILED'
+		ORDER BY start_time DESC
+		LIMIT 10
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query recent failures: %w", err)
+	}
+	defer ps.closeRows(failRows)
+
+	var failures []*DashboardFailure
+	for failRows.Next() {
+		f := &DashboardFailure{}
+		var startTime sql.NullTime
+		var errorStr sql.NullString
+		if err := failRows.Scan(&f.ExecutionID, &f.StateMachineID, &f.Name, &f.Status, &startTime, &f.CurrentState, &errorStr); err != nil {
+			return nil, fmt.Errorf("failed to scan failure: %w", err)
+		}
+		if startTime.Valid {
+			f.StartTime = &startTime.Time
+		}
+		if errorStr.Valid {
+			f.Error = errorStr.String
+		}
+		failures = append(failures, f)
+	}
+	if err := failRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating failures: %w", err)
+	}
+	return failures, nil
 }
 
 // GetDistinctStateStatuses returns distinct (state_name, status) pairs from state_history.
@@ -2231,7 +2239,7 @@ func (ps *PostgresRepository) GetDistinctStateStatuses(ctx context.Context, stat
 }
 
 // DeleteLinkedExecutions deletes linked-execution records by IDs or by filter.
-func (ps *PostgresRepository) DeleteLinkedExecutions(ctx context.Context, ids []string, filter *LinkedExecutionFilter) (int64, []string, error) {
+func (ps *PostgresRepository) DeleteLinkedExecutions(ctx context.Context, ids []string, filter *LinkedExecutionFilter) (deleted int64, deletedIDs []string, err error) {
 	if len(ids) == 0 && (filter == nil || *filter == (LinkedExecutionFilter{})) {
 		return 0, nil, fmt.Errorf("refusing wide delete: both ids and filter are empty")
 	}
@@ -2249,9 +2257,8 @@ func (ps *PostgresRepository) DeleteLinkedExecutions(ctx context.Context, ids []
 	// Delete by filter
 	var conditions []string
 	var args []interface{}
-	argPos := 1
 
-	argPos = ps.addLinkedExecutionFilterConditions(filter, &conditions, &args, argPos)
+	_ = ps.addLinkedExecutionFilterConditions(filter, &conditions, &args, 1)
 
 	query := "DELETE FROM linked_executions le"
 	needsJoin := filter.SourceExecutionStatus != ""
@@ -2269,8 +2276,6 @@ func (ps *PostgresRepository) DeleteLinkedExecutions(ctx context.Context, ids []
 		return 0, nil, fmt.Errorf("failed to delete linked executions by filter: %w", err)
 	}
 	count, _ := result.RowsAffected()
-
-	_ = argPos
 	return count, nil, nil
 }
 
