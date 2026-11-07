@@ -349,18 +349,14 @@ func (t *TaskState) waitForRetry(ctx context.Context, backoffDuration time.Durat
 
 // --- Result Handling ---
 
-func (t *TaskState) handleTaskResult(ctx context.Context, processor *JSONPathProcessor,
-	processedInput interface{}, result interface{}, taskErr error) (output interface{}, nextState *string, err error) {
-
+func (t *TaskState) handleTaskResult(ctx context.Context, processor *JSONPathProcessor, processedInput interface{}, result interface{}, taskErr error) (output interface{}, nextState *string, err error) {
 	if taskErr != nil {
 		return t.handleTaskFailure(ctx, processor, processedInput, taskErr)
 	}
 	return t.processSuccessfulResult(processor, processedInput, result)
 }
 
-func (t *TaskState) handleTaskFailure(_ context.Context, processor *JSONPathProcessor,
-	processedInput interface{}, taskErr error) (output interface{}, nextState *string, err error) {
-
+func (t *TaskState) handleTaskFailure(_ context.Context, processor *JSONPathProcessor, processedInput interface{}, taskErr error) (output interface{}, nextState *string, err error) {
 	for _, catchPolicy := range t.Catch {
 		if t.errorMatches(taskErr, catchPolicy.ErrorEquals) {
 			return t.handleCaughtError(processor, processedInput, taskErr, catchPolicy)
@@ -369,9 +365,7 @@ func (t *TaskState) handleTaskFailure(_ context.Context, processor *JSONPathProc
 	return nil, nil, taskErr
 }
 
-func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInput interface{},
-	taskErr error, catchPolicy CatchPolicy) (output interface{}, nextState *string, err error) {
-
+func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInput interface{}, taskErr error, catchPolicy CatchPolicy) (output interface{}, nextState *string, err error) {
 	errorResult := map[string]interface{}{
 		"Error": taskErr.Error(),
 		"Cause": taskErr.Error(),
@@ -384,9 +378,7 @@ func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInp
 	return output, StringPtr(catchPolicy.Next), nil
 }
 
-func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor,
-	processedInput interface{}, result interface{}) (op2 interface{}, op3 *string, op4 error) {
-
+func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor, processedInput interface{}, result interface{}) (op2 interface{}, op3 *string, op4 error) {
 	output := result
 	var err error
 

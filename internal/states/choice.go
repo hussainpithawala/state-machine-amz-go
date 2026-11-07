@@ -600,6 +600,7 @@ func isNil(value interface{}) bool {
 	}
 
 	val := reflect.ValueOf(value)
+	//nolint:govet // reflect.Kind constants in switch are idiomatic Go
 	switch val.Kind() {
 	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map:
 		return val.IsNil()

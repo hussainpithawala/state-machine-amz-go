@@ -367,10 +367,9 @@ func (p *JSONPathProcessor) expandValue(value, input interface{}) (interface{}, 
 	case map[string]interface{}:
 		result := make(map[string]interface{})
 		for key, val := range v {
-			outputKey := key
 			// 1. AWS-standard syntax: key ends with ".$"
 			if strings.HasSuffix(key, ".$") {
-				outputKey = strings.TrimSuffix(key, ".$")
+				outputKey := strings.TrimSuffix(key, ".$")
 
 				// The value MUST be a string representing the JSONPath
 				strVal, ok := val.(string)
