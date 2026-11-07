@@ -11,6 +11,9 @@ const ExecFailureMessage = "__exec_failure__"
 
 // State is the interface that all state types must implement
 type State interface {
+	// SetName sets the name of the state
+	SetName(name string)
+
 	// GetName returns the name of the state
 	GetName() string
 
@@ -63,6 +66,9 @@ type BaseState struct {
 	OutputPath *string `json:"OutputPath,omitempty"`
 	Comment    string  `json:"Comment,omitempty"`
 }
+
+// SetName sets the state name.
+func (s *BaseState) SetName(name string) { s.Name = name }
 
 // GetName returns the state name.
 func (s *BaseState) GetName() string { return s.Name }

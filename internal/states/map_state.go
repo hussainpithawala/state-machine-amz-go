@@ -104,9 +104,8 @@ func (m *MapState) parseItemProcessor(raw json.RawMessage) error {
 	}
 
 	states := make(map[string]State)
-	unmarshaler := &stateUnmarshaler{}
 	for stateName, rawState := range processorData.States {
-		state, err := unmarshaler.unmarshalState(stateName, rawState)
+		state, err := CreateStateFromJSON(stateName, rawState)
 		if err != nil {
 			return fmt.Errorf("failed to unmarshal state '%s' in ItemProcessor: %w", stateName, err)
 		}

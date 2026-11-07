@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"sync"
 	"time"
 
@@ -99,12 +98,9 @@ func (p *ParallelState) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("failed to unmarshal branch %d: %w", i, err)
 		}
 
-		// Convert raw state messages to State interface
 		states := make(map[string]State)
-		// Create a temporary factory for unmarshaling states
-		stateFactory := &stateUnmarshaler{}
 		for stateName, rawState := range branchData.States {
-			state, err := stateFactory.unmarshalState(stateName, rawState)
+			state, err := CreateStateFromJSON(stateName, rawState)
 			if err != nil {
 				return fmt.Errorf("failed to unmarshal state '%s' in branch %d: %w", stateName, i, err)
 			}
@@ -119,132 +115,6 @@ func (p *ParallelState) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
-}
-
-// stateUnmarshaler is a helper for unmarshaling states within parallel branches
-type stateUnmarshaler struct{}
-
-// unmarshalState unmarshals a raw JSON message into a State
-func (s *stateUnmarshaler) unmarshalState(name string, rawJSON json.RawMessage) (State, error) {
-	// Get state type from JSON
-	stateType, err := s.extractStateType(rawJSON)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create and unmarshal state
-	state, err := s.createAndUnmarshalState(stateType, rawJSON)
-	if err != nil {
-		return nil, err
-	}
-
-	// Set state name
-	s.setStateName(state, name)
-
-	return state, nil
-}
-
-// extractStateType extracts the Type field from JSON
-func (s *stateUnmarshaler) extractStateType(rawJSON json.RawMessage) (string, error) {
-	var typeMap map[string]interface{}
-	if err := json.Unmarshal(rawJSON, &typeMap); err != nil {
-		return "", fmt.Errorf("failed to unmarshal state: %w", err)
-	}
-
-	stateType, ok := typeMap["Type"].(string)
-	if !ok {
-		return "", fmt.Errorf("state missing or invalid Type field")
-	}
-
-	return stateType, nil
-}
-
-// createAndUnmarshalState creates the appropriate state type and unmarshals JSON
-func (s *stateUnmarshaler) createAndUnmarshalState(stateType string, rawJSON json.RawMessage) (State, error) {
-	// Map state types to their constructors
-	stateCreators := map[string]func() (State, error){
-		"Pass": func() (State, error) {
-			state := &PassState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Fail": func() (State, error) {
-			state := &FailState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Succeed": func() (State, error) {
-			state := &SucceedState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Wait": func() (State, error) {
-			state := &WaitState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Choice": func() (State, error) {
-			state := &ChoiceState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Parallel": func() (State, error) {
-			state := &ParallelState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Task": func() (State, error) {
-			state := &TaskState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Map": func() (State, error) {
-			state := &MapState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-	}
-
-	// Get the constructor for the state type
-	createState, exists := stateCreators[stateType]
-	if !exists {
-		return nil, fmt.Errorf("unknown state type: %s", stateType)
-	}
-
-	// Create and unmarshal the state
-	state, err := createState()
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal %s state: %w", stateType, err)
-	}
-
-	return state, nil
-}
-
-// setStateName sets the name on the state
-func (s *stateUnmarshaler) setStateName(state State, name string) {
-	// Map state types to name setters
-	switch st := state.(type) {
-	case interface{ SetName(string) }:
-		st.SetName(name)
-	default:
-		// Fallback for types that don't implement SetName
-		s.setNameViaReflection(st, name)
-	}
-}
-
-// setNameViaReflection sets the name using reflection for types without SetName method
-func (s *stateUnmarshaler) setNameViaReflection(state State, name string) {
-	// Use reflection to set the Name field
-	val := reflect.ValueOf(state).Elem()
-
-	// Try to find the Name field
-	nameField := val.FieldByName("Name")
-	if nameField.IsValid() && nameField.CanSet() {
-		// Check if it's a string field
-		if nameField.Kind() == reflect.String {
-			nameField.SetString(name)
-		}
-	}
 }
 
 // GetName returns the name of the state
