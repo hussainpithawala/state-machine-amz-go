@@ -151,6 +151,11 @@ func (s *stateUnmarshaler) createAndUnmarshalState(stateType string, rawJSON jso
 			err := json.Unmarshal(rawJSON, state)
 			return state, err
 		},
+		"Map": func() (State, error) {
+			state := &MapState{}
+			err := json.Unmarshal(rawJSON, state)
+			return state, err
+		},
 	}
 
 	// Get the constructor for the state type
