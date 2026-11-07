@@ -571,8 +571,20 @@ func (r *GormPostgresRepository) ListExecutions(ctx context.Context, filter *Exe
 		}
 	}
 
-	// Always order by start time descending
-	query = query.Order("start_time DESC")
+	sortColumn := "start_time"
+	if filter != nil {
+		switch filter.SortBy {
+		case "endTime":
+			sortColumn = "end_time"
+		case "status":
+			sortColumn = "status"
+		}
+	}
+	direction := "DESC"
+	if filter != nil && strings.EqualFold(filter.Order, "asc") {
+		direction = "ASC"
+	}
+	query = query.Order(fmt.Sprintf("%s %s", sortColumn, direction))
 
 	var models []ExecutionModel
 	result := query.Find(&models)
@@ -642,6 +654,26 @@ func addFiltersToQuery(filter *ExecutionFilter, query *gorm.DB) *gorm.DB {
 	if !filter.StartBefore.IsZero() {
 		query = query.Where("start_time <= ?", filter.StartBefore)
 	}
+
+	if filter.ExecutionID != "" {
+		query = query.Where("execution_id = ?", filter.ExecutionID)
+	}
+
+	if filter.StateName != "" || filter.StateStatus != "" {
+		existsSQL := "EXISTS (SELECT 1 FROM state_history sh WHERE sh.execution_id = executions.execution_id AND sh.execution_start_time = executions.start_time"
+		var existsArgs []interface{}
+		if filter.StateName != "" {
+			existsSQL += " AND sh.state_name = ?"
+			existsArgs = append(existsArgs, filter.StateName)
+		}
+		if filter.StateStatus != "" {
+			existsSQL += " AND sh.status = ?"
+			existsArgs = append(existsArgs, filter.StateStatus)
+		}
+		existsSQL += ")"
+		query = query.Where(existsSQL, existsArgs...)
+	}
+
 	return query
 }
 
@@ -651,7 +683,7 @@ func (r *GormPostgresRepository) CountExecutions(ctx context.Context, filter *Ex
 
 	// Apply same filters as ListExecutions (without pagination)
 	if filter != nil {
-		addFiltersToQuery(filter, query)
+		query = addFiltersToQuery(filter, query)
 	}
 
 	var count int64
@@ -1179,7 +1211,21 @@ func (r *GormPostgresRepository) ListLinkedExecutions(ctx context.Context, filte
 
 	query = query.Select("linked_executions.*")
 
-	result := query.Order("linked_executions.created_at DESC").Find(&models)
+	leSortColumn := "linked_executions.created_at"
+	if filter != nil {
+		switch filter.SortBy {
+		case "sourceStateMachineId":
+			leSortColumn = "linked_executions.source_state_machine_id"
+		case "targetStateMachineName":
+			leSortColumn = "linked_executions.target_state_machine_name"
+		}
+	}
+	leDirection := "DESC"
+	if filter != nil && strings.EqualFold(filter.Order, "asc") {
+		leDirection = "ASC"
+	}
+
+	result := query.Order(fmt.Sprintf("%s %s", leSortColumn, leDirection)).Find(&models)
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to list linked executions: %w", result.Error)
 	}
@@ -1443,6 +1489,243 @@ func (r *GormPostgresRepository) GetExecutionOutput(ctx context.Context, executi
 	}
 
 	return fromJSONB(stateHistory.Output), nil
+}
+
+// ListStateHistory retrieves paginated state history with cursor support.
+func (r *GormPostgresRepository) ListStateHistory(ctx context.Context, executionID string, afterSequenceNumber *int, limit int, order string) ([]*StateHistoryRecord, int64, error) {
+	if executionID == "" {
+		return nil, 0, fmt.Errorf("execution_id is required")
+	}
+
+	var totalCount int64
+	if err := r.db.WithContext(ctx).Model(&StateHistoryModel{}).Where("execution_id = ?", executionID).Count(&totalCount).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count state history: %w", err)
+	}
+
+	dir := "ASC"
+	if strings.EqualFold(order, "desc") {
+		dir = "DESC"
+	}
+
+	query := r.db.WithContext(ctx).Where("execution_id = ?", executionID)
+
+	if afterSequenceNumber != nil {
+		query = query.Where("sequence_number > ?", *afterSequenceNumber)
+	}
+
+	query = query.Order(fmt.Sprintf("sequence_number %s", dir))
+
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	var models []StateHistoryModel
+	if err := query.Find(&models).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to list state history: %w", err)
+	}
+
+	histories := make([]*StateHistoryRecord, len(models))
+	for i := range models {
+		model := models[i]
+		histories[i] = fromStateHistoryModel(&model)
+	}
+
+	return histories, totalCount, nil
+}
+
+// GetDashboardStats returns aggregated dashboard statistics.
+func (r *GormPostgresRepository) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
+	stats := &DashboardStats{}
+
+	// 1. Status counts (30 days)
+	type statusCountResult struct {
+		Status string
+		Cnt    int64
+	}
+	var scResults []statusCountResult
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT status, COUNT(*) as cnt
+		FROM executions
+		WHERE start_time >= NOW() - INTERVAL '30 days'
+		GROUP BY status
+		HAVING COUNT(*) > 0
+	`).Scan(&scResults).Error; err != nil {
+		return nil, fmt.Errorf("failed to query status counts: %w", err)
+	}
+	for _, sc := range scResults {
+		stats.StatusCounts = append(stats.StatusCounts, StatusCount{Status: sc.Status, Count: sc.Cnt})
+	}
+
+	// 2. Duration stats (7 days, SUCCEEDED only)
+	type durationResult struct {
+		AvgDur *float64
+		MaxDur *float64
+		MinDur *float64
+	}
+	var dr durationResult
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			AVG(EXTRACT(EPOCH FROM (end_time - start_time))) as avg_dur,
+			MAX(EXTRACT(EPOCH FROM (end_time - start_time))) as max_dur,
+			MIN(EXTRACT(EPOCH FROM (end_time - start_time))) as min_dur
+		FROM executions
+		WHERE status = 'SUCCEEDED'
+		  AND start_time >= NOW() - INTERVAL '7 days'
+		  AND end_time IS NOT NULL
+	`).Scan(&dr).Error; err != nil {
+		return nil, fmt.Errorf("failed to query duration stats: %w", err)
+	}
+	if dr.AvgDur != nil {
+		stats.DurationStats = &DurationStats{
+			AvgDuration: dr.AvgDur,
+			MaxDuration: dr.MaxDur,
+			MinDuration: dr.MinDur,
+		}
+	}
+
+	// 3. Total executions (30 days)
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT COUNT(*) FROM executions WHERE start_time >= NOW() - INTERVAL '30 days'
+	`).Scan(&stats.TotalExecutions).Error; err != nil {
+		return nil, fmt.Errorf("failed to count total executions: %w", err)
+	}
+
+	// 4. Recent failures
+	type failureResult struct {
+		ExecutionID    string
+		StateMachineID string
+		Name           string
+		Status         string
+		StartTime      *time.Time
+		CurrentState   string
+		Error          string
+	}
+	var failures []failureResult
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT execution_id, state_machine_id, name, status, start_time, current_state, error
+		FROM executions
+		WHERE status = 'FAILED'
+		ORDER BY start_time DESC
+		LIMIT 10
+	`).Scan(&failures).Error; err != nil {
+		return nil, fmt.Errorf("failed to query recent failures: %w", err)
+	}
+	for _, f := range failures {
+		stats.RecentFailures = append(stats.RecentFailures, &DashboardFailure{
+			ExecutionID:    f.ExecutionID,
+			StateMachineID: f.StateMachineID,
+			Name:           f.Name,
+			Status:         f.Status,
+			StartTime:      f.StartTime,
+			CurrentState:   f.CurrentState,
+			Error:          f.Error,
+		})
+	}
+
+	// 5. Total state machines (all time)
+	if err := r.db.WithContext(ctx).Raw("SELECT COUNT(*) FROM state_machines").Scan(&stats.TotalStateMachines).Error; err != nil {
+		return nil, fmt.Errorf("failed to count state machines: %w", err)
+	}
+
+	// 6. Timestamp
+	if err := r.db.WithContext(ctx).Raw("SELECT NOW()").Scan(&stats.Timestamp).Error; err != nil {
+		return nil, fmt.Errorf("failed to get timestamp: %w", err)
+	}
+
+	return stats, nil
+}
+
+// GetDistinctStateStatuses returns distinct (state_name, status) pairs from state_history.
+func (r *GormPostgresRepository) GetDistinctStateStatuses(ctx context.Context, stateMachineID string, executionLimit int) ([]*StateStatusPair, error) {
+	var pairs []*StateStatusPair
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT DISTINCT sh.state_name, sh.status
+		FROM state_history sh
+		WHERE sh.execution_id IN (
+			SELECT execution_id
+			FROM executions
+			WHERE state_machine_id = ?
+			ORDER BY start_time DESC
+			LIMIT ?
+		)
+	`, stateMachineID, executionLimit).Scan(&pairs).Error; err != nil {
+		return nil, fmt.Errorf("failed to query distinct state statuses: %w", err)
+	}
+
+	return pairs, nil
+}
+
+// DeleteLinkedExecutions deletes linked-execution records by IDs or by filter.
+func (r *GormPostgresRepository) DeleteLinkedExecutions(ctx context.Context, ids []string, filter *LinkedExecutionFilter) (int64, []string, error) {
+	if len(ids) == 0 && (filter == nil || *filter == (LinkedExecutionFilter{})) {
+		return 0, nil, fmt.Errorf("refusing wide delete: both ids and filter are empty")
+	}
+
+	if len(ids) > 0 {
+		result := r.db.WithContext(ctx).Where("id IN ?", ids).Delete(&LinkedExecutionModel{})
+		if result.Error != nil {
+			return 0, nil, fmt.Errorf("failed to delete linked executions by ids: %w", result.Error)
+		}
+		return result.RowsAffected, ids, nil
+	}
+
+	// Delete by filter
+	query := r.db.WithContext(ctx).Table("linked_executions")
+
+	if filter.SourceExecutionStatus != "" {
+		query = query.Where("source_execution_id IN (SELECT execution_id FROM executions WHERE status = ?)", filter.SourceExecutionStatus)
+	}
+
+	if filter.SourceStateMachineID != "" {
+		query = query.Where("source_state_machine_id = ?", filter.SourceStateMachineID)
+	}
+	if filter.SourceExecutionID != "" {
+		query = query.Where("source_execution_id = ?", filter.SourceExecutionID)
+	}
+	if filter.SourceStateName != "" {
+		query = query.Where("source_state_name = ?", filter.SourceStateName)
+	}
+	if filter.InputTransformerName != "" {
+		query = query.Where("input_transformer_name = ?", filter.InputTransformerName)
+	}
+	if filter.TargetStateMachineName != "" {
+		query = query.Where("target_state_machine_name = ?", filter.TargetStateMachineName)
+	}
+	if filter.TargetExecutionID != "" {
+		query = query.Where("target_execution_id = ?", filter.TargetExecutionID)
+	}
+	if !filter.CreatedAfter.IsZero() {
+		query = query.Where("created_at >= ?", filter.CreatedAfter)
+	}
+	if !filter.CreatedBefore.IsZero() {
+		query = query.Where("created_at <= ?", filter.CreatedBefore)
+	}
+
+	result := query.Delete(&LinkedExecutionModel{})
+	if result.Error != nil {
+		return 0, nil, fmt.Errorf("failed to delete linked executions by filter: %w", result.Error)
+	}
+
+	return result.RowsAffected, nil, nil
+}
+
+// GetExecutionStartTime returns the earliest state-history execution_start_time.
+func (r *GormPostgresRepository) GetExecutionStartTime(ctx context.Context, executionID string) (*time.Time, error) {
+	var model StateHistoryModel
+	result := r.db.WithContext(ctx).
+		Where("execution_id = ?", executionID).
+		Order("sequence_number ASC").
+		Limit(1).
+		Find(&model)
+
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get execution start time: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("no state history found for execution: %s", executionID)
+	}
+
+	return &model.ExecutionStartTime, nil
 }
 
 // FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold

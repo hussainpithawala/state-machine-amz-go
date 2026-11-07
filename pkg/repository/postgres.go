@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 const NULL = "null"
@@ -1032,7 +1032,21 @@ func (ps *PostgresRepository) buildListExecutionsQuery(filter *ExecutionFilter) 
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY execution_id, start_time DESC"
+
+	sortColumn := "start_time"
+	if filter != nil {
+		switch filter.SortBy {
+		case "endTime":
+			sortColumn = "end_time"
+		case "status":
+			sortColumn = "status"
+		}
+	}
+	direction := "DESC"
+	if filter != nil && strings.EqualFold(filter.Order, "asc") {
+		direction = "ASC"
+	}
+	query += fmt.Sprintf(" ORDER BY execution_id, %s %s", sortColumn, direction)
 
 	// Handle pagination
 	if filter != nil {
@@ -1143,21 +1157,36 @@ func (ps *PostgresRepository) buildExecutionFilters(
 	if !filter.StartAfter.IsZero() {
 		conditions = append(conditions, fmt.Sprintf("start_time >= $%d", argCount))
 		args = append(args, filter.StartAfter)
+		argCount++
 	}
 
 	if !filter.StartBefore.IsZero() {
-		conditions = append(conditions, fmt.Sprintf("start_before <= $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("start_time <= $%d", argCount))
 		args = append(args, filter.StartBefore)
-		// argCount++
+		argCount++
 	}
 
-	// need to solve this
-	//  if filter.e {
-	//	if metadataJSON, err := json.Marshal(metadataFilter); err == nil {
-	//		conditions = append(conditions, fmt.Sprintf("metadata @> $%d::jsonb", argCount))
-	//		args = append(args, string(metadataJSON))
-	//	}
-	//	}
+	if filter.ExecutionID != "" {
+		conditions = append(conditions, fmt.Sprintf("execution_id = $%d", argCount))
+		args = append(args, filter.ExecutionID)
+		argCount++
+	}
+
+	if filter.StateName != "" || filter.StateStatus != "" {
+		existsSQL := "EXISTS (SELECT 1 FROM state_history sh WHERE sh.execution_id = executions.execution_id AND sh.execution_start_time = executions.start_time"
+		if filter.StateName != "" {
+			existsSQL += fmt.Sprintf(" AND sh.state_name = $%d", argCount)
+			args = append(args, filter.StateName)
+			argCount++
+		}
+		if filter.StateStatus != "" {
+			existsSQL += fmt.Sprintf(" AND sh.status = $%d", argCount)
+			args = append(args, filter.StateStatus)
+			argCount++
+		}
+		existsSQL += ")"
+		conditions = append(conditions, existsSQL)
+	}
 
 	return conditions, args
 }
@@ -1526,7 +1555,20 @@ func (ps *PostgresRepository) buildLinkedExecutionsQuery(filter *LinkedExecution
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	query += " ORDER BY le.created_at DESC"
+	leSortColumn := "le.created_at"
+	if filter != nil {
+		switch filter.SortBy {
+		case "sourceStateMachineId":
+			leSortColumn = "le.source_state_machine_id"
+		case "targetStateMachineName":
+			leSortColumn = "le.target_state_machine_name"
+		}
+	}
+	leDirection := "DESC"
+	if filter != nil && strings.EqualFold(filter.Order, "asc") {
+		leDirection = "ASC"
+	}
+	query += fmt.Sprintf(" ORDER BY %s %s", leSortColumn, leDirection)
 
 	if filter != nil {
 		if filter.Limit > 0 {
@@ -1967,6 +2009,291 @@ func (b *nonLinkedExecutionsQueryBuilder) addStateHistoryFilter(baseQuery string
 			"FROM executions e INNER JOIN state_history sh ON e.execution_id = sh.execution_id", 1)
 	}
 	return baseQuery
+}
+
+// ListStateHistory retrieves paginated state history with cursor support.
+func (ps *PostgresRepository) ListStateHistory(ctx context.Context, executionID string, afterSequenceNumber *int, limit int, order string) ([]*StateHistoryRecord, int64, error) {
+	if executionID == "" {
+		return nil, 0, errors.New("execution_id is required")
+	}
+
+	var totalCount int64
+	countQuery := "SELECT COUNT(*) FROM state_history WHERE execution_id = $1"
+	if err := ps.db.QueryRowContext(ctx, countQuery, executionID).Scan(&totalCount); err != nil {
+		return nil, 0, fmt.Errorf("failed to count state history: %w", err)
+	}
+
+	dir := "ASC"
+	if strings.EqualFold(order, "desc") {
+		dir = "DESC"
+	}
+
+	query := `
+		SELECT id, execution_id, state_name, state_type, input, output,
+			status, start_time, end_time, error, retry_count, sequence_number, metadata
+		FROM state_history
+		WHERE execution_id = $1
+	`
+	args := []interface{}{executionID}
+	argPos := 2
+
+	if afterSequenceNumber != nil {
+		query += fmt.Sprintf(" AND sequence_number > $%d", argPos)
+		args = append(args, *afterSequenceNumber)
+		argPos++
+	}
+
+	query += fmt.Sprintf(" ORDER BY sequence_number %s", dir)
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+	}
+
+	rows, err := ps.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query state history: %w", err)
+	}
+	defer ps.closeRows(rows)
+
+	var history []*StateHistoryRecord
+	for rows.Next() {
+		record := &StateHistoryRecord{}
+		var inputJSON, outputJSON, metadataJSON []byte
+		var endTime sql.NullTime
+		var errorStr sql.NullString
+
+		err := rows.Scan(
+			&record.ID, &record.ExecutionID, &record.StateName, &record.StateType,
+			&inputJSON, &outputJSON, &record.Status, &record.StartTime,
+			&endTime, &errorStr, &record.RetryCount, &record.SequenceNumber, &metadataJSON,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan state history: %w", err)
+		}
+
+		if err := record.unmarshalFields(inputJSON, outputJSON, metadataJSON); err != nil {
+			return nil, 0, err
+		}
+		record.setNullableFields(endTime, errorStr)
+
+		history = append(history, record)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating state history: %w", err)
+	}
+
+	return history, totalCount, nil
+}
+
+// GetDashboardStats returns aggregated dashboard statistics.
+func (ps *PostgresRepository) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
+	stats := &DashboardStats{}
+
+	// 1. Status counts (30 days)
+	statusRows, err := ps.db.QueryContext(ctx, `
+		SELECT status, COUNT(*) as cnt
+		FROM executions
+		WHERE start_time >= NOW() - INTERVAL '30 days'
+		GROUP BY status
+		HAVING COUNT(*) > 0
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query status counts: %w", err)
+	}
+	defer ps.closeRows(statusRows)
+
+	for statusRows.Next() {
+		var sc StatusCount
+		if err := statusRows.Scan(&sc.Status, &sc.Count); err != nil {
+			return nil, fmt.Errorf("failed to scan status count: %w", err)
+		}
+		stats.StatusCounts = append(stats.StatusCounts, sc)
+	}
+	if err := statusRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating status counts: %w", err)
+	}
+
+	// 2. Duration stats (7 days, SUCCEEDED only)
+	var avgDur, maxDur, minDur sql.NullFloat64
+	err = ps.db.QueryRowContext(ctx, `
+		SELECT
+			AVG(EXTRACT(EPOCH FROM (end_time - start_time))),
+			MAX(EXTRACT(EPOCH FROM (end_time - start_time))),
+			MIN(EXTRACT(EPOCH FROM (end_time - start_time)))
+		FROM executions
+		WHERE status = 'SUCCEEDED'
+		  AND start_time >= NOW() - INTERVAL '7 days'
+		  AND end_time IS NOT NULL
+	`).Scan(&avgDur, &maxDur, &minDur)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query duration stats: %w", err)
+	}
+	if avgDur.Valid {
+		stats.DurationStats = &DurationStats{
+			AvgDuration: &avgDur.Float64,
+			MaxDuration: &maxDur.Float64,
+			MinDuration: &minDur.Float64,
+		}
+	}
+
+	// 3. Total executions (30 days)
+	err = ps.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM executions
+		WHERE start_time >= NOW() - INTERVAL '30 days'
+	`).Scan(&stats.TotalExecutions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count total executions: %w", err)
+	}
+
+	// 4. Recent failures
+	failRows, err := ps.db.QueryContext(ctx, `
+		SELECT execution_id, state_machine_id, name, status, start_time, current_state, error
+		FROM executions
+		WHERE status = 'FAILED'
+		ORDER BY start_time DESC
+		LIMIT 10
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query recent failures: %w", err)
+	}
+	defer ps.closeRows(failRows)
+
+	for failRows.Next() {
+		f := &DashboardFailure{}
+		var startTime sql.NullTime
+		var errorStr sql.NullString
+		if err := failRows.Scan(&f.ExecutionID, &f.StateMachineID, &f.Name, &f.Status, &startTime, &f.CurrentState, &errorStr); err != nil {
+			return nil, fmt.Errorf("failed to scan failure: %w", err)
+		}
+		if startTime.Valid {
+			f.StartTime = &startTime.Time
+		}
+		if errorStr.Valid {
+			f.Error = errorStr.String
+		}
+		stats.RecentFailures = append(stats.RecentFailures, f)
+	}
+	if err := failRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating failures: %w", err)
+	}
+
+	// 5. Total state machines (all time)
+	err = ps.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM state_machines").Scan(&stats.TotalStateMachines)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count state machines: %w", err)
+	}
+
+	// 6. Timestamp
+	err = ps.db.QueryRowContext(ctx, "SELECT NOW()").Scan(&stats.Timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get timestamp: %w", err)
+	}
+
+	return stats, nil
+}
+
+// GetDistinctStateStatuses returns distinct (state_name, status) pairs from state_history.
+func (ps *PostgresRepository) GetDistinctStateStatuses(ctx context.Context, stateMachineID string, executionLimit int) ([]*StateStatusPair, error) {
+	query := `
+		SELECT DISTINCT sh.state_name, sh.status
+		FROM state_history sh
+		WHERE sh.execution_id IN (
+			SELECT execution_id
+			FROM executions
+			WHERE state_machine_id = $1
+			ORDER BY start_time DESC
+			LIMIT $2
+		)
+	`
+
+	rows, err := ps.db.QueryContext(ctx, query, stateMachineID, executionLimit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query distinct state statuses: %w", err)
+	}
+	defer ps.closeRows(rows)
+
+	var pairs []*StateStatusPair
+	for rows.Next() {
+		p := &StateStatusPair{}
+		if err := rows.Scan(&p.StateName, &p.Status); err != nil {
+			return nil, fmt.Errorf("failed to scan state status pair: %w", err)
+		}
+		pairs = append(pairs, p)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating state status pairs: %w", err)
+	}
+
+	return pairs, nil
+}
+
+// DeleteLinkedExecutions deletes linked-execution records by IDs or by filter.
+func (ps *PostgresRepository) DeleteLinkedExecutions(ctx context.Context, ids []string, filter *LinkedExecutionFilter) (int64, []string, error) {
+	if len(ids) == 0 && (filter == nil || *filter == (LinkedExecutionFilter{})) {
+		return 0, nil, fmt.Errorf("refusing wide delete: both ids and filter are empty")
+	}
+
+	if len(ids) > 0 {
+		query := "DELETE FROM linked_executions WHERE id = ANY($1)"
+		result, err := ps.db.ExecContext(ctx, query, pq.Array(ids))
+		if err != nil {
+			return 0, nil, fmt.Errorf("failed to delete linked executions by ids: %w", err)
+		}
+		count, _ := result.RowsAffected()
+		return count, ids, nil
+	}
+
+	// Delete by filter
+	var conditions []string
+	var args []interface{}
+	argPos := 1
+
+	argPos = ps.addLinkedExecutionFilterConditions(filter, &conditions, &args, argPos)
+
+	query := "DELETE FROM linked_executions le"
+	needsJoin := filter.SourceExecutionStatus != ""
+	if needsJoin {
+		query = "DELETE FROM linked_executions le USING executions e WHERE le.source_execution_id = e.execution_id"
+		if len(conditions) > 0 {
+			query += " AND " + strings.Join(conditions, " AND ")
+		}
+	} else if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	result, err := ps.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to delete linked executions by filter: %w", err)
+	}
+	count, _ := result.RowsAffected()
+
+	_ = argPos
+	return count, nil, nil
+}
+
+// GetExecutionStartTime returns the earliest state-history execution_start_time.
+func (ps *PostgresRepository) GetExecutionStartTime(ctx context.Context, executionID string) (*time.Time, error) {
+	query := `
+		SELECT execution_start_time
+		FROM state_history
+		WHERE execution_id = $1
+		ORDER BY sequence_number ASC
+		LIMIT 1
+	`
+
+	var t time.Time
+	err := ps.db.QueryRowContext(ctx, query, executionID).Scan(&t)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("no state history found for execution: %s", executionID)
+		}
+		return nil, fmt.Errorf("failed to get execution start time: %w", err)
+	}
+
+	return &t, nil
 }
 
 // FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold

@@ -287,6 +287,34 @@ func (pm *Manager) FindOrphanedExecutions(ctx context.Context, stateMachineID st
 	return pm.repository.FindOrphanedExecutions(ctx, stateMachineID, threshold)
 }
 
+// ListStateHistory retrieves paginated state history with cursor support.
+func (pm *Manager) ListStateHistory(ctx context.Context, executionID string, afterSequenceNumber *int, limit int, order string) ([]*StateHistoryRecord, int64, error) {
+	return pm.repository.ListStateHistory(ctx, executionID, afterSequenceNumber, limit, order)
+}
+
+// GetDashboardStats returns aggregated dashboard statistics.
+func (pm *Manager) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
+	return pm.repository.GetDashboardStats(ctx)
+}
+
+// GetDistinctStateStatuses returns distinct state/status pairs observed in state_history.
+func (pm *Manager) GetDistinctStateStatuses(ctx context.Context, stateMachineID string, executionLimit int) ([]*StateStatusPair, error) {
+	return pm.repository.GetDistinctStateStatuses(ctx, stateMachineID, executionLimit)
+}
+
+// DeleteLinkedExecutions deletes linked executions by IDs or by filter.
+func (pm *Manager) DeleteLinkedExecutions(ctx context.Context, ids []string, filter *LinkedExecutionFilter) (int64, []string, error) {
+	if len(ids) == 0 && (filter == nil || *filter == (LinkedExecutionFilter{})) {
+		return 0, nil, fmt.Errorf("refusing wide delete: both ids and filter are empty")
+	}
+	return pm.repository.DeleteLinkedExecutions(ctx, ids, filter)
+}
+
+// GetExecutionStartTime returns the earliest state-history execution_start_time.
+func (pm *Manager) GetExecutionStartTime(ctx context.Context, executionID string) (*time.Time, error) {
+	return pm.repository.GetExecutionStartTime(ctx, executionID)
+}
+
 // Helper function to generate unique history IDs
 func generateHistoryID(executionID, stateName string, timestamp time.Time) string {
 	return fmt.Sprintf("%s-%s-%d", executionID, stateName, timestamp.UnixNano())
