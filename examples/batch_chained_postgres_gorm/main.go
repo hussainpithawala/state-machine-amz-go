@@ -110,7 +110,7 @@ StartAt: IngestData
 States:
   IngestData:
     Type: Task
-    Resource: "arn:aws:lambda:::ingest:data"
+    Resource: "ingest:data"
     End: true
 `
 	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(exec))
@@ -132,12 +132,12 @@ StartAt: ProcessOrder
 States:
   ProcessOrder:
     Type: Task
-    Resource: "arn:aws:lambda:::process:order"
+    Resource: "process:order"
     Next: ValidateOrder
 
   ValidateOrder:
     Type: Task
-    Resource: "arn:aws:lambda:::validate:order"
+    Resource: "validate:order"
     End: true
 `
 
@@ -162,8 +162,10 @@ States:
 		{"orderId": "ORD-005", "customer": "Eve", "amount": 250},
 	}
 
+	runID := time.Now().Unix()
+
 	for _, order := range orders {
-		execName := fmt.Sprintf("ingestion-%v", order["orderId"])
+		execName := fmt.Sprintf("ingestion-%v-%d", order["orderId"], runID)
 		_, err := smA.Execute(ctx, order, statemachine.WithExecutionName(execName))
 		if err != nil {
 			return fmt.Errorf("state machine A execution failed: %w", err)

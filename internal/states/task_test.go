@@ -725,3 +725,64 @@ func TestTaskState_DefaultTaskHandler_SuccessWithValidContext(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, true, resultMap["processed"])
 }
+
+func TestTaskState_Parameters_NestedJSONPath_NoDoubleExpansion(t *testing.T) {
+	// Do NOT set TaskHandler on the state, forcing it to use DefaultTaskHandler
+	state := &TaskState{
+		BaseState: BaseState{
+			Name: "TaskState",
+			Type: "Task",
+			End:  true,
+		},
+		Resource: "arn:aws:lambda:us-east-1:123456789012:function:MyFunction",
+		// Nested JSONPath lookup in Parameters
+		Parameters: map[string]interface{}{
+			"orderId":    "$.order.id",
+			"customerId": "$.customer.details.id",
+			"staticVal":  "literal",
+		},
+	}
+
+	// Context WITH ExecutionContext and a handler that simply echoes the input it receives
+	mockCtx := &mockExecutionContext{
+		handlers: map[string]func(ctx context.Context, input interface{}) (interface{}, error){
+			"arn:aws:lambda:us-east-1:123456789012:function:MyFunction": func(ctx context.Context, input interface{}) (interface{}, error) {
+				// This handler should receive the ALREADY EXPANDED parameters.
+				// If double-expansion occurs, it will receive an error or malformed data.
+				return input, nil
+			},
+		},
+	}
+	ctx := context.WithValue(context.Background(), types.ExecutionContextKey, mockCtx)
+
+	// Deeply nested input data
+	input := map[string]interface{}{
+		"order": map[string]interface{}{
+			"id": "ORD-98765",
+		},
+		"customer": map[string]interface{}{
+			"details": map[string]interface{}{
+				"id": "CUST-12345",
+			},
+		},
+		"ignored": "data",
+	}
+
+	output, nextState, err := state.Execute(ctx, input)
+
+	// ASSERTIONS
+	require.NoError(t, err, "Execution must not fail due to double JSONPath expansion")
+	assert.Nil(t, nextState) // End state
+
+	resultMap, ok := output.(map[string]interface{})
+	require.True(t, ok, "Output should be the expanded parameters map")
+
+	// Verify nested lookups resolved correctly
+	assert.Equal(t, "ORD-98765", resultMap["orderId"])
+	assert.Equal(t, "CUST-12345", resultMap["customerId"])
+	assert.Equal(t, "literal", resultMap["staticVal"])
+
+	// Verify non-referenced data was correctly excluded (Parameters acts as a filter/constructor)
+	_, exists := resultMap["ignored"]
+	assert.False(t, exists, "Non-referenced root data should not be in the expanded parameters")
+}

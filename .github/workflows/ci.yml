@@ -5,7 +5,7 @@ on:
   push:
     branches: [ development, main ]
   pull_request:
-    branches: [ master, main, development ]
+    branches: [ master, main, development, rel_v1.2.23 ]
   workflow_call:
 
 env:

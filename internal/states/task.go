@@ -65,7 +65,10 @@ func NewDefaultTaskHandler() *DefaultTaskHandler {
 }
 
 // Execute tries to delegate to handler from execution context
-// Execute tries to delegate to handler from execution context
+// Execute delegates to the handler registered in the execution context.
+// NOTE: The 'input' parameter has ALREADY been fully expanded by TaskState.prepareInput.
+// We must NOT expand 'parameters' again, as it causes double-evaluation of JSONPath
+// (e.g., nested lookups like "$.order.id" will fail on the second pass).
 func (h *DefaultTaskHandler) Execute(ctx context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
 	// 1. Fail fast if ExecutionContext is missing from context
 	execCtx, ok := ctx.Value(types.ExecutionContextKey).(types.ExecutionContext)
@@ -79,21 +82,9 @@ func (h *DefaultTaskHandler) Execute(ctx context.Context, resource string, input
 		return nil, fmt.Errorf("task execution failed: no TaskHandler registered for resource '%s' in ExecutionContext", resource)
 	}
 
-	// 3. Apply parameters if provided
-	taskInput := input
-	if parameters != nil {
-		processor := NewJSONPathProcessor()
-		expandedInput, err := processor.expandValue(parameters, map[string]interface{}{
-			"$": input,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to expand parameters: %w", err)
-		}
-		taskInput = expandedInput
-	}
-
-	// 4. Execute the registered handler
-	return handler(ctx, taskInput)
+	// 3. Pass the pre-expanded 'input' directly to the registered handler.
+	// Do not re-evaluate 'parameters'.
+	return handler(ctx, input)
 }
 
 // ExecuteWithTimeout executes the task with a specific timeout context
