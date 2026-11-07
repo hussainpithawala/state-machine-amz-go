@@ -189,7 +189,7 @@ func (sm *StateMachine) RunExecution(ctx context.Context, execCtx *execution.Exe
 		execCtx.CurrentState = currentStateName
 
 		// Execute the state
-		output, nextState, err := sm.executeStateWithRecovery(ctx, state, execCtx.Input, currentStateName)
+		output, nextState, err := sm.executeStateWithRecovery(ctx, state, currentInput, currentStateName)
 
 		// Handle state execution result
 		if err != nil {
