@@ -6,10 +6,15 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 )
 
+// ValidateOptions controls optional validation behavior
+type ValidateOptions struct {
+	AllowMessageStates bool
+}
+
 // Validator validates state machine definitions
 type Validator interface {
 	// Validate validates a state machine
-	Validate(startAt string, statesMap map[string]states.State, timeoutSeconds *int) error
+	Validate(startAt string, statesMap map[string]states.State, timeoutSeconds *int, opts *ValidateOptions) error
 }
 
 // StateMachineValidator validates state machines
@@ -21,38 +26,54 @@ func NewStateMachineValidator() *StateMachineValidator {
 }
 
 // Validate validates a state machine
-func (v *StateMachineValidator) Validate(startAt string, statesMap map[string]states.State, timeoutSeconds *int) error {
-	// Validate required fields
+func (v *StateMachineValidator) Validate(startAt string, statesMap map[string]states.State, timeoutSeconds *int, opts *ValidateOptions) error {
 	if startAt == "" {
 		return fmt.Errorf("StartAt is required")
 	}
-
 	if len(statesMap) == 0 {
 		return fmt.Errorf("states cannot be empty")
 	}
-
-	// Validate StartAt exists
 	if _, exists := statesMap[startAt]; !exists {
 		return fmt.Errorf("StartAt state '%s' not found in States", startAt)
 	}
 
-	// Validate each state
+	if err := v.validateStateTypes(statesMap, opts); err != nil {
+		return err
+	}
+	if err := v.validateStates(statesMap); err != nil {
+		return err
+	}
+	if err := v.validateGraph(startAt, statesMap); err != nil {
+		return err
+	}
+	return v.validateTimeout(timeoutSeconds)
+}
+
+// validateStateTypes enforces restrictions on which state types are allowed.
+func (v *StateMachineValidator) validateStateTypes(statesMap map[string]states.State, opts *ValidateOptions) error {
+	if opts != nil && opts.AllowMessageStates {
+		return nil
+	}
 	for name, state := range statesMap {
-		// Validate state configuration
+		if state.GetType() == "Message" {
+			return fmt.Errorf("state '%s': Message state is only allowed in persistent state machine definitions", name)
+		}
+	}
+	return nil
+}
+
+// validateStates validates each state's configuration and next-state references.
+func (v *StateMachineValidator) validateStates(statesMap map[string]states.State) error {
+	for name, state := range statesMap {
 		if err := state.Validate(); err != nil {
 			return fmt.Errorf("state '%s': %w", name, err)
 		}
-
-		// Validate Next references
 		if next := state.GetNext(); next != nil {
 			if _, exists := statesMap[*next]; !exists {
 				return fmt.Errorf("state '%s' references non-existent next state '%s'", name, *next)
 			}
 		}
-
-		// Validate state-specific next states
-		nextStateNames := v.getNextStateNames(state)
-		for _, nextStateName := range nextStateNames {
+		for _, nextStateName := range v.getNextStateNames(state) {
 			if nextStateName != "" {
 				if _, exists := statesMap[nextStateName]; !exists {
 					return fmt.Errorf("state '%s' references non-existent next state '%s'", name, nextStateName)
@@ -60,22 +81,20 @@ func (v *StateMachineValidator) Validate(startAt string, statesMap map[string]st
 			}
 		}
 	}
+	return nil
+}
 
-	// Validate graph connectivity and no cycles
-	if err := v.validateGraph(startAt, statesMap); err != nil {
-		return err
+// validateTimeout validates the TimeoutSeconds field.
+func (v *StateMachineValidator) validateTimeout(timeoutSeconds *int) error {
+	if timeoutSeconds == nil {
+		return nil
 	}
-
-	// Validate timeout
-	if timeoutSeconds != nil {
-		if *timeoutSeconds <= 0 {
-			return fmt.Errorf("TimeoutSeconds must be positive")
-		}
-		if *timeoutSeconds > 86400 { // 24 hours
-			return fmt.Errorf("TimeoutSeconds cannot exceed 86400")
-		}
+	if *timeoutSeconds <= 0 {
+		return fmt.Errorf("TimeoutSeconds must be positive")
 	}
-
+	if *timeoutSeconds > 86400 {
+		return fmt.Errorf("TimeoutSeconds cannot exceed 86400")
+	}
 	return nil
 }
 

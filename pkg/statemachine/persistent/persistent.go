@@ -42,7 +42,7 @@ type Option func(*StateMachine)
 
 // New creates a new state machine with options
 func New(definition []byte, isJson bool, stateMachineId string, manager *repository.Manager) (*StateMachine, error) {
-	sm, err := statemachine2.New(definition, isJson)
+	sm, err := statemachine2.New(definition, isJson, statemachine2.WithAllowMessageStates())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create state machine: %w", err)
 	}
