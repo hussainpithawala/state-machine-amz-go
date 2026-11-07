@@ -2351,3 +2351,15 @@ func (ps *PostgresRepository) FindOrphanedExecutions(ctx context.Context, stateM
 }
 
 // The rest of the builder methods as defined above...
+
+func (ps *PostgresRepository) SaveParallelExecution(_ context.Context, _ *ParallelExecutionRecord) error {
+	return fmt.Errorf("parallel execution not yet implemented for raw postgres repository")
+}
+
+func (ps *PostgresRepository) GetParallelExecutions(_ context.Context, _ string) ([]*ParallelExecutionRecord, error) {
+	return nil, fmt.Errorf("parallel execution not yet implemented for raw postgres repository")
+}
+
+func (ps *PostgresRepository) UpdateParallelBranchStatus(_ context.Context, _ string, _ int, _ string, _ interface{}) error {
+	return fmt.Errorf("parallel execution not yet implemented for raw postgres repository")
+}

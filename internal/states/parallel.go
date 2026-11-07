@@ -6,7 +6,40 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
+
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
+
+// BranchExecution holds the result of executing a single parallel branch,
+// including state history for observability. Defined here to avoid importing
+// pkg/execution (which would cause an import cycle with test files).
+type BranchExecution struct {
+	Name         string
+	Status       string
+	Output       interface{}
+	Error        error
+	CurrentState string
+	History      []BranchStateHistory
+}
+
+// BranchStateHistory records a single state execution within a branch.
+type BranchStateHistory struct {
+	StateName string
+	Input     interface{}
+	Output    interface{}
+	Status    string
+}
+
+// ParallelExecutionResult is returned by ParallelState.executePersistent() to
+// signal the persistent RunExecution loop to pause and wait for branch
+// completion. Analogous to MessageStateResult for Message states.
+type ParallelExecutionResult struct {
+	Status        string
+	ParallelID    string
+	BranchCount   int
+	BranchExecIDs []string
+}
 
 // Branch represents a single branch in a Parallel state
 type Branch struct {
@@ -22,6 +55,14 @@ type ParallelState struct {
 	Branches []Branch `json:"Branches"`
 	// ResultSelector is used to specify how to select results from branches
 	ResultSelector map[string]interface{} `json:"ResultSelector,omitempty"`
+	// FailurePolicy controls behavior when a branch fails in persistent mode.
+	// "WAIT_FOR_ALL" (default): all branches complete before parent is resumed.
+	// "FAIL_FAST": parent is resumed with failure as soon as any branch fails.
+	FailurePolicy string `json:"FailurePolicy,omitempty"`
+
+	// lastBranchExecutions stores branch execution contexts from the most recent
+	// express execution, allowing the parent to retrieve branch histories.
+	lastBranchExecutions []*BranchExecution `json:"-"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for ParallelState
@@ -252,18 +293,28 @@ func (p *ParallelState) Validate() error {
 	return nil
 }
 
-// Execute executes the Parallel state
+// Execute executes the Parallel state.
+// When ParallelModeKey is present in the context (persistent mode), it delegates
+// to executePersistent which dispatches branches via the queue system.
+// Otherwise, it uses the express (in-process) path with goroutines.
 func (p *ParallelState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
-	// Apply input path
+	if mode, ok := ctx.Value(types.ParallelModeKey).(*types.ParallelMode); ok && mode.IsPersistent {
+		return p.executePersistent(ctx, mode, input)
+	}
+	return p.executeExpress(ctx, input)
+}
+
+// executeExpress runs all branches concurrently as goroutines, each with its
+// own execution.Execution context for history tracking.
+func (p *ParallelState) executeExpress(ctx context.Context, input interface{}) (interface{}, *string, error) {
 	processor := NewJSONPathProcessor()
 	processedInput, err := processor.ApplyInputPath(input, p.InputPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to apply input path: %w", err)
 	}
 
-	// Execute all branches concurrently
-	results := make([]interface{}, len(p.Branches))
-	errors := make([]error, len(p.Branches))
+	branchExecs := make([]*BranchExecution, len(p.Branches))
+	branchErrors := make([]error, len(p.Branches))
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
@@ -272,30 +323,142 @@ func (p *ParallelState) Execute(ctx context.Context, input interface{}) (result 
 		go func(index int, b Branch) {
 			defer wg.Done()
 
-			// Execute the branch
-			branchResult, err := p.executeBranch(ctx, b, processedInput)
+			exec, execErr := p.executeBranchWithContext(ctx, b, processedInput, index)
 
 			mu.Lock()
-			results[index] = branchResult
-			errors[index] = err
+			branchExecs[index] = exec
+			branchErrors[index] = execErr
 			mu.Unlock()
 		}(i, branch)
 	}
 
-	// Wait for all branches to complete
 	wg.Wait()
 
 	// Check for errors in any branch
-	for _, err := range errors {
-		if err != nil {
-			return nil, nil, err
+	for _, branchErr := range branchErrors {
+		if branchErr != nil {
+			p.lastBranchExecutions = branchExecs
+			return nil, nil, branchErr
 		}
 	}
 
-	// Combine results into an array
-	var output interface{} = results
+	// Collect outputs
+	results := make([]interface{}, len(branchExecs))
+	for i, exec := range branchExecs {
+		if exec != nil {
+			results[i] = exec.Output
+		}
+	}
 
-	// If ResultSelector is provided, apply it
+	// Store branch executions for the parent to retrieve
+	p.lastBranchExecutions = branchExecs
+
+	return p.applyOutputProcessing(processor, processedInput, results)
+}
+
+// executePersistent dispatches branches via the queue system for distributed
+// execution. Returns a *ParallelExecutionResult with Status "WAITING" to
+// signal the persistent RunExecution loop to pause.
+func (p *ParallelState) executePersistent(ctx context.Context, mode *types.ParallelMode, input interface{}) (interface{}, *string, error) {
+	if mode.Dispatcher == nil {
+		return nil, nil, fmt.Errorf("persistent parallel execution requires a ParallelDispatcher")
+	}
+
+	processor := NewJSONPathProcessor()
+	processedInput, err := processor.ApplyInputPath(input, p.InputPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to apply input path: %w", err)
+	}
+
+	failurePolicy := p.FailurePolicy
+	if failurePolicy == "" {
+		failurePolicy = "WAIT_FOR_ALL"
+	}
+
+	parallelID := fmt.Sprintf("parallel-%s-%s-%d", mode.ParentExecID, p.Name, time.Now().UnixNano())
+
+	branchExecIDs, err := mode.Dispatcher.DispatchBranches(
+		ctx,
+		parallelID,
+		mode.ParentExecID,
+		mode.ParentSMID,
+		p.Name,
+		p.Branches,
+		processedInput,
+		failurePolicy,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to dispatch parallel branches: %w", err)
+	}
+
+	return &ParallelExecutionResult{
+		Status:        "WAITING",
+		ParallelID:    parallelID,
+		BranchCount:   len(p.Branches),
+		BranchExecIDs: branchExecIDs,
+	}, nil, nil
+}
+
+func (p *ParallelState) executeBranchWithContext(ctx context.Context, branch Branch, input interface{}, branchIndex int) (*BranchExecution, error) {
+	branchExec := &BranchExecution{
+		Name:   fmt.Sprintf("%s-branch-%d", p.Name, branchIndex),
+		Status: "RUNNING",
+	}
+
+	currentStateName := branch.StartAt
+	currentInput := input
+
+	for {
+		select {
+		case <-ctx.Done():
+			branchExec.Status = "FAILED"
+			branchExec.Error = ctx.Err()
+			return branchExec, ctx.Err()
+		default:
+		}
+
+		state, exists := branch.States[currentStateName]
+		if !exists {
+			err := fmt.Errorf("state '%s' not found in branch", currentStateName)
+			branchExec.Status = "FAILED"
+			branchExec.Error = err
+			return branchExec, err
+		}
+
+		branchExec.CurrentState = currentStateName
+
+		output, nextState, err := state.Execute(ctx, currentInput)
+
+		if err != nil {
+			branchExec.History = append(branchExec.History, BranchStateHistory{
+				StateName: currentStateName, Input: currentInput, Output: output, Status: "FAILED",
+			})
+			branchExec.Status = "FAILED"
+			branchExec.Error = err
+			return branchExec, err
+		}
+
+		branchExec.History = append(branchExec.History, BranchStateHistory{
+			StateName: currentStateName, Input: currentInput, Output: output, Status: "SUCCEEDED",
+		})
+
+		if state.IsEnd() || nextState == nil {
+			branchExec.Status = "SUCCEEDED"
+			branchExec.Output = output
+			return branchExec, nil
+		}
+
+		currentStateName = *nextState
+		currentInput = output
+	}
+}
+
+// applyOutputProcessing applies ResultSelector, ResultPath, and OutputPath
+// to the collected branch results.
+func (p *ParallelState) applyOutputProcessing(processor *JSONPathProcessor, processedInput interface{}, results []interface{}) (interface{}, *string, error) {
+	var output interface{} = results
+	var err error
+
 	if p.ResultSelector != nil {
 		output, err = processor.expandValue(p.ResultSelector, map[string]interface{}{
 			"$": results,
@@ -305,13 +468,11 @@ func (p *ParallelState) Execute(ctx context.Context, input interface{}) (result 
 		}
 	}
 
-	// Apply result path
 	output, err = processor.ApplyResultPath(processedInput, output, p.ResultPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to apply result path: %w", err)
 	}
 
-	// Apply output path
 	output, err = processor.ApplyOutputPath(output, p.OutputPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to apply output path: %w", err)
@@ -320,41 +481,10 @@ func (p *ParallelState) Execute(ctx context.Context, input interface{}) (result 
 	return output, p.GetNext(), nil
 }
 
-// executeBranch executes a single branch
-func (p *ParallelState) executeBranch(ctx context.Context, branch Branch, input interface{}) (interface{}, error) {
-	currentStateName := branch.StartAt
-	currentInput := input
-
-	for {
-		// Check if context is done
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		// Get current state from branch
-		state, exists := branch.States[currentStateName]
-		if !exists {
-			return nil, fmt.Errorf("state '%s' not found in branch", currentStateName)
-		}
-
-		// Execute the state
-		output, nextState, err := state.Execute(ctx, currentInput)
-		if err != nil {
-			return nil, err
-		}
-
-		// Check if this is an end state
-		if state.IsEnd() || nextState == nil {
-			// Branch execution completed
-			return output, nil
-		}
-
-		// Move to next state
-		currentStateName = *nextState
-		currentInput = output
-	}
+// GetLastBranchExecutions returns the branch execution contexts from the
+// most recent express execution. Returns nil if no execution has occurred.
+func (p *ParallelState) GetLastBranchExecutions() []*BranchExecution {
+	return p.lastBranchExecutions
 }
 
 // MarshalJSON implements custom JSON marshaling
