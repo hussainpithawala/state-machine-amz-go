@@ -1168,52 +1168,17 @@ func (r *GormPostgresRepository) ListLinkedExecutions(ctx context.Context, filte
 
 	query := r.db.WithContext(ctx).Table("linked_executions")
 
-	// Join with executions table if we need to filter by source execution status
 	if filter != nil && filter.SourceExecutionStatus != "" {
 		query = query.Joins("INNER JOIN executions ON linked_executions.source_execution_id = executions.execution_id").
 			Where("executions.status = ?", filter.SourceExecutionStatus)
 	}
 
-	// Apply filters
 	if filter != nil {
-		if filter.SourceStateMachineID != "" {
-			query = query.Where("linked_executions.source_state_machine_id = ?", filter.SourceStateMachineID)
-		}
-		if filter.SourceExecutionID != "" {
-			query = query.Where("linked_executions.source_execution_id = ?", filter.SourceExecutionID)
-		}
-		if filter.SourceStateName != "" {
-			query = query.Where("linked_executions.source_state_name = ?", filter.SourceStateName)
-		}
-		if filter.InputTransformerName != "" {
-			query = query.Where("linked_executions.input_transformer_name = ?", filter.InputTransformerName)
-		}
-		if filter.TargetStateMachineName != "" {
-			query = query.Where("linked_executions.target_state_machine_name = ?", filter.TargetStateMachineName)
-		}
-		if filter.TargetExecutionID != "" {
-			query = query.Where("linked_executions.target_execution_id = ?", filter.TargetExecutionID)
-		}
-		if !filter.CreatedAfter.IsZero() {
-			query = query.Where("linked_executions.created_at >= ?", filter.CreatedAfter)
-		}
-		if !filter.CreatedBefore.IsZero() {
-			query = query.Where("linked_executions.created_at <= ?", filter.CreatedBefore)
-		}
-
-		// Apply pagination
-		if filter.Limit > 0 {
-			query = query.Limit(filter.Limit)
-		}
-		if filter.Offset > 0 {
-			query = query.Offset(filter.Offset)
-		}
+		query = r.applyLinkedExecutionFilters(query, filter)
 	}
 
-	// Select linked_executions columns explicitly
 	query = query.Select("linked_executions.*")
 
-	// Order by created_at descending
 	result := query.Order("linked_executions.created_at DESC").Find(&models)
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to list linked executions: %w", result.Error)
@@ -1225,6 +1190,40 @@ func (r *GormPostgresRepository) ListLinkedExecutions(ctx context.Context, filte
 	}
 
 	return records, nil
+}
+
+func (r *GormPostgresRepository) applyLinkedExecutionFilters(query *gorm.DB, filter *LinkedExecutionFilter) *gorm.DB {
+	if filter.SourceStateMachineID != "" {
+		query = query.Where("linked_executions.source_state_machine_id = ?", filter.SourceStateMachineID)
+	}
+	if filter.SourceExecutionID != "" {
+		query = query.Where("linked_executions.source_execution_id = ?", filter.SourceExecutionID)
+	}
+	if filter.SourceStateName != "" {
+		query = query.Where("linked_executions.source_state_name = ?", filter.SourceStateName)
+	}
+	if filter.InputTransformerName != "" {
+		query = query.Where("linked_executions.input_transformer_name = ?", filter.InputTransformerName)
+	}
+	if filter.TargetStateMachineName != "" {
+		query = query.Where("linked_executions.target_state_machine_name = ?", filter.TargetStateMachineName)
+	}
+	if filter.TargetExecutionID != "" {
+		query = query.Where("linked_executions.target_execution_id = ?", filter.TargetExecutionID)
+	}
+	if !filter.CreatedAfter.IsZero() {
+		query = query.Where("linked_executions.created_at >= ?", filter.CreatedAfter)
+	}
+	if !filter.CreatedBefore.IsZero() {
+		query = query.Where("linked_executions.created_at <= ?", filter.CreatedBefore)
+	}
+	if filter.Limit > 0 {
+		query = query.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		query = query.Offset(filter.Offset)
+	}
+	return query
 }
 
 // CountLinkedExecutions returns the count of linked executions matching the filter
@@ -1288,67 +1287,16 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 
 	var models []ExecutionModel
 
-	// Wrap with timeout handling for large tables (2M+ rows)
 	err := r.withQueryTimeout(func(tx *gorm.DB) error {
 		query := tx.WithContext(ctx).
 			Table("executions").
 			Select(execColumns)
 
-		// Use NOT IN with a pre-filtered subquery instead of correlated NOT EXISTS.
-		// For large tables (2M+ rows), correlated NOT EXISTS evaluates per-row and can
-		// time out or return empty results. NOT IN lets PostgreSQL materialize the
-		// linked execution IDs once, then do a fast hash/merge anti-join.
 		if linkedExecutionFilter != nil {
-			subQuery := tx.Table("linked_executions").
-				Select("DISTINCT source_execution_id").
-				Where("source_execution_id IS NOT NULL")
-
-			if linkedExecutionFilter.SourceStateMachineID != "" {
-				subQuery = subQuery.Where("source_state_machine_id = ?", linkedExecutionFilter.SourceStateMachineID)
-			}
-			if linkedExecutionFilter.SourceStateName != "" {
-				subQuery = subQuery.Where("source_state_name = ?", linkedExecutionFilter.SourceStateName)
-			}
-			if linkedExecutionFilter.InputTransformerName != "" {
-				subQuery = subQuery.Where("input_transformer_name = ?", linkedExecutionFilter.InputTransformerName)
-			}
-			if linkedExecutionFilter.TargetStateMachineName != "" {
-				subQuery = subQuery.Where("target_state_machine_name = ?", linkedExecutionFilter.TargetStateMachineName)
-			}
-			if linkedExecutionFilter.TargetExecutionID != "" {
-				subQuery = subQuery.Where("target_execution_id = ?", linkedExecutionFilter.TargetExecutionID)
-			}
-			query = query.Where("executions.execution_id NOT IN (?)", subQuery)
+			query = r.applyLinkedExecutionExclusion(tx, query, linkedExecutionFilter)
 		}
 
-		// Apply general execution filters
-		if executionFilter.StateMachineID != "" {
-			query = query.Where("executions.state_machine_id = ?", executionFilter.StateMachineID)
-		}
-		if executionFilter.Status != "" {
-			query = query.Where("executions.status = ?", executionFilter.Status)
-		}
-		if executionFilter.CurrentState != "" {
-			query = query.Where("executions.current_state = ?", executionFilter.CurrentState)
-		}
-		if executionFilter.Name != "" {
-			query = query.Where("executions.name ILIKE ?", "%"+executionFilter.Name+"%")
-		}
-		if !executionFilter.StartAfter.IsZero() {
-			query = query.Where("executions.start_time >= ?", executionFilter.StartAfter)
-		}
-		if !executionFilter.StartBefore.IsZero() {
-			query = query.Where("executions.start_time <= ?", executionFilter.StartBefore)
-		}
-
-		// Apply pagination
-		if executionFilter.Limit > 0 {
-			query = query.Limit(executionFilter.Limit)
-		}
-		if executionFilter.Offset > 0 {
-			query = query.Offset(executionFilter.Offset)
-		}
-
+		query = r.applyExecutionFilters(query, executionFilter)
 		query = query.Order("executions.start_time DESC")
 
 		return query.Find(&models).Error
@@ -1365,6 +1313,57 @@ func (r *GormPostgresRepository) ListNonLinkedExecutions(ctx context.Context, ex
 	}
 
 	return executions, nil
+}
+
+func (r *GormPostgresRepository) applyLinkedExecutionExclusion(tx, query *gorm.DB, filter *LinkedExecutionFilter) *gorm.DB {
+	subQuery := tx.Table("linked_executions").
+		Select("DISTINCT source_execution_id").
+		Where("source_execution_id IS NOT NULL")
+
+	if filter.SourceStateMachineID != "" {
+		subQuery = subQuery.Where("source_state_machine_id = ?", filter.SourceStateMachineID)
+	}
+	if filter.SourceStateName != "" {
+		subQuery = subQuery.Where("source_state_name = ?", filter.SourceStateName)
+	}
+	if filter.InputTransformerName != "" {
+		subQuery = subQuery.Where("input_transformer_name = ?", filter.InputTransformerName)
+	}
+	if filter.TargetStateMachineName != "" {
+		subQuery = subQuery.Where("target_state_machine_name = ?", filter.TargetStateMachineName)
+	}
+	if filter.TargetExecutionID != "" {
+		subQuery = subQuery.Where("target_execution_id = ?", filter.TargetExecutionID)
+	}
+	return query.Where("executions.execution_id NOT IN (?)", subQuery)
+}
+
+func (r *GormPostgresRepository) applyExecutionFilters(query *gorm.DB, filter *ExecutionFilter) *gorm.DB {
+	if filter.StateMachineID != "" {
+		query = query.Where("executions.state_machine_id = ?", filter.StateMachineID)
+	}
+	if filter.Status != "" {
+		query = query.Where("executions.status = ?", filter.Status)
+	}
+	if filter.CurrentState != "" {
+		query = query.Where("executions.current_state = ?", filter.CurrentState)
+	}
+	if filter.Name != "" {
+		query = query.Where("executions.name ILIKE ?", "%"+filter.Name+"%")
+	}
+	if !filter.StartAfter.IsZero() {
+		query = query.Where("executions.start_time >= ?", filter.StartAfter)
+	}
+	if !filter.StartBefore.IsZero() {
+		query = query.Where("executions.start_time <= ?", filter.StartBefore)
+	}
+	if filter.Limit > 0 {
+		query = query.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		query = query.Offset(filter.Offset)
+	}
+	return query
 }
 
 // ListNonLinkedExecutionsAnyState is a legacy alias for ListNonLinkedExecutions.

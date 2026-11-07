@@ -264,7 +264,7 @@ func (t *TaskState) getTaskHandler() TaskHandler {
 
 // executeWithRetry handles task execution with retry logic, strictly scoping
 // retries to the specific policy that matches the error (ASL Compliant).
-func (t *TaskState) executeWithRetry(ctx context.Context, handler TaskHandler, taskInput interface{}) (interface{}, bool, error) {
+func (t *TaskState) executeWithRetry(ctx context.Context, handler TaskHandler, taskInput interface{}) (result interface{}, ok bool, err error) {
 	for attempt := 0; ; attempt++ {
 		result, taskErr := handler.ExecuteWithTimeout(ctx, t.Resource, taskInput, t.Parameters, t.TimeoutSeconds)
 
@@ -349,7 +349,7 @@ func (t *TaskState) waitForRetry(ctx context.Context, backoffDuration time.Durat
 
 // --- Result Handling ---
 
-func (t *TaskState) handleTaskResult(ctx context.Context, processor *JSONPathProcessor, processedInput interface{}, result interface{}, taskErr error) (output interface{}, nextState *string, err error) {
+func (t *TaskState) handleTaskResult(ctx context.Context, processor *JSONPathProcessor, processedInput, result interface{}, taskErr error) (output interface{}, nextState *string, err error) {
 	if taskErr != nil {
 		return t.handleTaskFailure(ctx, processor, processedInput, taskErr)
 	}
@@ -378,9 +378,8 @@ func (t *TaskState) handleCaughtError(processor *JSONPathProcessor, processedInp
 	return output, StringPtr(catchPolicy.Next), nil
 }
 
-func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor, processedInput interface{}, result interface{}) (op2 interface{}, op3 *string, op4 error) {
-	output := result
-	var err error
+func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor, processedInput, result interface{}) (output interface{}, next *string, err error) {
+	output = result
 
 	if t.ResultSelector != nil {
 		output, err = processor.expandValue(t.ResultSelector, map[string]interface{}{

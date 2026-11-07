@@ -638,7 +638,7 @@ func (o *Orchestrator) checkIdempotency(
 	batchID string,
 	mbIndex int,
 	prefix string,
-) (dispatchedKey string, alreadyDispatched bool, error error) {
+) (dispatchedKey string, alreadyDispatched bool, err error) {
 	dispatchedKey = fmt.Sprintf("batch:dispatched:%s:mb%d", batchID, mbIndex)
 	dispatched, err := o.rdb.Get(ctx, dispatchedKey).Result()
 	if err == nil && dispatched == "1" {

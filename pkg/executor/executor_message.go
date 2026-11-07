@@ -260,7 +260,7 @@ func (a *repositoryStateMachineAdapter) GetID() string {
 	return a.id
 }
 
-func (a *repositoryStateMachineAdapter) MergeInputs(processor *states.JSONPathProcessor, processedInput interface{}, result interface{}) (interface{}, error) {
+func (a *repositoryStateMachineAdapter) MergeInputs(processor *states.JSONPathProcessor, processedInput, result interface{}) (interface{}, error) {
 	output := result
 	if processedInput == nil {
 		return output, nil

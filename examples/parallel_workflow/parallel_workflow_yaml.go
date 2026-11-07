@@ -10,6 +10,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/executor"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
 // TaskRegistry that implements states.ExecutionContext interface
@@ -247,6 +248,25 @@ func main() {
 	testChoiceWorkflow()
 }
 
+func registerGoFunctionsForContext(baseExecutor *executor.BaseExecutor) {
+	baseExecutor.RegisterGoFunction("arn:aws:lambda:::validate:order", func(_ context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  📋 Validating order...")
+		time.Sleep(100 * time.Millisecond)
+
+		order, ok := input.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid order format")
+		}
+
+		order["validated"] = true
+		order["validationTimestamp"] = time.Now().Format(time.RFC3339)
+		order["validationId"] = fmt.Sprintf("VAL-%d", time.Now().UnixNano())
+
+		fmt.Printf("  ✅ Order validated: %s\n", order["validationId"])
+		return order, nil
+	})
+}
+
 func registerTaskHandlers(exec *MockExecutor) {
 	fmt.Println("Registering task handlers...")
 
@@ -438,6 +458,30 @@ func testSimpleWorkflow() {
 
 	// Execute
 	ctx := context.Background()
+
+	// create the baseExecutor
+	baseExecutor := executor.NewBaseExecutor()
+
+	baseExecutor.RegisterGoFunction("arn:aws:lambda:::validate:order", func(_ context.Context, input interface{}) (interface{}, error) {
+		fmt.Println("  📋 Validating order...")
+		time.Sleep(100 * time.Millisecond)
+
+		order, ok := input.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid order format")
+		}
+
+		order["validated"] = true
+		order["validationTimestamp"] = time.Now().Format(time.RFC3339)
+		order["validationId"] = fmt.Sprintf("VAL-%d", time.Now().UnixNano())
+
+		fmt.Printf("  ✅ Order validated: %s\n", order["validationId"])
+		return order, nil
+	})
+
+	// add the baseExecutor using the NewExecutionContextAdapter
+	ctx = context.WithValue(ctx, types.ExecutionContextKey, executor.NewExecutionContextAdapter(baseExecutor))
+
 	fmt.Println("Starting simple workflow execution...")
 	startTime := time.Now()
 

@@ -115,10 +115,9 @@ func (h *ExecutionHandler) handleRegularExecution(ctx context.Context, sm *persi
 	if payload.SourceExecutionID != "" {
 		execOpts = append(execOpts,
 			statemachine2.WithSourceExecution(payload.SourceExecutionID, payload.SourceStateName),
+			statemachine2.WithUniqueness(payload.ApplyUnique),
+			statemachine2.WithInputTransformerName(payload.InputTransformerName),
 		)
-		execOpts = append(execOpts,
-			statemachine2.WithUniqueness(payload.ApplyUnique))
-		execOpts = append(execOpts, statemachine2.WithInputTransformerName(payload.InputTransformerName))
 	}
 
 	// Execute the state machine
@@ -151,13 +150,7 @@ func (h *ExecutionHandler) processBatchBarrier(ctx context.Context, payload *que
 			Success:      err == nil,
 			CompletedAt:  time.Now(),
 		}
-		// TODO: Implement orchestratorRegistry to signal micro-batch completion
-		// This requires an orchestrator registry to be injected into the handler
-		_ = outcome // Suppress unused variable warning
 		log.Printf("info: micro-batch task completed for %s", meta.MicroBatchID)
-		// if hookErr := orchestratorRegistry.Get(meta.OrchestratorSMID).SignalMicroBatchComplete(ctx, meta, outcome); hookErr != nil {
-		// 	log.Printf("warn: micro-batch hook %s: %v", meta.MicroBatchID, hookErr)
-		// }
 
 		if err != nil {
 			log.Printf("error: micro-batch task failed for %s: %v", meta.MicroBatchID, err)
@@ -361,10 +354,9 @@ func (h *ExecutionHandler) processBatchTask(ctx context.Context, payload *queue.
 	if payload.SourceExecutionID != "" {
 		execOpts = append(execOpts,
 			statemachine2.WithSourceExecution(payload.SourceExecutionID, payload.SourceStateName),
+			statemachine2.WithUniqueness(payload.ApplyUnique),
+			statemachine2.WithInputTransformerName(payload.InputTransformerName),
 		)
-		execOpts = append(execOpts,
-			statemachine2.WithUniqueness(payload.ApplyUnique))
-		execOpts = append(execOpts, statemachine2.WithInputTransformerName(payload.InputTransformerName))
 	}
 
 	// Prepare input
