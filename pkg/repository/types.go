@@ -68,6 +68,12 @@ type ExecutionFilter struct {
 	StartBefore    time.Time // Filter executions started before this time
 	Limit          int       // Maximum number of results
 	Offset         int       // Offset for pagination
+
+	ExecutionID string // Exact match on execution_id
+	StateName   string // EXISTS subquery: state_history.state_name = ?
+	StateStatus string // EXISTS subquery: state_history.status = ? (AND with StateName if both set)
+	SortBy      string // "startTime" (default), "endTime", "status"
+	Order       string // "asc", "desc" (default "desc")
 }
 
 // BatchExecutionFilter extends ExecutionFilter for batch chained executions
@@ -89,6 +95,9 @@ type LinkedExecutionFilter struct {
 	CreatedBefore          time.Time // Filter linked executions created before this time
 	Limit                  int       // Maximum number of results
 	Offset                 int       // Offset for pagination
+
+	SortBy string // "createdAt" (default), "sourceStateMachineId", "targetStateMachineName"
+	Order  string // "asc", "desc" (default "desc")
 }
 
 // Statistics represents aggregated execution statistics
@@ -110,6 +119,46 @@ type StatusStatistics struct {
 	P99Duration        float64 // 99th percentile
 	FirstExecution     time.Time
 	LastExecution      time.Time
+}
+
+// DashboardStats holds aggregated dashboard statistics.
+type DashboardStats struct {
+	StatusCounts       []StatusCount       `json:"status_counts"`
+	DurationStats      *DurationStats      `json:"duration_stats,omitempty"`
+	TotalExecutions    int64               `json:"total_executions"`
+	TotalStateMachines int64               `json:"total_state_machines"`
+	RecentFailures     []*DashboardFailure `json:"recent_failures"`
+	Timestamp          time.Time           `json:"timestamp"`
+}
+
+// StatusCount represents a status and its count.
+type StatusCount struct {
+	Status string `json:"status"`
+	Count  int64  `json:"count"`
+}
+
+// DurationStats holds duration statistics over SUCCEEDED executions.
+type DurationStats struct {
+	AvgDuration *float64 `json:"avg_duration,omitempty"`
+	MaxDuration *float64 `json:"max_duration,omitempty"`
+	MinDuration *float64 `json:"min_duration,omitempty"`
+}
+
+// DashboardFailure represents a recent failed execution for dashboard display.
+type DashboardFailure struct {
+	ExecutionID    string     `json:"execution_id"`
+	StateMachineID string     `json:"state_machine_id"`
+	Name           string     `json:"name"`
+	Status         string     `json:"status"`
+	StartTime      *time.Time `json:"start_time,omitempty"`
+	CurrentState   string     `json:"current_state"`
+	Error          string     `json:"error,omitempty"`
+}
+
+// StateStatusPair is a distinct (state_name, status) combination observed in state_history.
+type StateStatusPair struct {
+	StateName string `json:"state_name"`
+	Status    string `json:"status"`
 }
 
 // Repository defines the interface for execution persistence
@@ -180,6 +229,21 @@ type Repository interface {
 
 	// FindOrphanedExecutions finds executions that have been RUNNING longer than the specified threshold
 	FindOrphanedExecutions(ctx context.Context, stateMachineID string, threshold time.Duration) ([]*ExecutionRecord, error)
+
+	// ListStateHistory retrieves paginated state history with cursor support.
+	ListStateHistory(ctx context.Context, executionID string, afterSequenceNumber *int, limit int, order string) ([]*StateHistoryRecord, int64, error)
+
+	// GetDashboardStats returns aggregated dashboard statistics.
+	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
+
+	// GetDistinctStateStatuses returns distinct state/status pairs observed in state_history.
+	GetDistinctStateStatuses(ctx context.Context, stateMachineID string, executionLimit int) ([]*StateStatusPair, error)
+
+	// DeleteLinkedExecutions deletes linked executions by IDs or by filter.
+	DeleteLinkedExecutions(ctx context.Context, ids []string, filter *LinkedExecutionFilter) (int64, []string, error)
+
+	// GetExecutionStartTime returns the earliest state-history execution_start_time.
+	GetExecutionStartTime(ctx context.Context, executionID string) (*time.Time, error)
 }
 
 // ExtendedRepository defines additional repository capabilities

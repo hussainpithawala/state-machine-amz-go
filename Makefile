@@ -128,12 +128,12 @@ test-examples: docker-up ## Run example programs
 install-lint: ## Install golangci-lint if not present
 ifndef LINT_BIN
 	@echo "golangci-lint not found. Installing..."
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
 else
 	@echo "golangci-lint is already installed."
 	@if ! golangci-lint version --short | grep -q "2"; then \
 		echo "${YELLOW}Installed golangci-lint is v1, but v2 is required. Reinstalling...${RESET}"; \
-		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0; \
 	fi
 endif
 

@@ -37,6 +37,49 @@ func TestNewPersistenceManager_NotImplementedStrategies(t *testing.T) {
 	}
 }
 
+func TestDeleteLinkedExecutions_SafetyCheck(t *testing.T) {
+	tests := []struct {
+		name    string
+		ids     []string
+		filter  *LinkedExecutionFilter
+		wantErr string
+	}{
+		{
+			name:    "nil ids and nil filter",
+			ids:     nil,
+			filter:  nil,
+			wantErr: "refusing wide delete",
+		},
+		{
+			name:    "empty ids and nil filter",
+			ids:     []string{},
+			filter:  nil,
+			wantErr: "refusing wide delete",
+		},
+		{
+			name:    "nil ids and empty filter",
+			ids:     nil,
+			filter:  &LinkedExecutionFilter{},
+			wantErr: "refusing wide delete",
+		},
+		{
+			name:    "empty ids and empty filter",
+			ids:     []string{},
+			filter:  &LinkedExecutionFilter{},
+			wantErr: "refusing wide delete",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pm := NewManagerWithRepository(nil)
+			_, _, err := pm.DeleteLinkedExecutions(nil, tt.ids, tt.filter)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
 func TestGenerateHistoryID_UniqueForDifferentTimestamps(t *testing.T) {
 	t1 := time.Unix(100, 1)
 	t2 := time.Unix(100, 2)
