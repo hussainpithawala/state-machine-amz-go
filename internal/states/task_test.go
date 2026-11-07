@@ -869,3 +869,56 @@ func TestTaskState_ErrorMatches_WrappedAndTypedErrors(t *testing.T) {
 		})
 	}
 }
+func TestTaskState_Execute_WithRetry_IntervalSecondsAndMaxAttempts(t *testing.T) {
+	ctx := context.Background()
+	callCount := 0
+
+	handler := &MockTaskHandler{
+		ExecuteFunc: func(_ context.Context, resource string, input interface{}, parameters map[string]interface{}) (interface{}, error) {
+			callCount++
+			// Always fail with an error that ONLY matches Policy 2
+			return nil, fmt.Errorf("Policy2Error")
+		},
+	}
+
+	state := &TaskState{
+		BaseState: BaseState{
+			Name: "TaskState",
+			Type: "Task",
+			End:  true,
+		},
+		Resource: "arn:aws:lambda:::test",
+		Retry: []RetryPolicy{
+			{
+				// Policy 1: Should be completely ignored because the error doesn't match
+				ErrorEquals:     []string{"Policy1Error"},
+				IntervalSeconds: IntPtr(10), // 10 seconds base
+				MaxAttempts:     IntPtr(5),
+				BackoffRate:     Float64Ptr(1.0),
+			},
+			{
+				// Policy 2: Should match and dictate the retry behavior
+				ErrorEquals:     []string{"Policy2Error"},
+				IntervalSeconds: IntPtr(1),       // 1 second base
+				MaxAttempts:     IntPtr(2),       // Max 2 retries
+				BackoffRate:     Float64Ptr(2.0), // 1s (1st retry), 2s (2nd retry)
+			},
+		},
+		TaskHandler: handler,
+	}
+
+	input := testInput
+	startTime := time.Now()
+	_, _, err := state.Execute(ctx, input)
+	elapsed := time.Since(startTime)
+
+	require.Error(t, err)
+
+	// 1 initial attempt + 2 retries = 3 total calls
+	assert.Equal(t, 3, callCount, "Should execute 1 initial + 2 retries based on Policy 2 MaxAttempts")
+
+	// Verify IntervalSeconds and BackoffRate from Policy 2 were used
+	// Expected wait: 1s (1st retry) + 2s (2nd retry) = ~3s total wait time
+	assert.GreaterOrEqual(t, elapsed, 2900*time.Millisecond, "Should wait at least ~3s based on Policy 2 Interval/Backoff")
+	assert.Less(t, elapsed, 4*time.Second, "Should not wait 10s+ from Policy 1")
+}
