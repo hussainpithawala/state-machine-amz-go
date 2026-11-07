@@ -11,6 +11,12 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
 
+const (
+	branchStatusRunning   = "RUNNING"
+	branchStatusFailed    = "FAILED"
+	branchStatusSucceeded = "SUCCEEDED"
+)
+
 // BranchExecution holds the result of executing a single parallel branch,
 // including state history for observability. Defined here to avoid importing
 // pkg/execution (which would cause an import cycle with test files).
@@ -306,7 +312,7 @@ func (p *ParallelState) Execute(ctx context.Context, input interface{}) (result 
 
 // executeExpress runs all branches concurrently as goroutines, each with its
 // own execution.Execution context for history tracking.
-func (p *ParallelState) executeExpress(ctx context.Context, input interface{}) (interface{}, *string, error) {
+func (p *ParallelState) executeExpress(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	processor := NewJSONPathProcessor()
 	processedInput, err := processor.ApplyInputPath(input, p.InputPath)
 	if err != nil {
@@ -359,7 +365,7 @@ func (p *ParallelState) executeExpress(ctx context.Context, input interface{}) (
 // executePersistent dispatches branches via the queue system for distributed
 // execution. Returns a *ParallelExecutionResult with Status "WAITING" to
 // signal the persistent RunExecution loop to pause.
-func (p *ParallelState) executePersistent(ctx context.Context, mode *types.ParallelMode, input interface{}) (interface{}, *string, error) {
+func (p *ParallelState) executePersistent(ctx context.Context, mode *types.ParallelMode, input interface{}) (result interface{}, nextState *string, err error) {
 	if mode.Dispatcher == nil {
 		return nil, nil, fmt.Errorf("persistent parallel execution requires a ParallelDispatcher")
 	}
@@ -402,7 +408,7 @@ func (p *ParallelState) executePersistent(ctx context.Context, mode *types.Paral
 func (p *ParallelState) executeBranchWithContext(ctx context.Context, branch Branch, input interface{}, branchIndex int) (*BranchExecution, error) {
 	branchExec := &BranchExecution{
 		Name:   fmt.Sprintf("%s-branch-%d", p.Name, branchIndex),
-		Status: "RUNNING",
+		Status: branchStatusRunning,
 	}
 
 	currentStateName := branch.StartAt
@@ -411,7 +417,7 @@ func (p *ParallelState) executeBranchWithContext(ctx context.Context, branch Bra
 	for {
 		select {
 		case <-ctx.Done():
-			branchExec.Status = "FAILED"
+			branchExec.Status = branchStatusFailed
 			branchExec.Error = ctx.Err()
 			return branchExec, ctx.Err()
 		default:
@@ -420,7 +426,7 @@ func (p *ParallelState) executeBranchWithContext(ctx context.Context, branch Bra
 		state, exists := branch.States[currentStateName]
 		if !exists {
 			err := fmt.Errorf("state '%s' not found in branch", currentStateName)
-			branchExec.Status = "FAILED"
+			branchExec.Status = branchStatusFailed
 			branchExec.Error = err
 			return branchExec, err
 		}
@@ -431,19 +437,19 @@ func (p *ParallelState) executeBranchWithContext(ctx context.Context, branch Bra
 
 		if err != nil {
 			branchExec.History = append(branchExec.History, BranchStateHistory{
-				StateName: currentStateName, Input: currentInput, Output: output, Status: "FAILED",
+				StateName: currentStateName, Input: currentInput, Output: output, Status: branchStatusFailed,
 			})
-			branchExec.Status = "FAILED"
+			branchExec.Status = branchStatusFailed
 			branchExec.Error = err
 			return branchExec, err
 		}
 
 		branchExec.History = append(branchExec.History, BranchStateHistory{
-			StateName: currentStateName, Input: currentInput, Output: output, Status: "SUCCEEDED",
+			StateName: currentStateName, Input: currentInput, Output: output, Status: branchStatusSucceeded,
 		})
 
 		if state.IsEnd() || nextState == nil {
-			branchExec.Status = "SUCCEEDED"
+			branchExec.Status = branchStatusSucceeded
 			branchExec.Output = output
 			return branchExec, nil
 		}
@@ -455,9 +461,8 @@ func (p *ParallelState) executeBranchWithContext(ctx context.Context, branch Bra
 
 // applyOutputProcessing applies ResultSelector, ResultPath, and OutputPath
 // to the collected branch results.
-func (p *ParallelState) applyOutputProcessing(processor *JSONPathProcessor, processedInput interface{}, results []interface{}) (interface{}, *string, error) {
-	var output interface{} = results
-	var err error
+func (p *ParallelState) applyOutputProcessing(processor *JSONPathProcessor, processedInput interface{}, results []interface{}) (output interface{}, nextState *string, err error) {
+	output = results
 
 	if p.ResultSelector != nil {
 		output, err = processor.expandValue(p.ResultSelector, map[string]interface{}{
