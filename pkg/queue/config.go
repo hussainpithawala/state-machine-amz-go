@@ -60,10 +60,10 @@ func DefaultConfig() *Config {
 		},
 		Concurrency: 10,
 		Queues: map[string]int{
-			"critical": 6, // Highest priority
-			"timeout":  5, // High priority for timeout events
-			"default":  3, // Normal priority
-			"low":      1, // Lowest priority
+			"critical":   6, // Highest priority
+			TimeoutQueue: TimeoutQueueDefault,
+			"default":    3, // Normal priority
+			"low":        1, // Lowest priority
 		},
 		RetryPolicy: &RetryPolicy{
 			MaxRetry: 3,
@@ -82,10 +82,6 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Queues) == 0 {
 		return fmt.Errorf("at least one queue must be configured")
-	}
-	// Ensure timeout queue exists
-	if _, exists := c.Queues["timeout"]; !exists {
-		c.Queues["timeout"] = 5 // Add with high priority
 	}
 	return nil
 }

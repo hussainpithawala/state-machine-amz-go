@@ -19,7 +19,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 10, config.Concurrency)
 	assert.NotNil(t, config.Queues)
 	assert.Equal(t, 6, config.Queues["critical"])
-	assert.Equal(t, 5, config.Queues["timeout"])
+	assert.Equal(t, TimeoutQueueDefault, config.Queues[TimeoutQueue])
 	assert.Equal(t, 3, config.Queues["default"])
 	assert.Equal(t, 1, config.Queues["low"])
 	assert.NotNil(t, config.RetryPolicy)
@@ -123,7 +123,7 @@ func TestConfig_Validate_NilQueues(t *testing.T) {
 	assert.Contains(t, err.Error(), "at least one queue must be configured")
 }
 
-func TestConfig_Validate_AddsTimeoutQueue(t *testing.T) {
+func TestConfig_Validate_DoesNotAddTimeoutQueue(t *testing.T) {
 	config := &Config{
 		RedisClientOpt: &asynq.RedisClientOpt{
 			Addr: "localhost:6379",
@@ -138,10 +138,9 @@ func TestConfig_Validate_AddsTimeoutQueue(t *testing.T) {
 	err := config.Validate()
 	assert.NoError(t, err)
 
-	// Verify timeout queue was added
-	priority, exists := config.Queues["timeout"]
-	assert.True(t, exists)
-	assert.Equal(t, 5, priority)
+	// Validate must NOT inject the timeout queue — only NewWorker should do that
+	_, exists := config.Queues[TimeoutQueue]
+	assert.False(t, exists)
 }
 
 func TestConfig_Validate_PreservesExistingTimeoutQueue(t *testing.T) {
@@ -152,18 +151,16 @@ func TestConfig_Validate_PreservesExistingTimeoutQueue(t *testing.T) {
 		},
 		Concurrency: 5,
 		Queues: map[string]int{
-			"default": 3,
-			"timeout": 8, // Custom priority
+			"default":    3,
+			TimeoutQueue: 8,
 		},
 	}
 
 	err := config.Validate()
 	assert.NoError(t, err)
 
-	// Verify timeout queue priority was not changed
-	priority, exists := config.Queues["timeout"]
-	assert.True(t, exists)
-	assert.Equal(t, 8, priority)
+	// Validate must not alter an explicitly-provided timeout queue
+	assert.Equal(t, 8, config.Queues[TimeoutQueue])
 }
 
 func TestConfig_GetRedisClientOpt(t *testing.T) {
