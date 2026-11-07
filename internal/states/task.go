@@ -4,7 +4,9 @@ package states
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
@@ -479,14 +481,64 @@ func (t *TaskState) processSuccessfulResult(processor *JSONPathProcessor,
 	return output, t.GetNext(), nil
 }
 
-// errorMatches checks if an error matches any of the error patterns
+// errorMatches checks if an error matches any of the error patterns.
+// It supports:
+// 1. "States.ALL" wildcard.
+// 2. Exact match on ErrorName() or Name() if the error implements it (Best Practice).
+// 3. Exact match on err.Error() for simple string errors (Backwards Compatibility).
+// 4. Prefix match (e.g., "CustomError: details") to handle wrapped errors gracefully.
+// 5. Recursive unwrapping to check the entire error chain.
 func (t *TaskState) errorMatches(err error, errorPatterns []string) bool {
-	errorMsg := err.Error()
-	for _, pattern := range errorPatterns {
-		if pattern == "States.ALL" || pattern == errorMsg {
+	if err == nil {
+		return false
+	}
+
+	// Helper to check a single error against patterns
+	checkErr := func(e error) bool {
+		for _, pattern := range errorPatterns {
+			if pattern == "States.ALL" {
+				return true
+			}
+
+			// 1. Check if error implements ErrorName() or Name() interface
+			if named, ok := e.(interface{ ErrorName() string }); ok && named.ErrorName() == pattern {
+				return true
+			}
+			if named, ok := e.(interface{ Name() string }); ok && named.Name() == pattern {
+				return true
+			}
+
+			// 2. Exact string match (backwards compatibility)
+			if e.Error() == pattern {
+				return true
+			}
+
+			// 3. Prefix match to support standard Go error wrapping
+			// e.g., fmt.Errorf("CustomError: %w", err) or fmt.Errorf("CustomError - details")
+			if strings.HasPrefix(e.Error(), pattern+":") || strings.HasPrefix(e.Error(), pattern+" ") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Check the top-level error
+	if checkErr(err) {
+		return true
+	}
+
+	// Check wrapped errors recursively (Go 1.13+ errors.Unwrap)
+	curr := err
+	for {
+		curr = errors.Unwrap(curr)
+		if curr == nil {
+			break
+		}
+		if checkErr(curr) {
 			return true
 		}
 	}
+
 	return false
 }
 

@@ -786,3 +786,86 @@ func TestTaskState_Parameters_NestedJSONPath_NoDoubleExpansion(t *testing.T) {
 	_, exists := resultMap["ignored"]
 	assert.False(t, exists, "Non-referenced root data should not be in the expanded parameters")
 }
+
+// customNamedError is a package-level test error type that implements
+// both the standard error interface and a custom ErrorName interface.
+type customNamedError struct {
+	name string
+	msg  string
+}
+
+// Error implements the standard error interface (value receiver ensures both value and pointer work)
+func (e customNamedError) Error() string { return e.msg }
+
+// ErrorName implements our custom interface for typed error matching
+func (e customNamedError) ErrorName() string { return e.name }
+
+func TestTaskState_ErrorMatches_WrappedAndTypedErrors(t *testing.T) {
+	state := &TaskState{
+		BaseState: BaseState{Name: "TestTask", Type: "Task"},
+		Resource:  "arn:aws:lambda:::test",
+	}
+
+	tests := []struct {
+		name     string
+		err      error
+		patterns []string
+		expected bool
+	}{
+		{
+			name:     "exact string match (backwards compatibility)",
+			err:      fmt.Errorf("SimpleError"),
+			patterns: []string{"SimpleError"},
+			expected: true,
+		},
+		{
+			name:     "wrapped error with colon prefix",
+			err:      fmt.Errorf("CustomError: something went wrong"),
+			patterns: []string{"CustomError"},
+			expected: true,
+		},
+		{
+			name:     "wrapped error with space prefix",
+			err:      fmt.Errorf("CustomError - something went wrong"),
+			patterns: []string{"CustomError"},
+			expected: true,
+		},
+		{
+			name:     "typed error with ErrorName interface",
+			err:      customNamedError{name: "CustomError", msg: "something went wrong"},
+			patterns: []string{"CustomError"},
+			expected: true,
+		},
+		{
+			name:     "deeply wrapped error",
+			err:      fmt.Errorf("outer wrapper: %w", fmt.Errorf("CustomError: inner details")),
+			patterns: []string{"CustomError"},
+			expected: true,
+		},
+		{
+			name:     "States.ALL matches anything",
+			err:      fmt.Errorf("RandomError: details"),
+			patterns: []string{"States.ALL"},
+			expected: true,
+		},
+		{
+			name:     "no match for different error",
+			err:      fmt.Errorf("CustomError: details"),
+			patterns: []string{"DifferentError"},
+			expected: false,
+		},
+		{
+			name:     "no match for nil error",
+			err:      nil,
+			patterns: []string{"CustomError"},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := state.errorMatches(tt.err, tt.patterns)
+			assert.Equal(t, tt.expected, result, "errorMatches result mismatch for case: %s", tt.name)
+		})
+	}
+}
