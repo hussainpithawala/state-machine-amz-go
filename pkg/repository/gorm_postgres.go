@@ -168,6 +168,7 @@ func (r *GormPostgresRepository) Initialize(ctx context.Context) error {
 		{&ExecutionStatisticsModel{}, "execution_statistics"},
 		{&MessageCorrelationModel{}, "message_correlations"},
 		{&LinkedExecutionModel{}, "linked_executions"},
+		{&ParallelExecutionModel{}, "parallel_executions"},
 	}
 
 	for _, table := range tables {
@@ -1760,4 +1761,99 @@ func (r *GormPostgresRepository) FindOrphanedExecutions(ctx context.Context, sta
 	}
 
 	return executions, nil
+}
+
+func toParallelExecutionModel(record *ParallelExecutionRecord) *ParallelExecutionModel {
+	var output JSONB
+	if m, ok := record.BranchOutput.(map[string]interface{}); ok {
+		output = m
+	}
+	return &ParallelExecutionModel{
+		ID:              record.ID,
+		ParallelID:      record.ParallelID,
+		ParentExecID:    record.ParentExecID,
+		ParentSMID:      record.ParentSMID,
+		ParentStateName: record.ParentStateName,
+		BranchIndex:     record.BranchIndex,
+		BranchExecID:    record.BranchExecID,
+		BranchSMID:      record.BranchSMID,
+		Status:          record.Status,
+		BranchOutput:    output,
+		FailurePolicy:   record.FailurePolicy,
+	}
+}
+
+func fromParallelExecutionModel(model *ParallelExecutionModel) *ParallelExecutionRecord {
+	var output interface{}
+	if model.BranchOutput != nil {
+		output = map[string]interface{}(model.BranchOutput)
+	}
+	return &ParallelExecutionRecord{
+		ID:              model.ID,
+		ParallelID:      model.ParallelID,
+		ParentExecID:    model.ParentExecID,
+		ParentSMID:      model.ParentSMID,
+		ParentStateName: model.ParentStateName,
+		BranchIndex:     model.BranchIndex,
+		BranchExecID:    model.BranchExecID,
+		BranchSMID:      model.BranchSMID,
+		Status:          model.Status,
+		BranchOutput:    output,
+		FailurePolicy:   model.FailurePolicy,
+	}
+}
+
+func (r *GormPostgresRepository) SaveParallelExecution(ctx context.Context, record *ParallelExecutionRecord) error {
+	model := toParallelExecutionModel(record)
+	result := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoNothing: true,
+		}).
+		Create(model)
+	if result.Error != nil {
+		return fmt.Errorf("failed to save parallel execution: %w", result.Error)
+	}
+	return nil
+}
+
+func (r *GormPostgresRepository) GetParallelExecutions(ctx context.Context, parallelID string) ([]*ParallelExecutionRecord, error) {
+	var models []ParallelExecutionModel
+	result := r.db.WithContext(ctx).
+		Where("parallel_id = ?", parallelID).
+		Order("branch_index ASC").
+		Find(&models)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get parallel executions: %w", result.Error)
+	}
+
+	records := make([]*ParallelExecutionRecord, len(models))
+	for i := range models {
+		records[i] = fromParallelExecutionModel(&models[i])
+	}
+	return records, nil
+}
+
+func (r *GormPostgresRepository) UpdateParallelBranchStatus(ctx context.Context, parallelID string, branchIndex int, status string, output interface{}) error {
+	updates := map[string]interface{}{
+		"status":     status,
+		"updated_at": time.Now().UTC(),
+	}
+	if output != nil {
+		if m, ok := output.(map[string]interface{}); ok {
+			updates["branch_output"] = JSONB(m)
+		}
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&ParallelExecutionModel{}).
+		Where("parallel_id = ? AND branch_index = ?", parallelID, branchIndex).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update parallel branch status: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("parallel branch not found: parallel_id=%s, branch_index=%d", parallelID, branchIndex)
+	}
+	return nil
 }

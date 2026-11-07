@@ -15,6 +15,7 @@ import (
 	"github.com/hussainpithawala/state-machine-amz-go/internal/states"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/batch"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/parallel"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/recovery"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
@@ -29,12 +30,13 @@ const WAITING = "WAITING"
 
 // StateMachine Persistence.StateMachine represents a state machine with an optional repositoryManager
 type StateMachine struct {
-	statemachine      *statemachine2.StateMachine
-	repositoryManager *repository.Manager
-	stateMachineID    string
-	queueClient       *queue.Client
-	executor          *executor.BaseExecutor // nil = default executor
-	recoveryManager   *recovery.RecoveryManager
+	statemachine         *statemachine2.StateMachine
+	repositoryManager    *repository.Manager
+	stateMachineID       string
+	queueClient          *queue.Client
+	executor             *executor.BaseExecutor // nil = default executor
+	recoveryManager      *recovery.RecoveryManager
+	parallelOrchestrator *parallel.ParallelOrchestrator
 }
 
 // Option allows configuring the state machine
@@ -182,12 +184,30 @@ func (pm *StateMachine) RunExecution(ctx context.Context, input interface{}, exe
 
 		history := pm.newStateHistory(currentStateName, state, execCtx)
 
+		// Inject ParallelMode into context for Parallel states so they
+		// dispatch branches via the queue instead of running in-process.
+		execCtx2 := ctx
+		if state.GetType() == "Parallel" && pm.parallelOrchestrator != nil {
+			parallelMode := &types.ParallelMode{
+				IsPersistent: true,
+				ParentExecID: execCtx.ID,
+				ParentSMID:   pm.stateMachineID,
+				Dispatcher:   pm.parallelOrchestrator,
+			}
+			execCtx2 = context.WithValue(ctx, types.ParallelModeKey, parallelMode)
+		}
+
 		// Execute state with panic recovery for unexpected failures
-		output, nextState, err := pm.executeStateWithRecovery(ctx, state, execCtx.Input, currentStateName)
+		output, nextState, err := pm.executeStateWithRecovery(execCtx2, state, execCtx.Input, currentStateName)
 
 		// Handle WAITING message state early
 		if pm.isWaitingMessageState(output) {
 			return pm.handleWaitingState(ctx, execCtx, history, output, state, currentStateName)
+		}
+
+		// Handle WAITING parallel state
+		if pm.isWaitingParallelState(output) {
+			return pm.handleWaitingParallelState(ctx, execCtx, history, output, currentStateName)
 		}
 
 		// Finalize history & update execution context
@@ -300,6 +320,51 @@ func (pm *StateMachine) executeStateWithRecovery(ctx context.Context, state stat
 func (pm *StateMachine) isWaitingMessageState(output interface{}) bool {
 	msgResult, ok := output.(*states.MessageStateResult)
 	return ok && msgResult != nil && msgResult.Status == WAITING
+}
+
+func (pm *StateMachine) isWaitingParallelState(output interface{}) bool {
+	result, ok := output.(*states.ParallelExecutionResult)
+	return ok && result != nil && result.Status == parallel.StatusWaiting
+}
+
+func (pm *StateMachine) handleWaitingParallelState(
+	ctx context.Context,
+	execCtx *execution.Execution,
+	history *execution.StateHistory,
+	output interface{},
+	currentStateName string,
+) (*execution.Execution, error) {
+	history.EndTime = time.Now()
+	history.Output = output
+	history.Status = WAITING
+	execCtx.History = append(execCtx.History, *history)
+	saveHistory(ctx, execCtx, pm, history)
+
+	parallelResult := output.(*states.ParallelExecutionResult)
+
+	correlationID := fmt.Sprintf("corr-parallel-%s-%s", execCtx.ID, currentStateName)
+	correlationRecord := &repository.MessageCorrelationRecord{
+		ID:                 correlationID,
+		ExecutionID:        execCtx.ID,
+		ExecutionStartTime: &execCtx.StartTime,
+		StateMachineID:     pm.stateMachineID,
+		StateName:          currentStateName,
+		CorrelationKey:     parallel.ParallelCorrelationKey,
+		CorrelationValue:   parallelResult.ParallelID,
+		CreatedAt:          time.Now().Unix(),
+		Status:             WAITING,
+	}
+
+	if err := pm.repositoryManager.SaveMessageCorrelation(ctx, correlationRecord); err != nil {
+		fmt.Printf("Warning: failed to save parallel correlation: %v\n", err)
+	}
+
+	execCtx.Status = PAUSED
+	execCtx.CurrentState = currentStateName
+	execCtx.Output = execCtx.Input
+	pm.persistExecution(ctx, execCtx)
+
+	return execCtx, nil
 }
 
 func (pm *StateMachine) handleWaitingState(
@@ -642,6 +707,37 @@ func (pm *StateMachine) SetQueueClient(client *queue.Client) {
 // GetQueueClient returns the queue client
 func (pm *StateMachine) GetQueueClient() *queue.Client {
 	return pm.queueClient
+}
+
+// SetParallelOrchestrator sets the parallel orchestrator for distributed
+// parallel branch execution.
+func (pm *StateMachine) SetParallelOrchestrator(orch *parallel.ParallelOrchestrator) {
+	pm.parallelOrchestrator = orch
+}
+
+// GetParallelOrchestrator returns the parallel orchestrator.
+func (pm *StateMachine) GetParallelOrchestrator() *parallel.ParallelOrchestrator {
+	return pm.parallelOrchestrator
+}
+
+// SetRedisClient configures the Redis client and initializes the parallel
+// orchestrator. Call this after SetQueueClient for parallel state support.
+func (pm *StateMachine) SetRedisClient(ctx context.Context, rdb *redis.Client) error {
+	if pm.queueClient == nil {
+		return fmt.Errorf("queue client must be set before Redis client")
+	}
+
+	smFactory := func(ctx2 context.Context, smID string, mgr *repository.Manager) (batch.StateMachine, error) {
+		sm, err := NewFromDefnId(ctx2, smID, mgr)
+		return sm, err
+	}
+
+	orch, err := parallel.NewOrchestrator(ctx, rdb, pm.repositoryManager, pm.queueClient, smFactory)
+	if err != nil {
+		return fmt.Errorf("failed to create parallel orchestrator: %w", err)
+	}
+	pm.parallelOrchestrator = orch
+	return nil
 }
 
 // SetRecoveryManager sets the recovery manager for crash-resilient execution

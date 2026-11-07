@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/batch"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/execution"
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/parallel"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/queue"
 	"github.com/hussainpithawala/state-machine-amz-go/pkg/repository"
 	statemachine2 "github.com/hussainpithawala/state-machine-amz-go/pkg/statemachine"
@@ -23,10 +25,11 @@ const MaxGroupConcurrency = 500
 // ExecutionHandler implements queue.ExecutionHandler interface
 // It handles all types of execution tasks from the queue including regular, chained, and timeout executions
 type ExecutionHandler struct {
-	repositoryManager *repository.Manager
-	queueClient       *queue.Client
-	executionContext  types.ExecutionContext
-	orchestrator      *batch.Orchestrator
+	repositoryManager    *repository.Manager
+	queueClient          *queue.Client
+	executionContext     types.ExecutionContext
+	orchestrator         *batch.Orchestrator
+	parallelOrchestrator *parallel.ParallelOrchestrator
 }
 
 // NewExecutionHandler creates a new execution handler
@@ -46,6 +49,12 @@ func NewExecutionHandlerWithContext(repositoryManager *repository.Manager, queue
 		executionContext:  execCtx,
 		orchestrator:      orchestrator,
 	}
+}
+
+// SetParallelOrchestrator sets the parallel orchestrator for handling
+// parallel branch completion barriers.
+func (h *ExecutionHandler) SetParallelOrchestrator(orch *parallel.ParallelOrchestrator) {
+	h.parallelOrchestrator = orch
 }
 
 // HandleExecution processes a state machine execution task from the queue
@@ -128,6 +137,11 @@ func (h *ExecutionHandler) handleRegularExecution(ctx context.Context, sm *persi
 		return err2
 	}
 
+	// Signal parallel branch completion if this was a parallel branch task
+	if err3 := h.processParallelBarrier(ctx, payload, exec, err); err3 != nil {
+		log.Printf("warn: processParallelBarrier failed: %v", err3)
+	}
+
 	if err != nil {
 		return fmt.Errorf("execution failed: %w", err)
 	}
@@ -163,6 +177,29 @@ func (h *ExecutionHandler) processBatchBarrier(ctx context.Context, payload *que
 		}
 	}
 	return nil
+}
+
+// processParallelBarrier signals the parallel orchestrator when a branch
+// execution completes. The orchestrator decrements the barrier and, if this
+// is the last branch, resumes the parent execution.
+func (h *ExecutionHandler) processParallelBarrier(ctx context.Context, payload *queue.ExecutionTaskPayload, exec *execution.Execution, execErr error) error {
+	if h.parallelOrchestrator == nil {
+		return nil
+	}
+
+	meta, ok := parallel.WorkerExtractMeta(payload.Input)
+	if !ok {
+		return nil
+	}
+
+	var branchOutput interface{}
+	if exec != nil {
+		branchOutput = exec.Output
+	}
+
+	log.Printf("info: parallel branch %d completed for %s", meta.BranchIndex, meta.ParallelID)
+
+	return h.parallelOrchestrator.SignalBranchComplete(ctx, meta, branchOutput, execErr)
 }
 
 // handleTimeoutExecution handles timeout-triggered executions
@@ -389,6 +426,11 @@ func (h *ExecutionHandler) processBatchTask(ctx context.Context, payload *queue.
 	// Process barrier for micro-batch tracking
 	if barrierErr := h.processBatchBarrier(ctx, payload, err, h.orchestrator); barrierErr != nil {
 		fmt.Printf("warn: processBatchBarrier failed: %v\n", barrierErr)
+	}
+
+	// Signal parallel branch completion
+	if err3 := h.processParallelBarrier(ctx, payload, exec, err); err3 != nil {
+		log.Printf("warn: processParallelBarrier in batch task failed: %v", err3)
 	}
 
 	if err != nil {

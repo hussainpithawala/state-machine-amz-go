@@ -168,6 +168,29 @@ func (ExecutionStatisticsModel) TableName() string {
 	return "execution_statistics"
 }
 
+// ParallelExecutionModel represents the parallel_executions join-table
+// that tracks parent-child relationships for parallel state branches.
+type ParallelExecutionModel struct {
+	ID              string    `gorm:"primaryKey;size:255;not null"`
+	ParallelID      string    `gorm:"size:255;not null;index:idx_parallel_id"`
+	ParentExecID    string    `gorm:"size:255;not null;index:idx_parallel_parent_exec"`
+	ParentSMID      string    `gorm:"size:255;not null"`
+	ParentStateName string    `gorm:"size:255;not null"`
+	BranchIndex     int       `gorm:"not null"`
+	BranchExecID    string    `gorm:"size:255;not null;index:idx_parallel_branch_exec"`
+	BranchSMID      string    `gorm:"size:255;not null"`
+	Status          string    `gorm:"size:50;not null;default:'RUNNING'"`
+	BranchOutput    JSONB     `gorm:"type:jsonb"`
+	FailurePolicy   string    `gorm:"size:50;not null;default:'WAIT_FOR_ALL'"`
+	CreatedAt       time.Time `gorm:"autoCreateTime"`
+	UpdatedAt       time.Time `gorm:"autoUpdateTime"`
+}
+
+// TableName specifies the table name for ParallelExecutionModel
+func (ParallelExecutionModel) TableName() string {
+	return "parallel_executions"
+}
+
 // LinkedExecutionModel represents the linked_executions table
 type LinkedExecutionModel struct {
 	ID                     string    `gorm:"primaryKey;size:255;not null"`

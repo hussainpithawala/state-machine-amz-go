@@ -4,9 +4,47 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"sync"
+	"time"
+
+	"github.com/hussainpithawala/state-machine-amz-go/pkg/types"
 )
+
+const (
+	branchStatusRunning   = "RUNNING"
+	branchStatusFailed    = "FAILED"
+	branchStatusSucceeded = "SUCCEEDED"
+)
+
+// BranchExecution holds the result of executing a single parallel branch,
+// including state history for observability. Defined here to avoid importing
+// pkg/execution (which would cause an import cycle with test files).
+type BranchExecution struct {
+	Name         string
+	Status       string
+	Output       interface{}
+	Error        error
+	CurrentState string
+	History      []BranchStateHistory
+}
+
+// BranchStateHistory records a single state execution within a branch.
+type BranchStateHistory struct {
+	StateName string
+	Input     interface{}
+	Output    interface{}
+	Status    string
+}
+
+// ParallelExecutionResult is returned by ParallelState.executePersistent() to
+// signal the persistent RunExecution loop to pause and wait for branch
+// completion. Analogous to MessageStateResult for Message states.
+type ParallelExecutionResult struct {
+	Status        string
+	ParallelID    string
+	BranchCount   int
+	BranchExecIDs []string
+}
 
 // Branch represents a single branch in a Parallel state
 type Branch struct {
@@ -22,6 +60,14 @@ type ParallelState struct {
 	Branches []Branch `json:"Branches"`
 	// ResultSelector is used to specify how to select results from branches
 	ResultSelector map[string]interface{} `json:"ResultSelector,omitempty"`
+	// FailurePolicy controls behavior when a branch fails in persistent mode.
+	// "WAIT_FOR_ALL" (default): all branches complete before parent is resumed.
+	// "FAIL_FAST": parent is resumed with failure as soon as any branch fails.
+	FailurePolicy string `json:"FailurePolicy,omitempty"`
+
+	// lastBranchExecutions stores branch execution contexts from the most recent
+	// express execution, allowing the parent to retrieve branch histories.
+	lastBranchExecutions []*BranchExecution `json:"-"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for ParallelState
@@ -52,12 +98,9 @@ func (p *ParallelState) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("failed to unmarshal branch %d: %w", i, err)
 		}
 
-		// Convert raw state messages to State interface
 		states := make(map[string]State)
-		// Create a temporary factory for unmarshaling states
-		stateFactory := &stateUnmarshaler{}
 		for stateName, rawState := range branchData.States {
-			state, err := stateFactory.unmarshalState(stateName, rawState)
+			state, err := CreateStateFromJSON(stateName, rawState)
 			if err != nil {
 				return fmt.Errorf("failed to unmarshal state '%s' in branch %d: %w", stateName, i, err)
 			}
@@ -72,132 +115,6 @@ func (p *ParallelState) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
-}
-
-// stateUnmarshaler is a helper for unmarshaling states within parallel branches
-type stateUnmarshaler struct{}
-
-// unmarshalState unmarshals a raw JSON message into a State
-func (s *stateUnmarshaler) unmarshalState(name string, rawJSON json.RawMessage) (State, error) {
-	// Get state type from JSON
-	stateType, err := s.extractStateType(rawJSON)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create and unmarshal state
-	state, err := s.createAndUnmarshalState(stateType, rawJSON)
-	if err != nil {
-		return nil, err
-	}
-
-	// Set state name
-	s.setStateName(state, name)
-
-	return state, nil
-}
-
-// extractStateType extracts the Type field from JSON
-func (s *stateUnmarshaler) extractStateType(rawJSON json.RawMessage) (string, error) {
-	var typeMap map[string]interface{}
-	if err := json.Unmarshal(rawJSON, &typeMap); err != nil {
-		return "", fmt.Errorf("failed to unmarshal state: %w", err)
-	}
-
-	stateType, ok := typeMap["Type"].(string)
-	if !ok {
-		return "", fmt.Errorf("state missing or invalid Type field")
-	}
-
-	return stateType, nil
-}
-
-// createAndUnmarshalState creates the appropriate state type and unmarshals JSON
-func (s *stateUnmarshaler) createAndUnmarshalState(stateType string, rawJSON json.RawMessage) (State, error) {
-	// Map state types to their constructors
-	stateCreators := map[string]func() (State, error){
-		"Pass": func() (State, error) {
-			state := &PassState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Fail": func() (State, error) {
-			state := &FailState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Succeed": func() (State, error) {
-			state := &SucceedState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Wait": func() (State, error) {
-			state := &WaitState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Choice": func() (State, error) {
-			state := &ChoiceState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Parallel": func() (State, error) {
-			state := &ParallelState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Task": func() (State, error) {
-			state := &TaskState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-		"Map": func() (State, error) {
-			state := &MapState{}
-			err := json.Unmarshal(rawJSON, state)
-			return state, err
-		},
-	}
-
-	// Get the constructor for the state type
-	createState, exists := stateCreators[stateType]
-	if !exists {
-		return nil, fmt.Errorf("unknown state type: %s", stateType)
-	}
-
-	// Create and unmarshal the state
-	state, err := createState()
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal %s state: %w", stateType, err)
-	}
-
-	return state, nil
-}
-
-// setStateName sets the name on the state
-func (s *stateUnmarshaler) setStateName(state State, name string) {
-	// Map state types to name setters
-	switch st := state.(type) {
-	case interface{ SetName(string) }:
-		st.SetName(name)
-	default:
-		// Fallback for types that don't implement SetName
-		s.setNameViaReflection(st, name)
-	}
-}
-
-// setNameViaReflection sets the name using reflection for types without SetName method
-func (s *stateUnmarshaler) setNameViaReflection(state State, name string) {
-	// Use reflection to set the Name field
-	val := reflect.ValueOf(state).Elem()
-
-	// Try to find the Name field
-	nameField := val.FieldByName("Name")
-	if nameField.IsValid() && nameField.CanSet() {
-		// Check if it's a string field
-		if nameField.Kind() == reflect.String {
-			nameField.SetString(name)
-		}
-	}
 }
 
 // GetName returns the name of the state
@@ -252,18 +169,28 @@ func (p *ParallelState) Validate() error {
 	return nil
 }
 
-// Execute executes the Parallel state
+// Execute executes the Parallel state.
+// When ParallelModeKey is present in the context (persistent mode), it delegates
+// to executePersistent which dispatches branches via the queue system.
+// Otherwise, it uses the express (in-process) path with goroutines.
 func (p *ParallelState) Execute(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
-	// Apply input path
+	if mode, ok := ctx.Value(types.ParallelModeKey).(*types.ParallelMode); ok && mode.IsPersistent {
+		return p.executePersistent(ctx, mode, input)
+	}
+	return p.executeExpress(ctx, input)
+}
+
+// executeExpress runs all branches concurrently as goroutines, each with its
+// own execution.Execution context for history tracking.
+func (p *ParallelState) executeExpress(ctx context.Context, input interface{}) (result interface{}, nextState *string, err error) {
 	processor := NewJSONPathProcessor()
 	processedInput, err := processor.ApplyInputPath(input, p.InputPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to apply input path: %w", err)
 	}
 
-	// Execute all branches concurrently
-	results := make([]interface{}, len(p.Branches))
-	errors := make([]error, len(p.Branches))
+	branchExecs := make([]*BranchExecution, len(p.Branches))
+	branchErrors := make([]error, len(p.Branches))
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
@@ -272,30 +199,141 @@ func (p *ParallelState) Execute(ctx context.Context, input interface{}) (result 
 		go func(index int, b Branch) {
 			defer wg.Done()
 
-			// Execute the branch
-			branchResult, err := p.executeBranch(ctx, b, processedInput)
+			exec, execErr := p.executeBranchWithContext(ctx, b, processedInput, index)
 
 			mu.Lock()
-			results[index] = branchResult
-			errors[index] = err
+			branchExecs[index] = exec
+			branchErrors[index] = execErr
 			mu.Unlock()
 		}(i, branch)
 	}
 
-	// Wait for all branches to complete
 	wg.Wait()
 
 	// Check for errors in any branch
-	for _, err := range errors {
-		if err != nil {
-			return nil, nil, err
+	for _, branchErr := range branchErrors {
+		if branchErr != nil {
+			p.lastBranchExecutions = branchExecs
+			return nil, nil, branchErr
 		}
 	}
 
-	// Combine results into an array
-	var output interface{} = results
+	// Collect outputs
+	results := make([]interface{}, len(branchExecs))
+	for i, exec := range branchExecs {
+		if exec != nil {
+			results[i] = exec.Output
+		}
+	}
 
-	// If ResultSelector is provided, apply it
+	// Store branch executions for the parent to retrieve
+	p.lastBranchExecutions = branchExecs
+
+	return p.applyOutputProcessing(processor, processedInput, results)
+}
+
+// executePersistent dispatches branches via the queue system for distributed
+// execution. Returns a *ParallelExecutionResult with Status "WAITING" to
+// signal the persistent RunExecution loop to pause.
+func (p *ParallelState) executePersistent(ctx context.Context, mode *types.ParallelMode, input interface{}) (result interface{}, nextState *string, err error) {
+	if mode.Dispatcher == nil {
+		return nil, nil, fmt.Errorf("persistent parallel execution requires a ParallelDispatcher")
+	}
+
+	processor := NewJSONPathProcessor()
+	processedInput, err := processor.ApplyInputPath(input, p.InputPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to apply input path: %w", err)
+	}
+
+	failurePolicy := p.FailurePolicy
+	if failurePolicy == "" {
+		failurePolicy = "WAIT_FOR_ALL"
+	}
+
+	parallelID := fmt.Sprintf("parallel-%s-%s-%d", mode.ParentExecID, p.Name, time.Now().UnixNano())
+
+	branchExecIDs, err := mode.Dispatcher.DispatchBranches(
+		ctx,
+		parallelID,
+		mode.ParentExecID,
+		mode.ParentSMID,
+		p.Name,
+		p.Branches,
+		processedInput,
+		failurePolicy,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to dispatch parallel branches: %w", err)
+	}
+
+	return &ParallelExecutionResult{
+		Status:        "WAITING",
+		ParallelID:    parallelID,
+		BranchCount:   len(p.Branches),
+		BranchExecIDs: branchExecIDs,
+	}, nil, nil
+}
+
+func (p *ParallelState) executeBranchWithContext(ctx context.Context, branch Branch, input interface{}, branchIndex int) (*BranchExecution, error) {
+	branchExec := &BranchExecution{
+		Name:   fmt.Sprintf("%s-branch-%d", p.Name, branchIndex),
+		Status: branchStatusRunning,
+	}
+
+	currentStateName := branch.StartAt
+	currentInput := input
+
+	for {
+		select {
+		case <-ctx.Done():
+			branchExec.Status = branchStatusFailed
+			branchExec.Error = ctx.Err()
+			return branchExec, ctx.Err()
+		default:
+		}
+
+		state, exists := branch.States[currentStateName]
+		if !exists {
+			err := fmt.Errorf("state '%s' not found in branch", currentStateName)
+			branchExec.Status = branchStatusFailed
+			branchExec.Error = err
+			return branchExec, err
+		}
+
+		branchExec.CurrentState = currentStateName
+
+		output, nextState, err := state.Execute(ctx, currentInput)
+
+		if err != nil {
+			branchExec.History = append(branchExec.History, BranchStateHistory{
+				StateName: currentStateName, Input: currentInput, Output: output, Status: branchStatusFailed,
+			})
+			branchExec.Status = branchStatusFailed
+			branchExec.Error = err
+			return branchExec, err
+		}
+
+		branchExec.History = append(branchExec.History, BranchStateHistory{
+			StateName: currentStateName, Input: currentInput, Output: output, Status: branchStatusSucceeded,
+		})
+
+		if state.IsEnd() || nextState == nil {
+			branchExec.Status = branchStatusSucceeded
+			branchExec.Output = output
+			return branchExec, nil
+		}
+
+		currentStateName = *nextState
+		currentInput = output
+	}
+}
+
+// applyOutputProcessing applies ResultSelector, ResultPath, and OutputPath
+// to the collected branch results.
+func (p *ParallelState) applyOutputProcessing(processor *JSONPathProcessor, processedInput interface{}, results []interface{}) (output interface{}, nextState *string, err error) {
+	output = results
+
 	if p.ResultSelector != nil {
 		output, err = processor.expandValue(p.ResultSelector, map[string]interface{}{
 			"$": results,
@@ -305,13 +343,11 @@ func (p *ParallelState) Execute(ctx context.Context, input interface{}) (result 
 		}
 	}
 
-	// Apply result path
 	output, err = processor.ApplyResultPath(processedInput, output, p.ResultPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to apply result path: %w", err)
 	}
 
-	// Apply output path
 	output, err = processor.ApplyOutputPath(output, p.OutputPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to apply output path: %w", err)
@@ -320,41 +356,10 @@ func (p *ParallelState) Execute(ctx context.Context, input interface{}) (result 
 	return output, p.GetNext(), nil
 }
 
-// executeBranch executes a single branch
-func (p *ParallelState) executeBranch(ctx context.Context, branch Branch, input interface{}) (interface{}, error) {
-	currentStateName := branch.StartAt
-	currentInput := input
-
-	for {
-		// Check if context is done
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		// Get current state from branch
-		state, exists := branch.States[currentStateName]
-		if !exists {
-			return nil, fmt.Errorf("state '%s' not found in branch", currentStateName)
-		}
-
-		// Execute the state
-		output, nextState, err := state.Execute(ctx, currentInput)
-		if err != nil {
-			return nil, err
-		}
-
-		// Check if this is an end state
-		if state.IsEnd() || nextState == nil {
-			// Branch execution completed
-			return output, nil
-		}
-
-		// Move to next state
-		currentStateName = *nextState
-		currentInput = output
-	}
+// GetLastBranchExecutions returns the branch execution contexts from the
+// most recent express execution. Returns nil if no execution has occurred.
+func (p *ParallelState) GetLastBranchExecutions() []*BranchExecution {
+	return p.lastBranchExecutions
 }
 
 // MarshalJSON implements custom JSON marshaling

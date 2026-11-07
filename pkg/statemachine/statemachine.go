@@ -238,6 +238,20 @@ func (sm *StateMachine) RunExecution(ctx context.Context, execCtx *execution.Exe
 		} else {
 			// Record state history
 			execCtx.AddStateHistory(currentStateName, currentInput, output, "SUCCEEDED")
+
+			// Append branch histories from parallel state execution
+			if parallelState, ok := state.(*states.ParallelState); ok {
+				if branchExecs := parallelState.GetLastBranchExecutions(); branchExecs != nil {
+					for _, branchExec := range branchExecs {
+						for _, h := range branchExec.History {
+							execCtx.AddStateHistory(
+								fmt.Sprintf("%s/%s", currentStateName, h.StateName),
+								h.Input, h.Output, h.Status,
+							)
+						}
+					}
+				}
+			}
 		}
 
 		// Check if this is an end state

@@ -42,6 +42,22 @@ type StateHistory struct {
 	Metadata       map[string]interface{}
 }
 
+// ParallelExecutionRecord represents a single branch in a parallel execution,
+// stored in the parallel_executions join-table.
+type ParallelExecutionRecord struct {
+	ID              string      `json:"id"`
+	ParallelID      string      `json:"parallel_id"`
+	ParentExecID    string      `json:"parent_exec_id"`
+	ParentSMID      string      `json:"parent_sm_id"`
+	ParentStateName string      `json:"parent_state_name"`
+	BranchIndex     int         `json:"branch_index"`
+	BranchExecID    string      `json:"branch_exec_id"`
+	BranchSMID      string      `json:"branch_sm_id"`
+	Status          string      `json:"status"`
+	BranchOutput    interface{} `json:"branch_output,omitempty"`
+	FailurePolicy   string      `json:"failure_policy,omitempty"`
+}
+
 // LinkedExecution represents a linkage between a source execution and a targeted execution
 type LinkedExecution struct {
 	ID                     string
@@ -244,6 +260,15 @@ type Repository interface {
 
 	// GetExecutionStartTime returns the earliest state-history execution_start_time.
 	GetExecutionStartTime(ctx context.Context, executionID string) (*time.Time, error)
+
+	// SaveParallelExecution saves a parallel branch execution record.
+	SaveParallelExecution(ctx context.Context, record *ParallelExecutionRecord) error
+
+	// GetParallelExecutions retrieves all branch records for a parallel execution.
+	GetParallelExecutions(ctx context.Context, parallelID string) ([]*ParallelExecutionRecord, error)
+
+	// UpdateParallelBranchStatus updates a branch's status and output.
+	UpdateParallelBranchStatus(ctx context.Context, parallelID string, branchIndex int, status string, output interface{}) error
 }
 
 // ExtendedRepository defines additional repository capabilities

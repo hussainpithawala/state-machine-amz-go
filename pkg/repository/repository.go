@@ -315,6 +315,21 @@ func (pm *Manager) GetExecutionStartTime(ctx context.Context, executionID string
 	return pm.repository.GetExecutionStartTime(ctx, executionID)
 }
 
+// SaveParallelExecution saves a parallel branch execution record.
+func (pm *Manager) SaveParallelExecution(ctx context.Context, record *ParallelExecutionRecord) error {
+	return pm.repository.SaveParallelExecution(ctx, record)
+}
+
+// GetParallelExecutions retrieves all branch records for a parallel execution.
+func (pm *Manager) GetParallelExecutions(ctx context.Context, parallelID string) ([]*ParallelExecutionRecord, error) {
+	return pm.repository.GetParallelExecutions(ctx, parallelID)
+}
+
+// UpdateParallelBranchStatus updates a branch's status and output.
+func (pm *Manager) UpdateParallelBranchStatus(ctx context.Context, parallelID string, branchIndex int, status string, output interface{}) error {
+	return pm.repository.UpdateParallelBranchStatus(ctx, parallelID, branchIndex, status, output)
+}
+
 // Helper function to generate unique history IDs
 func generateHistoryID(executionID, stateName string, timestamp time.Time) string {
 	return fmt.Sprintf("%s-%s-%d", executionID, stateName, timestamp.UnixNano())

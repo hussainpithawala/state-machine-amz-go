@@ -93,3 +93,24 @@ type ExecutionContext interface {
 }
 
 const TriggerTimeoutBase = "__timeout_trigger__"
+
+// ParallelModeKey is the context key for passing parallel execution mode
+// information to ParallelState.Execute().
+const ParallelModeKey contextKey = "parallel_mode"
+
+// ParallelDispatcher is implemented by the parallel orchestrator and called
+// by ParallelState.executePersistent() to dispatch branches. Defined here
+// to break the import cycle between internal/states and pkg/parallel.
+type ParallelDispatcher interface {
+	DispatchBranches(ctx context.Context, parallelID, parentExecID, parentSMID, parentStateName string, branches interface{}, input interface{}, failurePolicy string) (branchExecIDs []string, err error)
+}
+
+// ParallelMode carries the infrastructure references needed by
+// ParallelState.Execute() to dispatch branches as persistent queued
+// executions. When absent from context, the express (in-process) path is used.
+type ParallelMode struct {
+	IsPersistent bool
+	ParentExecID string
+	ParentSMID   string
+	Dispatcher   ParallelDispatcher
+}

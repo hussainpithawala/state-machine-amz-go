@@ -16,6 +16,10 @@ type mockState struct {
 	stateType  string
 }
 
+func (m *mockState) SetName(name string) {
+	m.name = name
+}
+
 func (m *mockState) GetName() string {
 	return m.name
 }
